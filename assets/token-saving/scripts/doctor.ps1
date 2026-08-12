@@ -192,14 +192,14 @@ if (Test-Path $headroom) {
             param($exe)
             & $exe doctor 2>&1
         } -ArgumentList $headroom
-        $null = Wait-Job $hdJob -Timeout 45
+        $null = Wait-Job -Job $hdJob -Timeout 45
         if ($hdJob.State -eq 'Completed') {
-            Receive-Job $hdJob | ForEach-Object { Write-Host $_ }
+            Receive-Job -Job $hdJob | ForEach-Object { Write-Host $_ }
         } else {
             Write-Host "headroom doctor: timed out after 45s (skipped)" -ForegroundColor Yellow
-            Stop-Job $hdJob -ErrorAction SilentlyContinue
+            Stop-Job -Job $hdJob -ErrorAction SilentlyContinue
         }
-        Remove-Job $hdJob -Force -ErrorAction SilentlyContinue
+        Remove-Job -Job $hdJob -Force -ErrorAction SilentlyContinue
     } catch {
         Write-Host "headroom doctor: $_" -ForegroundColor DarkYellow
     }

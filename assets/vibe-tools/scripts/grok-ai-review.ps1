@@ -111,15 +111,14 @@ if ($MaxRounds -le 0) { $MaxRounds = [int]$script:ResolvedProfile.MaxRounds }
 if ($ReviewerMaxTurns -le 0) { $ReviewerMaxTurns = [int]$script:ResolvedProfile.ReviewerMaxTurns }
 if ($ArbiterMaxTurns -le 0) { $ArbiterMaxTurns = [int]$script:ResolvedProfile.ArbiterMaxTurns }
 if ($FixerMaxTurns -le 0) { $FixerMaxTurns = [int]$script:ResolvedProfile.FixerMaxTurns }
-# Large first-import / monorepo diffs burn turns on chunking; scale budgets once.
+# Large diffs: compress into brief (below). Slight turn headroom for panel JSON only.
 if (-not $PSBoundParameters.ContainsKey('ReviewerMaxTurns')) {
     try {
         $probe = git diff --cached --no-color 2>$null
         if (-not $probe) { $probe = git diff --no-color 2>$null }
         $n = if ($probe) { $probe.Length } else { 0 }
-        if ($n -gt 120000 -and $ReviewerMaxTurns -lt 28) { $ReviewerMaxTurns = 28 }
-        elseif ($n -gt 60000 -and $ReviewerMaxTurns -lt 20) { $ReviewerMaxTurns = 20 }
-        if ($n -gt 120000 -and $ArbiterMaxTurns -lt 14) { $ArbiterMaxTurns = 14 }
+        if ($n -gt 60000 -and $ReviewerMaxTurns -lt 16) { $ReviewerMaxTurns = 16 }
+        if ($n -gt 60000 -and $ArbiterMaxTurns -lt 10) { $ArbiterMaxTurns = 10 }
     } catch {}
 }
 if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.NoFixDefault) {
@@ -245,6 +244,142 @@ function Limit-DiffText([string]$diff, [int]$maxChars = 160000) {
     return $head + "`n`n... [diff truncated for gate size] ...`n`n" + $tail
 }
 
+function Get-DiffFileStats([string]$diff) {
+    # Returns list of @{ Path; Added; Deleted; Hunk }
+    $files = [System.Collections.Generic.List[object]]::new()
+    if ([string]::IsNullOrWhiteSpace($diff)) { return @() }
+    $cur = $null
+    $hunk = New-Object System.Text.StringBuilder
+    $add = 0; $del = 0
+    foreach ($line in ($diff -split "`n")) {
+        if ($line -match '^diff --git a/(.+?) b/(.+)$') {
+            if ($null -ne $cur) {
+                [void]$files.Add([pscustomobject]@{
+                        Path    = $cur
+                        Added   = $add
+                        Deleted = $del
+                        Hunk    = $hunk.ToString()
+                    })
+            }
+            $cur = $Matches[2].Trim()
+            $hunk = New-Object System.Text.StringBuilder
+            $add = 0; $del = 0
+            continue
+        }
+        if ($line -match '^\+\+\+ b/(.+)$') { $cur = $Matches[1].Trim(); continue }
+        if ($line -match '^--- /dev/null') { continue }
+        if ($null -eq $cur) { continue }
+        [void]$hunk.AppendLine($line)
+        if ($line -match '^\+[^+]') { $add++ }
+        elseif ($line -match '^-[^-]') { $del++ }
+    }
+    if ($null -ne $cur) {
+        [void]$files.Add([pscustomobject]@{
+                Path    = $cur
+                Added   = $add
+                Deleted = $del
+                Hunk    = $hunk.ToString()
+            })
+    }
+    return @($files)
+}
+
+function Compress-DiffForReview {
+    <#
+      Large diffs burn reviewer max-turns (agents try to chunk the blob).
+      Build a bounded brief: file list + hotspots + per-file sample hunks.
+    #>
+    param(
+        [string]$Diff,
+        [int]$MaxChars = 48000,
+        [int]$PerFileHunkChars = 2800,
+        [int]$MaxFilesWithHunks = 40
+    )
+    if ([string]::IsNullOrWhiteSpace($Diff)) { return $Diff }
+    if ($Diff.Length -le $MaxChars) {
+        return $Diff
+    }
+
+    $files = @(Get-DiffFileStats $Diff)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('### GATE DIFF BRIEF (compressed — full raw diff omitted to fit turn budget)')
+    [void]$sb.AppendLine(('Original diff size: {0} chars across {1} file(s).' -f $Diff.Length, $files.Count))
+    [void]$sb.AppendLine('Review THIS brief only. Do NOT open tools to re-read or chunk the diff. Emit JSON immediately.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## FILES CHANGED')
+    foreach ($f in $files) {
+        [void]$sb.AppendLine(('- {0}  (+{1}/-{2})' -f $f.Path, $f.Added, $f.Deleted))
+    }
+
+    # Hotspot lines (secrets / dangerous APIs) from added lines
+    $hotPatterns = @(
+        '(?i)(api[_-]?key|secret|password|token|bearer|authorization)\s*[=:]\s*\S+',
+        '(?i)(AKIA[0-9A-Z]{16}|xai-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,})',
+        '(?i)(Invoke-Expression|DownloadString|FromBase64String|eval\(|child_process|exec\(|os\.system)',
+        '(?i)(password_hash|crypto\.createCipher|MD5|sha1\()',
+        '(?i)(bypassPermissions|always-approve|--no-verify)'
+    )
+    $hots = [System.Collections.Generic.List[string]]::new()
+    foreach ($f in $files) {
+        $ln = 0
+        foreach ($line in ($f.Hunk -split "`n")) {
+            $ln++
+            if ($line -notmatch '^\+[^+]') { continue }
+            $body = $line.Substring(1)
+            foreach ($pat in $hotPatterns) {
+                if ($body -match $pat) {
+                    # Redact secret-looking values before shipping brief to the LLM
+                    $snip = if ($body.Length -gt 120) { $body.Substring(0, 120) + '...' } else { $body }
+                    $snip = [regex]::Replace($snip, '(?i)(xai-|sk-|ghp_|github_pat_|AKIA)[A-Za-z0-9/+=_-]{8,}', '$1[REDACTED]')
+                    $snip = [regex]::Replace($snip, '(?i)(api[_-]?key|secret|password|token)\s*[=:]\s*\S+', '$1=[REDACTED]')
+                    [void]$hots.Add(('{0}: {1}' -f $f.Path, $snip))
+                    break
+                }
+            }
+            if ($hots.Count -ge 40) { break }
+        }
+        if ($hots.Count -ge 40) { break }
+    }
+    if ($hots.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('## HOTSPOT LINES (heuristic)')
+        foreach ($h in $hots) { [void]$sb.AppendLine(('- {0}' -f $h)) }
+    }
+
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## DIFF SAMPLES (truncated per file)')
+    # Prefer security-sensitive + largest files first
+    $ordered = $files | Sort-Object {
+        $score = $_.Added + $_.Deleted
+        if ($_.Path -match '(?i)(auth|secret|pass|token|crypto|hook|install|review|scan|security)') { $score + 500 } else { $score }
+    } -Descending
+
+    $n = 0
+    foreach ($f in $ordered) {
+        if ($n -ge $MaxFilesWithHunks) { break }
+        $n++
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine(('### {0}  (+{1}/-{2})' -f $f.Path, $f.Added, $f.Deleted))
+        $h = [string]$f.Hunk
+        if ($h.Length -gt $PerFileHunkChars) {
+            $h = $h.Substring(0, $PerFileHunkChars) + "`n... [hunk truncated] ..."
+        }
+        [void]$sb.AppendLine($h)
+        if ($sb.Length -gt $MaxChars) { break }
+    }
+
+    if ($files.Count -gt $MaxFilesWithHunks) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine(('... {0} more file(s) listed above without hunk samples.' -f ($files.Count - $MaxFilesWithHunks)))
+    }
+
+    $out = $sb.ToString()
+    if ($out.Length -gt ($MaxChars + 4000)) {
+        $out = $out.Substring(0, $MaxChars) + "`n... [brief hard-capped] ..."
+    }
+    return $out
+}
+
 function Get-GitDiffText {
     param([string]$Override)
     if ($Override) { return $Override }
@@ -353,7 +488,9 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine('Rules:')
     [void]$sb.AppendLine('- Be specific: file path + line when possible.')
     [void]$sb.AppendLine('- severity must be exactly "blocker" or "advisory".')
-    [void]$sb.AppendLine('- Do NOT edit files. Read the diff only (tools that write are disabled).')
+    [void]$sb.AppendLine('- Do NOT edit files. Tools that write or run shell are disabled.')
+    [void]$sb.AppendLine('- Do NOT spend turns chunking, grepping, or re-reading the diff. The brief below is complete.')
+    [void]$sb.AppendLine('- Emit the JSON object as your FIRST substantive response (ideally only response).')
     [void]$sb.AppendLine('- Independent judgment - do not soften blockers to be nice.')
     [void]$sb.AppendLine('- vote must be one of: STRONG_APPROVE | APPROVE | APPROVE_WITH_CHANGES | BLOCK')
     [void]$sb.AppendLine('  - BLOCK if you have any blocker findings')
@@ -415,8 +552,8 @@ function New-ArbiterPrompt {
     [void]$sb.AppendLine('- verdict MUST be BLOCK if blockers is non-empty.')
     [void]$sb.AppendLine('- verdict APPROVE_WITH_CHANGES if only advisories.')
     [void]$sb.AppendLine('- STRONG_APPROVE only if all three votes were approve-class and no advisories worth tracking.')
-    [void]$sb.AppendLine('- Do not invent issues not grounded in reviewer findings or the diff.')
-    [void]$sb.AppendLine('- Do not edit files.')
+    [void]$sb.AppendLine('- Do not invent issues not grounded in reviewer findings or the diff brief.')
+    [void]$sb.AppendLine('- Do not edit files or run shell. Emit JSON immediately; do not re-chunk the brief.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('PANEL OUTPUTS:')
     [void]$sb.AppendLine($PanelJson)
@@ -880,11 +1017,20 @@ New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $script:GateRun.workDir = $WorkDir
 Write-Host "  workdir=$WorkDir" -ForegroundColor DarkGray
 
-# Initial diff + cache check
-$initialDiff = Limit-DiffText (Get-GitDiffText -Override $DiffOverride)
-$diffHash = Get-DiffHash $initialDiff
+# Initial diff + compress large payloads so reviewers don't burn turns chunking.
+# Compress on RAW unified diff only — never Limit-DiffText first (head/tail splice
+# is not valid input for Get-DiffFileStats and drops middle files on huge commits).
+$rawDiff = Get-GitDiffText -Override $DiffOverride
+$rawLen = if ($rawDiff) { $rawDiff.Length } else { 0 }
+$initialDiff = Compress-DiffForReview $rawDiff
+$diffHash = Get-DiffHash $rawDiff
 $script:GateRun.diffHash = $diffHash
-Write-Host ("  diffHash={0}..." -f $diffHash.Substring(0, [Math]::Min(12, $diffHash.Length))) -ForegroundColor DarkGray
+$script:GateRun.rawDiffChars = $rawLen
+$script:GateRun.reviewDiffChars = $(if ($initialDiff) { $initialDiff.Length } else { 0 })
+Write-Host ("  diffHash={0}... raw={1} reviewCtx={2}" -f $diffHash.Substring(0, [Math]::Min(12, $diffHash.Length)), $rawLen, $script:GateRun.reviewDiffChars) -ForegroundColor DarkGray
+if ($rawLen -gt 48000 -and $initialDiff.Length -lt $rawLen) {
+    Write-Host "  large diff compressed to brief (file list + samples + hotspots)" -ForegroundColor DarkCyan
+}
 
 $cached = Test-GatePassCache -DiffHash $diffHash -ProfileName $script:ResolvedProfile.Name -ModelName $useModel
 if ($cached) {
@@ -912,7 +1058,11 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     $roundDir = Join-Path $WorkDir "round-$round"
     New-Item -ItemType Directory -Force -Path $roundDir | Out-Null
 
-    $diff = if ($round -eq 1) { $initialDiff } else { Limit-DiffText (Get-GitDiffText -Override $null) }
+    $diff = if ($round -eq 1) {
+        $initialDiff
+    } else {
+        Compress-DiffForReview (Get-GitDiffText -Override $null)
+    }
     Save-Text (Join-Path $roundDir 'diff.patch') $diff
 
     $roundRec = [ordered]@{

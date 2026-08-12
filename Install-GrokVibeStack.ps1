@@ -976,6 +976,22 @@ $vibeReq = if ($UseFrozenReqs -and (Test-Path (Join-Path $Assets 'requirements\v
 }
 $hrOk = New-VenvAndPip -VenvDir (Join-Path $TokenRoot 'venv') -ReqFile $hrReq -Label 'headroom' -PyInfo $py
 $vibeOk = New-VenvAndPip -VenvDir (Join-Path $VibeRoot 'venv') -ReqFile $vibeReq -Label 'vibe-tools' -PyInfo $py
+# checkov ships a Windows .cmd shim that resolves PATH python (not the venv) and breaks.
+# Rewrite venv launcher + ensure ~/.grok/bin/checkov.cmd (from bin-shims) wins on PATH.
+if (-not $DryRun -and $vibeOk) {
+    $vPy = Join-Path $VibeRoot 'venv\Scripts\python.exe'
+    $ckCmd = Join-Path $VibeRoot 'venv\Scripts\checkov.cmd'
+    $ckPkg = Join-Path $VibeRoot 'venv\Lib\site-packages\checkov'
+    if ((Test-Path -LiteralPath $vPy) -and (Test-Path -LiteralPath $ckPkg)) {
+        # Prefer bin-shim style launcher file (avoids python -c quote loss on Windows)
+        $shimSrc = Join-Path $Assets 'bin-shims\checkov.cmd'
+        if (Test-Path -LiteralPath $shimSrc) {
+            Copy-Item -LiteralPath $shimSrc -Destination $ckCmd -Force
+            Copy-Item -LiteralPath $shimSrc -Destination (Join-Path $GrokBin 'checkov.cmd') -Force
+            Write-Ok "checkov Windows launcher fixed (venv + bin shim)"
+        }
+    }
+}
 if (-not $hrOk -or -not $vibeOk) {
     Write-Fail "Critical venv/pip step failed - stack incomplete"
 }
