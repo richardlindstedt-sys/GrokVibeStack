@@ -136,10 +136,42 @@ if ($rawReview -match 'Resolve-GateProfile' -and $rawReview -match 'Write-GateRe
 } else {
     Bad 'missing Resolve-GateProfile / Write-GateReport / Get-DiffHash'
 }
+if ($rawReview -match 'Compress-DiffForReview' -and $rawReview -match 'Get-DiffFileStats') {
+    Ok 'large-diff compress helpers present'
+} else {
+    Bad 'missing Compress-DiffForReview / Get-DiffFileStats'
+}
 if ($rawReview -match 'NoFixDefault\s*=\s*\$true' -and $rawReview -match "Roles\s*=\s*@\('correctness'\)") {
     Ok 'fast profile: NoFix + single correctness role'
 } else {
     Bad 'fast profile shape unexpected'
+}
+
+$scanSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1') -Raw
+if ($scanSrc -match 'New-StagedScanTree' -and $scanSrc -match 'Gitleaks \(staged\)' -and $scanSrc -match 'Invoke-Checkov') {
+    Ok 'scans: staged secrets tree + checkov via venv'
+} else {
+    Bad 'scans missing staged tree / Invoke-Checkov'
+}
+if ($scanSrc -match 'jscpdTargets' -and $scanSrc -match 'jscpd') {
+    Ok 'scans: jscpd concrete targets'
+} else {
+    Bad 'scans missing jscpd targets fix'
+}
+if ($scanSrc -match 'Secret heuristic' -and $scanSrc -match 'New-StagedScanTree') {
+    Ok 'scans: staged secret heuristic'
+} else {
+    Bad 'scans missing staged secret heuristic'
+}
+if (Test-Path (Join-Path $RepoRoot 'assets\bin-shims\checkov.cmd')) {
+    Ok 'bin-shims/checkov.cmd present'
+} else {
+    Bad 'missing assets/bin-shims/checkov.cmd'
+}
+if (Test-Path (Join-Path $RepoRoot '_hook_debug.ps1')) {
+    Bad '_hook_debug.ps1 still in repo'
+} else {
+    Ok '_hook_debug.ps1 removed'
 }
 
 # Hook wiring

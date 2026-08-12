@@ -33,6 +33,8 @@ foreach ($p in @(
     }
 }
 
+$script:VibePython = Join-Path $env:USERPROFILE '.grok\vibe-tools\venv\Scripts\python.exe'
+
 function Test-ToolRunnable([string]$cmd) {
     $c = Get-Command $cmd -ErrorAction SilentlyContinue
     if (-not $c) { return $false }
@@ -40,10 +42,161 @@ function Test-ToolRunnable([string]$cmd) {
     if ($c.Source -and ($c.Source -match '\.cmd$')) {
         try {
             $probe = & $cmd --version 2>&1
-            if ($LASTEXITCODE -ne 0 -and "$probe" -match 'ModuleNotFoundError|No module named') { return $false }
+            if ("$probe" -match 'ModuleNotFoundError|No module named') { return $false }
+            if ($LASTEXITCODE -ne 0 -and "$probe" -match '(?i)error|traceback') { return $false }
         } catch { return $false }
     }
     return $true
+}
+
+function Get-StagedNameList {
+    $names = @()
+    try {
+        $names = @(git diff --cached --name-only --diff-filter=ACMR 2>$null | Where-Object { $_ })
+    } catch {}
+    return $names
+}
+
+function New-StagedScanTree {
+    <#
+      Materialize staged blob contents into a temp tree so trivy/gitleaks --no-git
+      see the commit payload even when the repo has no commits yet (or only history).
+      Returns temp root only when EVERY expected staged path was written.
+      On any materialize miss: cleans temp, sets $script:StagedMaterializeFailed, returns $null.
+    #>
+    param([string[]]$Names)
+    $script:StagedMaterializeFailed = $false
+    if (-not $Names -or $Names.Count -eq 0) { return $null }
+    $tmp = Join-Path $env:TEMP ("vibe-staged-" + [guid]::NewGuid().ToString('n').Substring(0, 10))
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $n = 0
+    $expected = 0
+    $missing = [System.Collections.Generic.List[string]]::new()
+    foreach ($rel in $Names) {
+        $rel = $rel -replace '/', [IO.Path]::DirectorySeparatorChar
+        if ($rel -match '(?i)(^|[\\/])\.git([\\/]|$)' -or $rel -match '\.\.') {
+            if (-not $Quiet) { Write-Host "  staged skip (unsafe path): $rel" -ForegroundColor DarkGray }
+            continue
+        }
+        $dest = Join-Path $tmp $rel
+        # Refuse path escape outside temp root
+        $fullDest = [System.IO.Path]::GetFullPath($dest)
+        $fullTmp = [System.IO.Path]::GetFullPath($tmp)
+        if (-not $fullDest.StartsWith($fullTmp, [System.StringComparison]::OrdinalIgnoreCase)) {
+            if (-not $Quiet) { Write-Host "  staged skip (path escape): $rel" -ForegroundColor DarkGray }
+            continue
+        }
+        $expected++
+        $destDir = Split-Path $dest -Parent
+        if (-not (Test-Path -LiteralPath $destDir)) {
+            try {
+                New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            } catch {
+                if (-not $Quiet) { Write-Host "  staged mkdir failed: $rel ($_)" -ForegroundColor Yellow }
+                [void]$missing.Add($rel)
+                continue
+            }
+        }
+        $gitPath = ($rel -replace '\\', '/')
+        $src = Join-Path $root $rel
+        # Always prefer index blob (pre-commit must scan staged payload, not dirty worktree).
+        # Worktree copy only if index read fails (e.g. rare git show edge cases).
+        $wrote = $false
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $blob = & git show ":0:$gitPath" 2>$null
+        $showCode = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+        if ($showCode -eq 0 -and $null -ne $blob) {
+            $text = if ($blob -is [array]) { $blob -join "`n" } else { [string]$blob }
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            try {
+                [System.IO.File]::WriteAllText($dest, $text, $utf8)
+                $n++
+                $wrote = $true
+            } catch {
+                if (-not $Quiet) { Write-Host "  staged write failed: $rel ($_)" -ForegroundColor Yellow }
+            }
+        }
+        if (-not $wrote -and (Test-Path -LiteralPath $src -PathType Leaf)) {
+            try {
+                Copy-Item -LiteralPath $src -Destination $dest -Force -ErrorAction Stop
+                $n++
+                $wrote = $true
+            } catch {
+                if (-not $Quiet) { Write-Host "  staged copy failed: $rel ($_)" -ForegroundColor Yellow }
+            }
+        }
+        if (-not $wrote) {
+            [void]$missing.Add($rel)
+            if (-not $Quiet) { Write-Host "  staged missing: $rel (index + worktree unavailable)" -ForegroundColor Yellow }
+        }
+    }
+    if ($expected -eq 0) {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    if ($n -lt $expected) {
+        if (-not $Quiet) {
+            Write-Host ("[Staged scan tree] FAILED: materialized {0}/{1} path(s) — refusing partial scan" -f $n, $expected) -ForegroundColor Yellow
+            foreach ($m in $missing) { Write-Host "  not scanned: $m" -ForegroundColor Yellow }
+        }
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        $script:StagedMaterializeFailed = $true
+        return $null
+    }
+    return $tmp
+}
+
+function Invoke-Checkov {
+    param([string[]]$CkArgs)
+    # checkov.cmd is a broken PATH-python shim on Windows; drive via venv python.
+    $output = $null
+    $code = $null
+    if (Test-Path -LiteralPath $script:VibePython) {
+        # Probe import first — partial venv (python present, checkov missing) must SKIP not fail gate.
+        $probeOut = $null
+        try {
+            $probeOut = & $script:VibePython -c "import checkov" 2>&1
+            $probeCode = $LASTEXITCODE
+        } catch {
+            $probeOut = "$_"
+            $probeCode = -1
+        }
+        $probeText = if ($null -eq $probeOut) { '' } else { "$probeOut" }
+        if ($probeCode -ne 0 -or $probeText -match 'ModuleNotFoundError|ImportError|No module named') {
+            return @{ Ok = $false; Ran = $false; Output = $probeOut; ExitCode = $null }
+        }
+        # Unique launcher path — avoids concurrent TEMP clobber
+        $launcher = Join-Path $env:TEMP ("vibe-checkov-run-{0}.py" -f [guid]::NewGuid().ToString('n').Substring(0, 8))
+        @(
+            'import sys'
+            'from checkov.main import Checkov'
+            'sys.argv[0] = "checkov"'
+            'raise SystemExit(Checkov().run())'
+        ) -join "`n" | Set-Content -Path $launcher -Encoding utf8
+        try {
+            $output = & $script:VibePython $launcher @CkArgs 2>&1
+            $code = $LASTEXITCODE
+        } catch {
+            $output = "$_"
+            $code = -1
+        } finally {
+            Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+        }
+        return @{ Ok = $true; Ran = $true; Output = $output; ExitCode = $code }
+    }
+    if (Test-ToolRunnable 'checkov') {
+        try {
+            $output = & checkov @CkArgs 2>&1
+            $code = $LASTEXITCODE
+        } catch {
+            $output = "$_"
+            $code = -1
+        }
+        return @{ Ok = $true; Ran = $true; Output = $output; ExitCode = $code }
+    }
+    return @{ Ok = $false; Ran = $false; Output = $null; ExitCode = $null }
 }
 
 function Run {
@@ -79,14 +232,41 @@ function Run-PSScriptAnalyzer {
         return
     }
     if (-not $Quiet) { Write-Host "`n[PSScriptAnalyzer] scanning PowerShell files..." -ForegroundColor Cyan }
-    $psFiles = Get-ChildItem -Recurse -Include *.ps1,*.psm1,*.psd1 -Depth 5 -ErrorAction SilentlyContinue
+    $psFiles = Get-ChildItem -Recurse -Include *.ps1,*.psm1,*.psd1 -Depth 5 -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch $script:ScanExcludeRegex }
     if (-not $psFiles) { return }
-    $results = Invoke-ScriptAnalyzer -Path $root -Recurse -Severity Error,Warning -ExcludeRule 'PSAvoidUsingWriteHost','PSUseShouldProcessForStateChangingFunctions' -ErrorAction SilentlyContinue
+    # Style/noise rules that drown real defects in installer scripts
+    $exclude = @(
+        'PSAvoidUsingWriteHost',
+        'PSUseShouldProcessForStateChangingFunctions',
+        'PSUseApprovedVerbs',
+        'PSUseSingularNouns',
+        'PSUseBOMForUnicodeEncodedFile',
+        'PSAvoidUsingEmptyCatchBlock',
+        'PSReviewUnusedParameter',
+        'PSUseDeclaredVarsMoreThanAssignments',
+        'PSPossibleIncorrectComparisonWithNull',
+        'PSUseUsingScopeModifierInNewRunspaces'
+    )
+    $results = Invoke-ScriptAnalyzer -Path $root -Recurse -Severity Error,Warning -ExcludeRule $exclude -ErrorAction SilentlyContinue |
+        Where-Object { $_.ScriptName -and ($_.ScriptName -notmatch $script:ScanExcludeRegex) }
     if ($results) {
-        $results | ForEach-Object { if (-not $Quiet) { Write-Host "  $($_.Severity): $($_.RuleName) - $($_.ScriptName):$($_.Line) - $($_.Message)" } }
-        if ($results | Where-Object Severity -eq 'Error') { $script:failed++ }
+        $errors = @($results | Where-Object Severity -eq 'Error')
+        $warns = @($results | Where-Object Severity -eq 'Warning')
+        foreach ($r in $errors) {
+            if (-not $Quiet) { Write-Host "  Error: $($r.RuleName) - $($r.ScriptName):$($r.Line) - $($r.Message)" -ForegroundColor Yellow }
+        }
+        # Cap warning dump
+        $show = $warns | Select-Object -First 15
+        foreach ($r in $show) {
+            if (-not $Quiet) { Write-Host "  Warning: $($r.RuleName) - $($r.ScriptName):$($r.Line) - $($r.Message)" -ForegroundColor DarkGray }
+        }
+        if ($warns.Count -gt 15 -and -not $Quiet) {
+            Write-Host "  ... $($warns.Count - 15) more warning(s) suppressed" -ForegroundColor DarkGray
+        }
+        if ($errors.Count -gt 0) { $script:failed++ }
     } elseif (-not $Quiet) {
-        Write-Host "  Clean (no Error/Warning findings)" -ForegroundColor Green
+        Write-Host "  Clean (no Error findings; noisy style rules excluded)" -ForegroundColor Green
     }
 }
 
@@ -117,11 +297,80 @@ function Run-Pester {
 Write-Host "=== Vibe Static Scans ===" -ForegroundColor Cyan
 Write-Host "Scanning: $($Paths -join ', ')"
 
-# Trivy - broad security + secrets + misconfig + SAST
-Run 'trivy' @('fs', '--exit-code', '1', '--severity', 'HIGH,CRITICAL', '--scanners', 'vuln,secret,misconfig', $Paths) 'Trivy'
+# Prefer staged payload when present (pre-commit / empty-history safe)
+$stagedNames = @(Get-StagedNameList)
+$stagedTree = $null
+$script:StagedMaterializeFailed = $false
+if ($stagedNames.Count -gt 0) {
+    $stagedTree = New-StagedScanTree -Names $stagedNames
+    if ($script:StagedMaterializeFailed) {
+        # Partial/missing staged materialize must fail gate — never scan a subset as "clean"
+        $script:failed++
+        if (-not $Quiet) {
+            Write-Host "[Staged scan tree] gate fail (incomplete materialize); secret scanners will use worktree fallback only after fix" -ForegroundColor Yellow
+        }
+    } elseif ($stagedTree) {
+        if (-not $Quiet) {
+            Write-Host ("Staged payload: {0} path(s) -> temp tree for secret/vuln scan" -f $stagedNames.Count) -ForegroundColor DarkCyan
+        }
+    }
+}
 
-# Gitleaks - dedicated secrets (very low false positives)
-Run 'gitleaks' @('detect', '--source', '.', '--redact') 'Gitleaks'
+try {
+    # Trivy - secrets/vuln/misconfig on staged tree when available, else caller $Paths / root
+    if ($stagedTree) {
+        $trivyTarget = @($stagedTree)
+    } elseif ($Paths -and @($Paths).Count -gt 0) {
+        $trivyTarget = @($Paths)
+    } else {
+        $trivyTarget = @($root)
+    }
+    $trivyArgs = @(
+        'fs', '--exit-code', '1', '--severity', 'HIGH,CRITICAL',
+        '--scanners', 'vuln,secret,misconfig',
+        '--skip-dirs', '.git,.serena,node_modules,venv,.venv'
+    ) + $trivyTarget
+    Run 'trivy' $trivyArgs 'Trivy'
+
+    # Gitleaks - --no-git on staged tree so empty history still scans file contents
+    if (Get-Command gitleaks -ErrorAction SilentlyContinue) {
+        if ($stagedTree) {
+            Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)'
+        } else {
+            # Worktree + git history when available
+            Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks'
+            # Also no-git pass so untracked dirty files are covered
+            Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory
+        }
+    } else {
+        if (-not $Quiet) { Write-Host "[Gitleaks] SKIPPED (not installed)" -ForegroundColor DarkGray }
+    }
+
+    # Heuristic secret pass on staged tree (backup when rules miss / allowlisted examples)
+    if ($stagedTree) {
+        $rx = [regex]'(?i)(-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|xai-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})'
+        $hits = @()
+        Get-ChildItem -Path $stagedTree -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $t = Get-Content -LiteralPath $_.FullName -Raw -ErrorAction Stop
+                if ($rx.IsMatch($t)) { $hits += $_.FullName.Substring($stagedTree.Length).TrimStart('\', '/') }
+            } catch {}
+        }
+        if ($hits.Count -gt 0) {
+            if (-not $Quiet) {
+                Write-Host "`n[Secret heuristic] possible secrets in staged files:" -ForegroundColor Yellow
+                $hits | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+            }
+            $script:failed++
+        } elseif (-not $Quiet) {
+            Write-Host "[Secret heuristic] clean on staged tree" -ForegroundColor DarkGray
+        }
+    }
+} finally {
+    if ($stagedTree -and (Test-Path -LiteralPath $stagedTree)) {
+        Remove-Item -LiteralPath $stagedTree -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # PSScriptAnalyzer (PowerShell)
 Run-PSScriptAnalyzer
@@ -129,14 +378,47 @@ Run-PSScriptAnalyzer
 # Pester (only if test files exist)
 Run-Pester
 
-# jscpd - duplicate code (tunable); non-zero exit counts as gate failure
+# jscpd - Windows jscpd often analyzes 0 files for bare "."; pass concrete dirs/files.
 if (Get-Command jscpd -ErrorAction SilentlyContinue) {
     if (-not $Quiet) { Write-Host "`n[jscpd] duplicate detection" -ForegroundColor Cyan }
-    $jscpdOut = & jscpd --min-lines 6 --min-tokens 45 --format console $Paths 2>&1
-    if (-not $Quiet) { $jscpdOut | Select-Object -Last 20 }
-    if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
-        $script:failed++
-        if (-not $Quiet) { Write-Host "[jscpd] exited $LASTEXITCODE" -ForegroundColor Yellow }
+    $jscpdTargets = [System.Collections.Generic.List[string]]::new()
+    $pathList = @($Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $pathsIsDefault = ($pathList.Count -eq 0) -or (
+        $pathList.Count -eq 1 -and ($pathList[0] -eq '.' -or $pathList[0] -eq $root)
+    )
+    if (-not $pathsIsDefault) {
+        # Caller-selected roots/files first
+        foreach ($p in $pathList) {
+            $candidate = $p
+            if (-not (Test-Path -LiteralPath $candidate)) {
+                $joined = Join-Path $root $p
+                if (Test-Path -LiteralPath $joined) { $candidate = $joined } else { continue }
+            }
+            [void]$jscpdTargets.Add($candidate)
+        }
+    }
+    if ($jscpdTargets.Count -eq 0 -and $pathsIsDefault) {
+        # Fallback discovery only when $Paths is '.' / empty (bare "." yields 0 files on Windows)
+        foreach ($cand in @('assets', 'src', 'lib', 'scripts', 'app', 'packages', 'services')) {
+            if (Test-Path -LiteralPath (Join-Path $root $cand)) { [void]$jscpdTargets.Add($cand) }
+        }
+        Get-ChildItem -Path $root -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '\.(ps1|psm1|js|ts|tsx|jsx|py|go|rs|java|cs|md)$' -and $_.Name -notmatch '^\.' } |
+            Select-Object -First 40 |
+            ForEach-Object { [void]$jscpdTargets.Add($_.Name) }
+    }
+    if ($jscpdTargets.Count -eq 0) {
+        if (-not $Quiet) { Write-Host "[jscpd] SKIPPED (no source roots)" -ForegroundColor DarkGray }
+    } else {
+        # jscpd 5.x: long --min-lines with multi-path often yields 0 files on Windows; use short flags + path first
+        $jscpdArgs = @($jscpdTargets.ToArray()) + @('-l', '6', '-k', '45')
+        if (-not $Quiet) { Write-Host ("  targets: {0}" -f ($jscpdTargets -join ', ')) -ForegroundColor DarkGray }
+        $jscpdOut = & jscpd @jscpdArgs 2>&1
+        if (-not $Quiet) { $jscpdOut | Select-Object -Last 25 }
+        if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
+            $script:failed++
+            if (-not $Quiet) { Write-Host "[jscpd] exited $LASTEXITCODE" -ForegroundColor Yellow }
+        }
     }
 }
 
@@ -212,11 +494,21 @@ rules:
             Remove-Item -LiteralPath $ylCfg -Force -ErrorAction SilentlyContinue
         }
     }
-    if (Test-ToolRunnable 'checkov') {
-        Run 'checkov' @('-d', '.', '--compact', '--quiet', '--framework', 'all',
-            '--skip-path', '.serena', '--skip-path', '.git', '--skip-path', 'node_modules') 'checkov (IaC/cloud security)'
-    } elseif (-not $Quiet) {
-        Write-Host "[checkov (IaC/cloud security)] SKIPPED (not installed or broken shim)" -ForegroundColor DarkGray
+    $ckArgs = @(
+        '-d', $root, '--compact', '--quiet', '--framework', 'all',
+        '--skip-path', '.serena', '--skip-path', '.git', '--skip-path', 'node_modules',
+        '--skip-path', 'venv', '--skip-path', '.venv'
+    )
+    if (-not $Quiet) { Write-Host "`n[checkov (IaC/cloud security)]" -ForegroundColor Cyan }
+    $ck = Invoke-Checkov -CkArgs $ckArgs
+    if (-not $ck.Ran) {
+        if (-not $Quiet) { Write-Host "[checkov] SKIPPED (venv python/checkov missing)" -ForegroundColor DarkGray }
+    } else {
+        if (-not $Quiet -and $ck.Output) { @($ck.Output) | Select-Object -Last 30 | ForEach-Object { $_ } }
+        if ($null -ne $ck.ExitCode -and $ck.ExitCode -ne 0) {
+            $script:failed++
+            if (-not $Quiet) { Write-Host "[checkov] exited $($ck.ExitCode)" -ForegroundColor Yellow }
+        }
     }
 }
 
