@@ -1,0 +1,4 @@
+{
+  "hooks": {},
+  "_comment": "Default stack does not enable Serena remind hooks (they fire on every read_file and caused Grok 'hooks: N failed'). Serena MCP remains in config. Opt-in: token-saving/scripts/Enable-SerenaRemindHooks.ps1"
+}

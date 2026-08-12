@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "search_replace|Write|Edit|MultiEdit|write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"__GROK_HOME__\\vibe-tools\\scripts\\run-vibe-on-edit.ps1\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Write-Host '[vibe] Turn end - if you edited code, confirm vibe-review / scans ran before done.' -ForegroundColor Cyan\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

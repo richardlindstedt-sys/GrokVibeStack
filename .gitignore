@@ -1,0 +1,14 @@
+# local noise
+.serena/
+.venv/
+venv/
+__pycache__/
+*.log
+.DS_Store
+Thumbs.db
+
+# never ship secrets
+.env
+.env.*
+auth.json
+**/memory*.db

@@ -1,0 +1,23 @@
+name: vibe-stack-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse + profile + doctor smoke (no AI)
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $script = Join-Path $env:GITHUB_WORKSPACE 'assets/vibe-tools/scripts/Invoke-VibeStackSmoke.ps1'
+          if (-not (Test-Path $script)) { throw "Missing $script" }
+          & $script -RepoRoot $env:GITHUB_WORKSPACE -WithHooksInstall
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

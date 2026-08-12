@@ -1,0 +1,48 @@
+# --- grok-vibe-stack managed block (begin) ---
+# MAX quality gates + MAX token savings (interactive session)
+[session]
+# Compact earlier than default 70 - shrinks long sessions harder
+auto_compact_threshold_percent = 55
+
+[features]
+two_pass_compaction = true
+
+[mcp]
+# Cap fat tool dumps entering context (was 40000)
+max_output_bytes = 20000
+
+[mcp_servers.headroom]
+command = "HEADROOM_MCP_CMD"
+args = []
+enabled = true
+startup_timeout_sec = 90
+
+[mcp_servers.serena]
+command = "SERENA_EXE"
+args = [
+    "start-mcp-server",
+    "--project-from-cwd",
+    "--context=grok",
+    "--open-web-dashboard",
+    "false",
+]
+enabled = true
+startup_timeout_sec = 120
+
+[model.grok-via-headroom]
+model = "grok-4.5"
+base_url = "http://127.0.0.1:8787/v1"
+api_backend = "responses"
+env_key = [
+    "XAI_API_KEY",
+    "OPENAI_API_KEY",
+]
+name = "Grok 4.5 + Headroom proxy (max savings)"
+description = "Grok 4.5 via local Headroom proxy port 8787 - max token compression profile"
+context_window = 500000
+
+[models]
+default = "grok-via-headroom"
+# medium for interactive chat savings; commit/push AI review forces high via grok-ai-review.ps1
+default_reasoning_effort = "medium"
+# --- grok-vibe-stack managed block (end) ---
