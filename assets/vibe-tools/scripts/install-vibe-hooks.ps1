@@ -153,46 +153,56 @@ Write-Host "  pre-commit  -> scans -Scope Auto + grok-ai-review -Profile standar
 Write-Host "  pre-push    -> scans Full/cache + grok-ai-review -Profile fast -AutoProfile" -ForegroundColor Yellow
 Write-Host "  reports     -> ~/.grok/vibe-tools/reports/latest.md" -ForegroundColor DarkGray
 
-# Global Grok on-edit hook (session lifecycle) — vibe-coding only; do not touch token-saving.json
-$grokHooksDir = Join-Path $env:USERPROFILE '.grok\hooks'
+# Global Grok on-edit hook — materialize from assets/hooks/vibe-coding.json
+# (same source as Install-GrokVibeStack). Do not embed the hook tree here.
+$grokHome = Join-Path $env:USERPROFILE '.grok'
+$grokHooksDir = Join-Path $grokHome 'hooks'
 New-Item -ItemType Directory -Force -Path $grokHooksDir | Out-Null
 $vibeHookJson = Join-Path $grokHooksDir 'vibe-coding.json'
 
-$onEditPs1 = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\run-vibe-on-edit.ps1'
-$stopPs1 = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\run-vibe-stop-remind.ps1'
-$onEditCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $onEditPs1 + '"'
-$stopCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $stopPs1 + '"'
-
-$hookObj = [ordered]@{
-    hooks = [ordered]@{
-        PostToolUse = @(
-            [ordered]@{
-                matcher = 'search_replace|Write|Edit|MultiEdit|write'
-                hooks   = @(
-                    [ordered]@{
-                        type    = 'command'
-                        command = $onEditCmd
-                        timeout = 60
-                    }
-                )
-            }
-        )
-        Stop        = @(
-            [ordered]@{
-                hooks = @(
-                    [ordered]@{
-                        type    = 'command'
-                        command = $stopCmd
-                        timeout = 5
-                    }
-                )
-            }
-        )
-    }
+$tplCandidates = @(
+    (Join-Path $PSScriptRoot '..\..\hooks\vibe-coding.json')
+)
+$manifestPath = Join-Path $grokHome 'vibe-stack-manifest.json'
+if (Test-Path -LiteralPath $manifestPath) {
+    try {
+        $man = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        if ($man.scriptRoot) {
+            $tplCandidates += (Join-Path $man.scriptRoot 'assets\hooks\vibe-coding.json')
+        }
+    } catch {}
 }
 
+$tpl = $null
+$raw = $null
+foreach ($c in $tplCandidates) {
+    $full = [System.IO.Path]::GetFullPath($c)
+    if (-not (Test-Path -LiteralPath $full)) { continue }
+    $probe = Get-Content -LiteralPath $full -Raw
+    if ($probe.Contains('__GROK_HOME__')) {
+        $tpl = $full
+        $raw = $probe
+        break
+    }
+}
+if (-not $tpl) {
+    Write-Error "Missing hook template vibe-coding.json (assets/hooks) with __GROK_HOME__"
+    exit 1
+}
+
+$homeJson = $grokHome.Replace('\', '\\')
+$hookText = $raw.Replace('__GROK_HOME__', $homeJson)
+if ($hookText.Contains('__GROK_HOME__')) {
+    Write-Error "Unsubstituted placeholder in vibe-coding.json"
+    exit 1
+}
+if ($hookText -notmatch 'run-vibe-stop-remind\.ps1') {
+    Write-Error "refusing to write vibe-coding.json without run-vibe-stop-remind.ps1"
+    exit 1
+}
+$null = $hookText | ConvertFrom-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllText($vibeHookJson, ($hookObj | ConvertTo-Json -Depth 8), $utf8NoBom)
+[System.IO.File]::WriteAllText($vibeHookJson, $hookText, $utf8NoBom)
 Write-Host ""
 Write-Host "Installed Grok session hook: $vibeHookJson" -ForegroundColor Green
 Write-Host "  PostToolUse (edits) -> run-vibe-on-edit.ps1 (secrets + linters + session flag)" -ForegroundColor Yellow

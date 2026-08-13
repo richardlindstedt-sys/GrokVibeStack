@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed (P0 hotfix)
+
+- Session Stop hook is installed from `assets/hooks/vibe-coding.json` (`run-vibe-stop-remind.ps1`). Installer no longer overwrites it with an always-on `Write-Host` nag
+- Uninstall never removes User PATH entries outside `~\.grok` (old manifests recorded Git/Node/npm). Installer records stack-owned PATH dirs only
+- Live hook JSON is template-substituted, not `ConvertTo-Json` hashtables (avoids PS 5.1 single-element array unwrap)
+
 ### Changed
 
 - Override built-in `grok-4.6` to Headroom proxy via quoted `[model."grok-4.6"]` (unquoted dotted ids are ignored as nested tables); vanilla hatch `[model."grok-4.6-direct"]` (`-m` honored); AI-review proxy-down fallback requires the hatch table's official `base_url`
