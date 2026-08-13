@@ -7,6 +7,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# local-only work queue (not shipped)
+TASKS.md
+
 # never ship secrets
 .env
 .env.*
