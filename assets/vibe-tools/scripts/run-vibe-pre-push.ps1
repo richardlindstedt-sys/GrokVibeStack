@@ -48,6 +48,15 @@ if ($stdin) {
     }
 }
 
+function ConvertTo-SinglePatchText($raw) {
+    # git.exe on Windows PowerShell 5.1 returns string[] for multi-line patches.
+    # Nesting those in @($a, $b) -join emits "System.String[]", not the patch.
+    if ($null -eq $raw) { return $null }
+    $s = if ($raw -is [string]) { $raw } else { (@($raw) | ForEach-Object { "$_" }) -join "`n" }
+    if ([string]::IsNullOrWhiteSpace($s)) { return $null }
+    return $s
+}
+
 function Get-NewBranchPushDiff([string]$Tip) {
     $commits = @(git rev-list --max-count=20 $Tip 2>$null | Where-Object { $_ })
     if ($commits.Count -eq 0) { return $null }
@@ -55,13 +64,13 @@ function Get-NewBranchPushDiff([string]$Tip) {
     $parent = $null
     try { $parent = (git rev-parse --verify --quiet "$oldest^" 2>$null | Select-Object -First 1) } catch {}
     if ($parent -and "$parent" -notmatch '^0+$') {
-        $d = git diff --no-color "$parent..$Tip" 2>$null
+        $d = ConvertTo-SinglePatchText (git diff --no-color "$parent..$Tip" 2>$null)
         if ($d) { return $d }
     }
-    $rootPatch = git diff-tree -p --root --no-color $oldest 2>$null
-    if (-not $rootPatch) { $rootPatch = git show --no-color --pretty=format: -p $oldest 2>$null }
+    $rootPatch = ConvertTo-SinglePatchText (git diff-tree -p --root --no-color $oldest 2>$null)
+    if (-not $rootPatch) { $rootPatch = ConvertTo-SinglePatchText (git show --no-color --pretty=format: -p $oldest 2>$null) }
     $rest = $null
-    if ($oldest -ne $Tip) { $rest = git diff --no-color "$oldest..$Tip" 2>$null }
+    if ($oldest -ne $Tip) { $rest = ConvertTo-SinglePatchText (git diff --no-color "$oldest..$Tip" 2>$null) }
     $parts = @($rootPatch, $rest) | Where-Object { $_ }
     if (-not $parts -or @($parts).Count -eq 0) { return $null }
     return ((@($parts)) -join "`n`n")

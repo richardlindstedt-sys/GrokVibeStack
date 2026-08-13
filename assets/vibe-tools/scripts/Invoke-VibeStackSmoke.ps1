@@ -274,10 +274,10 @@ if ($prePushSrc -match 'scanner process did not start or returned no exit code' 
 } else {
     Bad 'pre-push still maps null scan ExitCode to 0'
 }
-if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -match 'rev-list --max-count=20' -and $prePushSrc -notmatch '\$localSha~20') {
-    Ok 'pre-push: new branch walks rev-list (not tip-only ~20 fallback)'
+if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -match 'rev-list --max-count=20' -and $prePushSrc -notmatch '\$localSha~20' -and $prePushSrc -match 'ConvertTo-SinglePatchText') {
+    Ok 'pre-push: new branch walks rev-list; patches flattened to one string'
 } else {
-    Bad 'pre-push still uses sha~20 / tip-only fallback'
+    Bad 'pre-push still uses sha~20 / tip-only fallback or nests git string[]'
 }
 if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item -LiteralPath \$src') {
     Ok 'scans: staged tree never copies worktree'
