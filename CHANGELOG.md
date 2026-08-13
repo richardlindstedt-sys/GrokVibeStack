@@ -8,6 +8,11 @@ All notable changes to this project are documented in this file.
 
 - Gate live progress: flushed stdout/stderr + `~/.grok/vibe-tools/reports/live-gate.log`; 15s heartbeats while reviewer jobs run (`Write-Host` is silent under redirected git/Grok hooks)
 
+### Fixed
+
+- Installer: parenthesize `Test-Path` / `Test-CommandExists` before `-or` (PS bound `-or` as a param → `WARN ensure-rtk: parameter name 'or'`)
+- Serena: empty `language_servers` made symbol tools fail (`No language servers available`). `ensure-serena.ps1` installs/verifies the binary, infers LS (PowerShell 7 for `.ps1`), repairs project.yml; installer fails closed if Serena is not runnable; config disables the MCP server when the exe is missing
+
 ### Fixed (P1-B8 / B5 / B7)
 
 - Pre-push: null `Start-Process` / null `ExitCode` blocks the push (no silent scan skip)

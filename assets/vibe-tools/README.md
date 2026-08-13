@@ -23,7 +23,7 @@ High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** ar
 - Git             → commit hooks
 
 Scanner binaries live in `~\.grok\vibe-tools\venv\Scripts` (also on user PATH).
-Serena CLI: `~\.local\bin\serena.exe` (MCP wired in `~\.grok\config.toml`).
+Serena CLI: `~\.local\bin\serena.exe` (MCP wired in `~\.grok\config.toml`). Installer runs `ensure-serena.ps1` so the binary works and `.serena/project.yml` has language servers (empty list breaks symbol tools).
 
 ## Orchestrators (what they do)
 

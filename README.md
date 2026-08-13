@@ -183,7 +183,7 @@ $env:VIBE_REQUIRE_SCANNERS = '0'   # default is require trivy+gitleaks; 0 = soft
 - **Advisories** do not block; **blockers** do (panel `severity=blocker` forces BLOCK even if vote disagrees)  
 - Reports: `~\.grok\vibe-tools\reports\latest.md`  
 - Scanners in gates are **read-only** (Biome does not auto-write)  
-- **Serena MCP** installs by default; **Serena remind hooks stay off** (they broke Read UX). Opt-in: `Enable-SerenaRemindHooks.ps1`  
+- **Serena MCP** installs by default (`ensure-serena.ps1`: PyPI `serena-agent`, verify `--version`, infer/repair `.serena/project.yml` language servers — empty list breaks symbol tools). **Remind hooks stay off**. Opt-in: `Enable-SerenaRemindHooks.ps1`  
 
 ### Token savings (max profile) — knobs and what they mean
 

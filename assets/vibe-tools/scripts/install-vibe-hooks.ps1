@@ -217,4 +217,18 @@ Write-Host "==============================================================" -For
 Write-Host "Bypass (emergency only): git commit|push --no-verify" -ForegroundColor DarkGray
 Write-Host "AI review gate is fail-closed (missing grok/proxy/verdict blocks)." -ForegroundColor DarkGray
 Write-Host ""
+
+$ensureSerena = Join-Path $grokHome 'token-saving\scripts\ensure-serena.ps1'
+if (Test-Path -LiteralPath $ensureSerena) {
+    Write-Host "Ensuring Serena project language servers in $repo ..." -ForegroundColor DarkGray
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $ensureSerena -RepoPath $repo.Path
+    } catch {
+        Write-Host "WARN ensure-serena: $_" -ForegroundColor Yellow
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
 Write-Host "Done. Edit -> fast checks. Commit -> standard gate. Push -> fast gate." -ForegroundColor Green

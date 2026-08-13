@@ -41,6 +41,43 @@ if ($rtkCmd) {
 } else {
     Write-Host "rtk:      MISSING"
 }
+$serenaCmd = Get-Command serena -ErrorAction SilentlyContinue
+$serenaExe = $null
+foreach ($p in @(
+        (Join-Path $env:USERPROFILE '.local\bin\serena.exe'),
+        (Join-Path $grokBin 'serena.exe')
+    )) {
+    if (Test-Path -LiteralPath $p) { $serenaExe = $p; break }
+}
+if (-not $serenaExe -and $serenaCmd) { $serenaExe = $serenaCmd.Source }
+if ($serenaExe) {
+    $sv = & $serenaExe --version 2>&1
+    Write-Host "serena:   $sv @ $serenaExe"
+} else {
+    Write-Host "serena:   MISSING - uv tool install serena-agent" -ForegroundColor Yellow
+}
+if (Test-Path -LiteralPath $cfg) {
+    $cfgRaw = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    if ($cfgRaw -match "(?m)\[mcp_servers\.serena\][\s\S]{0,400}?command\s*=\s*'([^']+)'") {
+        $cfgSerena = $Matches[1]
+        $cfgOn = $cfgRaw -match '(?s)\[mcp_servers\.serena\].*?enabled\s*=\s*true'
+        $cfgOk = Test-Path -LiteralPath $cfgSerena
+        Write-Host "  config: $cfgSerena enabled=$cfgOn exists=$cfgOk" -ForegroundColor (Get-StatusColor ($cfgOk -and $cfgOn))
+    }
+}
+$projYml = Join-Path (Get-Location) '.serena\project.yml'
+if (Test-Path -LiteralPath $projYml) {
+    $pyRaw = Get-Content -LiteralPath $projYml -Raw
+    $emptyLs = ($pyRaw -match '(?m)^language_servers:\s*\[\s*\]') -or ($pyRaw -notmatch '(?m)^language_servers:\s*\r?\n-')
+    if ($emptyLs) {
+        Write-Host "  project: language_servers EMPTY - symbol tools fail. Fix: ensure-serena.ps1 -RepoPath ." -ForegroundColor Yellow
+    } else {
+        $ls = [regex]::Matches($pyRaw, '(?m)^-\s+(\S+)') | ForEach-Object { $_.Groups[1].Value }
+        Write-Host "  project: language_servers = $($ls -join ', ')"
+    }
+} else {
+    Write-Host "  project: no .serena/project.yml in cwd (ok until you open a repo)" -ForegroundColor DarkGray
+}
 Write-Host "caveman:  $(Get-Content (Join-Path $grokHome '.caveman-active') -ErrorAction SilentlyContinue)"
 Write-Host "HEADROOM_CONTEXT_TOOL: $(if ($env:HEADROOM_CONTEXT_TOOL) { $env:HEADROOM_CONTEXT_TOOL } else { 'rtk (default)' })"
 

@@ -1,5 +1,6 @@
-# local noise
-.serena/
+# local noise (keep versioned Serena language list)
+.serena/*
+!.serena/project.yml
 .venv/
 venv/
 __pycache__/

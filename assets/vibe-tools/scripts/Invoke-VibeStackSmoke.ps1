@@ -80,6 +80,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\vibe-review.ps1')
 )
@@ -312,6 +313,17 @@ $instSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Install-GrokVibeStack.
 $unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
 $hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
 $vibeHookTpl = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\hooks\vibe-coding.json') -Raw
+if ($instSrc -match 'ensure-serena\.ps1' -and $instSrc -match 'function Test-SerenaAlive' -and $instSrc -match 'function Resolve-SerenaExe' -and $instSrc -match 'if \(Test-SerenaAlive \$p\) \{ return \$p \}' -and (Test-Path (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'))) {
+    Ok 'installer: ensure-serena install + verify + project LS repair'
+} else {
+    Bad 'installer missing ensure-serena.ps1 wiring'
+}
+$projYmlSrc = Join-Path $RepoRoot '.serena\project.yml'
+if ((Test-Path $projYmlSrc) -and ((Get-Content $projYmlSrc -Raw) -match '(?m)^-\s+powershell') -and ((Get-Content $projYmlSrc -Raw) -notmatch '(?m)^language_servers:\s*\[\s*\]')) {
+    Ok 'serena project.yml has powershell language server'
+} else {
+    Bad 'serena project.yml missing or language_servers empty'
+}
 if ($instSrc -match 'Write-HookFromTemplate' -and $instSrc -match "Write-HookFromTemplate 'vibe-coding.json'" -and $instSrc -notmatch "Write-Host '\[vibe\] Turn end" -and $instSrc -match 'Write-HookFromTemplate ''vibe-coding.json''\s*\r?\n\s*if \(\$DryRun\) \{ return \}') {
     Ok 'installer: hooks from templates (no stale Stop Write-Host); DryRun returns before serena delete'
 } else {
