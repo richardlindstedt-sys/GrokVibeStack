@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed (P1-B8 / B5 / B7)
+
+- Pre-push: null `Start-Process` / null `ExitCode` blocks the push (no silent scan skip)
+- Staged scan tree: no worktree `Copy-Item` fallback — missing index blob fails the gate
+- New-branch push: `rev-list --max-count=20` + parent/root patch (no `sha~20` tip-only fallback)
+
 ### Fixed (P1-B1…B3)
 
 - AutoProfile keeps both rename sides (`auth/x.py` → `docs/y.md` still sensitive); staged/WT uses `--name-status`

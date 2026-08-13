@@ -268,6 +268,21 @@ if ($prePushSrc -match 'Start-Process' -and $prePushSrc -match '-File' -and $pre
 } else {
     Bad 'pre-push still uses bare & for scans (LASTEXITCODE poison risk)'
 }
+if ($prePushSrc -match 'scanner process did not start or returned no exit code' -and $prePushSrc -notmatch 'null -eq \$scanProc\.ExitCode\) \{ 0 \}') {
+    Ok 'pre-push: null Start-Process / ExitCode fail-closed'
+} else {
+    Bad 'pre-push still maps null scan ExitCode to 0'
+}
+if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -match 'rev-list --max-count=20' -and $prePushSrc -notmatch '\$localSha~20') {
+    Ok 'pre-push: new branch walks rev-list (not tip-only ~20 fallback)'
+} else {
+    Bad 'pre-push still uses sha~20 / tip-only fallback'
+}
+if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item -LiteralPath \$src') {
+    Ok 'scans: staged tree never copies worktree'
+} else {
+    Bad 'staged scan still Copy-Item worktree fallback'
+}
 $rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {
     Ok 'rtk: sg/ast-grep/difft/tokei + no bare find'
