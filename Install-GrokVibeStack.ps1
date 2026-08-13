@@ -4,7 +4,7 @@
   Bootstrap the full Grok vibe-coding + token-saving stack on a machine that only has Grok Build CLI.
 
 .DESCRIPTION
-  Idempotent. Requires grok.exe. Installs everything else needed for the donor-machine stack:
+  Idempotent. Requires grok.exe. Installs the full GrokVibeStack from this repository's assets/:
 
   Prerequisites auto-installed when missing (via winget unless skipped):
     Python 3.10+, Git, Node.js LTS, uv
@@ -569,7 +569,7 @@ function Install-HooksJson {
     Ensure-Dir $hooksDir
 
     # Absolute -File paths: required so PreToolUse stdin reaches the script (unlike -Command).
-    # Regenerated per machine — do not copy donor usernames into the repo templates blindly.
+    # Regenerated per machine — templates use placeholders; live hooks get absolute paths.
     $sessionStart = Join-Path $TokenRoot 'scripts\session-start.ps1'
     $postShell = Join-Path $TokenRoot 'scripts\post-shell.ps1'
     $onEdit = Join-Path $VibeRoot 'scripts\run-vibe-on-edit.ps1'
@@ -1173,7 +1173,7 @@ Write-Host "Smoke (no AI): & `"$VibeRoot\scripts\Invoke-VibeStackSmoke.ps1`" -Wi
 Write-Host "Permissions: stack does NOT set always-approve. Check /settings if tools auto-run." -ForegroundColor DarkGray
 Write-Host ""
 
-# Warn if donor/user already has always-approve (not set by this installer)
+# Warn if user already has always-approve (not set by this installer)
 if (-not $DryRun) {
     $cfgCheck = Join-Path $GrokHome 'config.toml'
     if (Test-Path -LiteralPath $cfgCheck) {
