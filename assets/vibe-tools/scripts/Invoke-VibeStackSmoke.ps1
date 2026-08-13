@@ -219,15 +219,28 @@ if ($rawReview -match 'Normalize-ReviewerVote' -and $rawReview -match 'Get-Panel
 } else {
     Bad 'review missing Normalize-ReviewerVote / still has unstructured vote fallback'
 }
-if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -notmatch 'git add -u' -and $rawReview -notmatch 'git add -A\s') {
-    Ok 'review: scoped restage (blocker + prior-staged only)'
+# Live restage must not call git add -u/-A (comments mentioning them OK)
+$restageLive = [regex]::Replace($rawReview, '(?m)^\s*#.*$', '')
+if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\s') {
+    Ok 'review: scoped restage (blocker + prior-staged + PreFixDirty)'
 } else {
-    Bad 'review restage still uses git add -u/-A or missing PriorStaged'
+    Bad 'review restage still uses git add -u/-A or missing PriorStaged/PreFixDirty'
 }
 if ($scanSrc -match 'jscpdDomain' -and $scanSrc -match 'iacDomain' -and $scanSrc -match 'no JS/TS' -and $scanSrc -match 'no IaC domain') {
     Ok 'scans: jscpd/checkov path-domain advisory'
 } else {
     Bad 'scans missing jscpd/checkov advisory domain split'
+}
+# Success path must exit 0 so & / $LASTEXITCODE callers are not poisoned by advisory tools
+if ($scanSrc -match 'Static scans passed' -and $scanSrc -match 'exit 0') {
+    Ok 'scans: success path exit 0'
+} else {
+    Bad 'scans missing explicit exit 0 on success'
+}
+if ($prePushSrc -match 'Start-Process' -and $prePushSrc -match '-File' -and $prePushSrc -match 'ExitCode') {
+    Ok 'pre-push: scans via -File process exit'
+} else {
+    Bad 'pre-push still uses bare & for scans (LASTEXITCODE poison risk)'
 }
 $rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {
@@ -301,7 +314,8 @@ if ($hookInst -match '-Profile standard' -and $hookInst -match '-AutoProfile' -a
     Bad 'pre-commit missing AutoProfile/Scope Auto'
 }
 $prePushPs1 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1') -Raw
-if ($prePushPs1 -match '-Profile fast' -and $prePushPs1 -match '-AutoProfile' -and $prePushPs1 -match '-Scope Full') {
+# Scope Full may be '-Scope Full' or Start-Process ArgumentList '-Scope','Full'
+if ($prePushPs1 -match '-Profile fast' -and $prePushPs1 -match '-AutoProfile' -and ($prePushPs1 -match "-Scope['\s,]*Full" -or $prePushPs1 -match "'Full'")) {
     Ok 'pre-push wires fast + AutoProfile + Scope Full/cache'
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
