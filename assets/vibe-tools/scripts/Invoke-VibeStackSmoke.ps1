@@ -260,6 +260,25 @@ if ($stopSrc -and $stopSrc -match 'edited-this-session' -and $onEditSrc -match '
 } else {
     Bad 'stop/on-edit session flag wiring missing'
 }
+$instSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1') -Raw
+$unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
+$hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
+$vibeHookTpl = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\hooks\vibe-coding.json') -Raw
+if ($instSrc -match 'Write-HookFromTemplate' -and $instSrc -match "Write-HookFromTemplate 'vibe-coding.json'" -and $instSrc -notmatch "Write-Host '\[vibe\] Turn end" -and $instSrc -match 'Write-HookFromTemplate ''vibe-coding.json''\s*\r?\n\s*if \(\$DryRun\) \{ return \}') {
+    Ok 'installer: hooks from templates (no stale Stop Write-Host); DryRun returns before serena delete'
+} else {
+    Bad 'installer still builds vibe-coding.json via hashtable / stale Stop nag / DryRun deletes serena-hooks'
+}
+if ($vibeHookTpl -match 'run-vibe-stop-remind\.ps1' -and $hooksInstSrc -match 'run-vibe-stop-remind\.ps1' -and $hooksInstSrc -notmatch "Write-Host '\[vibe\] Turn end") {
+    Ok 'stop-remind in hook template + install-vibe-hooks'
+} else {
+    Bad 'hook template or install-vibe-hooks missing run-vibe-stop-remind.ps1'
+}
+if ($instSrc -match 'stackOwned' -and $instSrc -match 'Never record pre-existing' -and $unSrc -match 'outside GrokHome' -and $unSrc -match 'keep shared Git/Node/npm') {
+    Ok 'PATH: record stack-owned only; uninstall never strips outside ~/.grok'
+} else {
+    Bad 'PATH AlwaysRecord / uninstall shared-dir strip still unsafe'
+}
 $rtkSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment') {
     Ok 'rtk: per-segment enforce present'

@@ -200,8 +200,15 @@ function Add-UserPath {
     } else {
         Write-Info "PATH already has $Dir"
     }
-    # Always record intended stack PATH entries for uninstall (even if pre-existing)
-    if ($AlwaysRecord -or -not $has) {
+    # Record for uninstall only when we prepended this dir, or AlwaysRecord on a
+    # ~/.grok-owned path. Never record pre-existing Git/Node/npm/shared bins —
+    # old AlwaysRecord + uninstall stripped User PATH of tools the user already had.
+    $stackOwned = $false
+    if ($GrokHome) {
+        $g = $GrokHome.TrimEnd('\')
+        $stackOwned = $norm.StartsWith($g, [StringComparison]::OrdinalIgnoreCase)
+    }
+    if ((-not $has) -or ($AlwaysRecord -and $stackOwned)) {
         if (-not $script:Manifest.pathEntries.Contains($Dir)) {
             [void]$script:Manifest.pathEntries.Add($Dir)
         }
@@ -570,65 +577,29 @@ function Install-HooksJson {
     $hooksDir = Join-Path $GrokHome 'hooks'
     Ensure-Dir $hooksDir
 
-    # Absolute -File paths: required so PreToolUse stdin reaches the script (unlike -Command).
-    # Regenerated per machine — templates use placeholders; live hooks get absolute paths.
-    $sessionStart = Join-Path $TokenRoot 'scripts\session-start.ps1'
-    $postShell = Join-Path $TokenRoot 'scripts\post-shell.ps1'
-    $onEdit = Join-Path $VibeRoot 'scripts\run-vibe-on-edit.ps1'
-    $rtkEnforce = Join-Path $TokenRoot 'scripts\run-rtk-enforce.ps1'
+    # Live JSON is materialized from assets/hooks templates (placeholders → absolute
+    # -File paths). Do not rebuild via ConvertTo-Json hashtables: that drifted from
+    # the templates (stale always-on Stop nag) and PS 5.1 unwraps single-element arrays.
+    $tplDir = Join-Path $Assets 'hooks'
+    $homeJson = $GrokHome.Replace('\', '\\')
 
-    $tokenSaving = @{
-        hooks = @{
-            SessionStart = @(@{
-                    hooks = @(@{
-                            type    = 'command'
-                            command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$sessionStart`""
-                            timeout = 15
-                        })
-                })
-            PreToolUse   = @(@{
-                    matcher = 'run_terminal_command|Bash'
-                    hooks   = @(@{
-                            type    = 'command'
-                            command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$rtkEnforce`""
-                            timeout = 5
-                        })
-                })
-            PostToolUse  = @(@{
-                    matcher = 'run_terminal_command|Bash'
-                    hooks   = @(@{
-                            type    = 'command'
-                            command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$postShell`""
-                            timeout = 10
-                        })
-                })
+    function Write-HookFromTemplate([string]$Name) {
+        $src = Join-Path $tplDir $Name
+        if (-not (Test-Path -LiteralPath $src)) { throw "Missing hook template: $src" }
+        $raw = Get-Content -LiteralPath $src -Raw
+        $out = $raw.Replace('__GROK_HOME__', $homeJson)
+        if ($out.Contains('__GROK_HOME__')) { throw "Unsubstituted placeholder in $Name" }
+        if ($Name -eq 'vibe-coding.json' -and $out -notmatch 'run-vibe-stop-remind\.ps1') {
+            throw "vibe-coding template missing run-vibe-stop-remind.ps1"
         }
+        $null = $out | ConvertFrom-Json
+        if ($DryRun) { Write-Info "DRY write hooks\$Name"; return }
+        Write-Utf8NoBomFile (Join-Path $hooksDir $Name) $out
     }
 
-    $vibeCoding = @{
-        hooks = @{
-            PostToolUse = @(@{
-                    matcher = 'search_replace|Write|Edit|MultiEdit|write'
-                    hooks   = @(@{
-                            type    = 'command'
-                            command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$onEdit`""
-                            timeout = 60
-                        })
-                })
-            Stop        = @(@{
-                    hooks = @(@{
-                            type    = 'command'
-                            command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"Write-Host '[vibe] Turn end - if you edited code, confirm vibe-review / scans ran before done.' -ForegroundColor Cyan`""
-                            timeout = 5
-                        })
-                })
-        }
-    }
-
-    if ($DryRun) { Write-Info "DRY write hooks"; return }
-
-    Write-Utf8NoBomFile (Join-Path $hooksDir 'token-saving.json') ($tokenSaving | ConvertTo-Json -Depth 12)
-    Write-Utf8NoBomFile (Join-Path $hooksDir 'vibe-coding.json') ($vibeCoding | ConvertTo-Json -Depth 12)
+    Write-HookFromTemplate 'token-saving.json'
+    Write-HookFromTemplate 'vibe-coding.json'
+    if ($DryRun) { return }
 
     # Serena MCP stays in config.toml. Do NOT install serena-hooks PreToolUse by default:
     # serena-hooks "remind" on every read_file/grep exits silent-allow and Grok UI counts
@@ -638,7 +609,7 @@ function Install-HooksJson {
         Remove-Item -LiteralPath $staleSerena -Force -ErrorAction SilentlyContinue
         Write-Info "removed serena-hooks.json (remind on read caused false hook failures)"
     }
-    Write-Ok "hooks: token-saving (rtk-enforce), vibe-coding (Serena MCP only; no read_file remind hook)"
+    Write-Ok "hooks: token-saving (rtk-enforce), vibe-coding (on-edit + gated stop-remind)"
 }
 
 function Install-GithubReleaseBinary {
@@ -955,15 +926,16 @@ Write-Ok "Python ready: $($py.Version)"
 Write-Step "User PATH entries"
 # Create only user-owned dirs; never mkdir under Program Files
 Add-UserPath $GrokBin -CreateIfMissing -AlwaysRecord
-Add-UserPath $LocalBin -CreateIfMissing -AlwaysRecord
-Add-UserPath $HeadroomBin -CreateIfMissing -AlwaysRecord
+Add-UserPath $LocalBin -CreateIfMissing
+Add-UserPath $HeadroomBin -CreateIfMissing
 Add-UserPath (Join-Path $TokenRoot 'venv\Scripts') -AlwaysRecord
 Add-UserPath (Join-Path $VibeRoot 'venv\Scripts') -AlwaysRecord
-Add-UserPath (Join-Path $env:APPDATA 'npm') -AlwaysRecord
-# System install locations: add only if already present (winget/Git put them there)
-Add-UserPath 'C:\Program Files\Git\cmd' -AlwaysRecord
-Add-UserPath 'C:\Program Files\nodejs' -AlwaysRecord
-Add-UserPath 'C:\Program Files\GitHub CLI' -AlwaysRecord
+# Shared bins: add if present so this session can find them; do NOT AlwaysRecord
+# (uninstall must never strip pre-existing Git/Node/npm from User PATH).
+Add-UserPath (Join-Path $env:APPDATA 'npm')
+Add-UserPath 'C:\Program Files\Git\cmd'
+Add-UserPath 'C:\Program Files\nodejs'
+Add-UserPath 'C:\Program Files\GitHub CLI'
 
 Write-Step "Python venvs (Headroom + vibe scanners)"
 $hrReq = if ($UseFrozenReqs -and (Test-Path (Join-Path $Assets 'requirements\headroom-freeze.txt'))) {

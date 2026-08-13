@@ -316,12 +316,18 @@ Write-Step "config.toml"
 Remove-ManagedConfigBlock
 
 Write-Step "User PATH cleanup"
+$grokHomeNorm = $GrokHome.TrimEnd('\')
 foreach ($pe in @($m.pathEntries)) {
-    # Do not remove GrokBin entirely if grok.exe still lives there - only remove if empty of grok?
-    # Safer: still remove GrokBin from PATH only when user wants - actually Grok needs ~/.grok/bin on PATH.
+    if (-not $pe) { continue }
+    $peNorm = ([string]$pe).TrimEnd('\')
     # NEVER remove $GrokBin from PATH - grok lives there.
-    if ($pe -and ($pe.TrimEnd('\') -ieq $GrokBin.TrimEnd('\'))) {
+    if ($peNorm -ieq $GrokBin.TrimEnd('\')) {
         Write-Skip "PATH $pe (Grok bin - keep)"
+        continue
+    }
+    # Old manifests recorded Git/Node/npm. Never strip anything outside GrokHome.
+    if (-not $peNorm.StartsWith($grokHomeNorm, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Skip "PATH $pe (outside GrokHome - keep shared Git/Node/npm)"
         continue
     }
     Remove-UserPathEntry -Dir ([string]$pe)
