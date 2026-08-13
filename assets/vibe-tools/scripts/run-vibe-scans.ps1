@@ -27,6 +27,8 @@ elseif ($env:VIBE_SCAN_SCOPE -match '^(?i)full$') { $Scope = 'Full' }
 $script:ScanExcludeRegex = '(\\node_modules\\|\\\.git\\|\\\.serena\\|\\venv\\|\\\.venv\\|\\\.grok\\|\\__pycache__\\|\\\.tox\\|\\dist\\|\\build\\)'
 # Shared Full-only scan-pass cache (Save/Test/Get-TreeHash)
 . (Join-Path $PSScriptRoot 'scan-pass-cache.ps1')
+$progressPs1 = Join-Path $PSScriptRoot 'gate-progress.ps1'
+if (Test-Path -LiteralPath $progressPs1) { . $progressPs1 }
 
 # Ensure vibe scanner bins + common tooling are visible even if shell PATH is stale.
 foreach ($p in @(
@@ -310,6 +312,9 @@ function Run-Pester {
 
 Write-Host "=== Vibe Static Scans ===" -ForegroundColor Cyan
 Write-Host "Scanning: $($Paths -join ', ')  scope=$Scope"
+if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+    Write-GateProgress ("scans start scope={0} paths={1}" -f $Scope, ($Paths -join ','))
+}
 
 $stagedNames = @(Get-StagedNameList)
 $useStaged = $false

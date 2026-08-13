@@ -70,6 +70,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\grok-ai-review.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-path-parse.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-progress.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1'),
@@ -282,6 +283,12 @@ if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item 
     Ok 'scans: staged tree never copies worktree'
 } else {
     Bad 'staged scan still Copy-Item worktree fallback'
+}
+$progSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-progress.ps1') -Raw
+if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gate\.log' -and $progSrc -match 'function Wait-VibeJobs' -and $rawReview -match 'Wait-VibeJobs' -and $prePushSrc -match 'gate-progress\.ps1') {
+    Ok 'gate progress: live-gate.log + job heartbeats wired'
+} else {
+    Bad 'gate-progress.ps1 missing or not wired into review/pre-push'
 }
 $rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {

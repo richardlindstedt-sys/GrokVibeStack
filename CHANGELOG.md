@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Gate live progress: flushed stdout/stderr + `~/.grok/vibe-tools/reports/live-gate.log`; 15s heartbeats while reviewer jobs run (`Write-Host` is silent under redirected git/Grok hooks)
+
 ### Fixed (P1-B8 / B5 / B7)
 
 - Pre-push: null `Start-Process` / null `ExitCode` blocks the push (no silent scan skip)

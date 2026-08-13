@@ -61,6 +61,8 @@ if (-not (Test-Path -LiteralPath $pathParse)) {
     exit 1
 }
 . $pathParse
+$progressPs1 = Join-Path $vibeScripts 'gate-progress.ps1'
+if (Test-Path -LiteralPath $progressPs1) { . $progressPs1 }
 $vibeRoot = Split-Path $vibeScripts -Parent
 $reportsRoot = Join-Path $vibeRoot 'reports'
 $cacheDir = Join-Path $vibeRoot 'cache'
@@ -282,6 +284,9 @@ function Write-GateFail([string]$msg) {
 function Write-Phase([string]$msg) {
     Write-Host ""
     Write-Host $msg -ForegroundColor Yellow
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress $msg
+    }
 }
 
 function Test-PortListening([int]$p) {
@@ -587,6 +592,9 @@ function Invoke-GrokHeadless {
 
     $writeFlag = [bool]$AllowWrites
     Write-Host ("  -> {0} (model={1}, turns<={2}, write={3})" -f $Label, $ModelName, $MaxTurns, $writeFlag) -ForegroundColor DarkGray
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("start {0} model={1} turns<={2}" -f $Label, $ModelName, $MaxTurns)
+    }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $output = $null
     $code = 0
@@ -598,6 +606,9 @@ function Invoke-GrokHeadless {
         return @{ Ok = $false; Text = "$_"; ExitCode = -1; Seconds = $sw.Elapsed.TotalSeconds }
     }
     $sw.Stop()
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("done {0} {1:n0}s exit={2}" -f $Label, $sw.Elapsed.TotalSeconds, $code)
+    }
     $text = if ($output) { ($output | ForEach-Object { "$_" }) -join "`n" } else { '' }
     if ($OutLog) { Save-Text $OutLog $text }
     $ok = ($code -eq 0 -or $null -eq $code) -and -not [string]::IsNullOrWhiteSpace($text)
@@ -979,7 +990,11 @@ function Invoke-ReviewerPanel {
             } -ArgumentList $GrokExe, $ModelName, $pf, $lf, $Effort, $MaxTurns, $role
         }
         Write-Host "  ... waiting for $($jobs.Count) reviewer jobs" -ForegroundColor DarkGray
-        $null = Wait-Job -Job $jobs -Timeout 1200
+        if (Get-Command Wait-VibeJobs -ErrorAction SilentlyContinue) {
+            Wait-VibeJobs -Jobs $jobs -TimeoutSec 1200 -PulseSec 15
+        } else {
+            $null = Wait-Job -Job $jobs -Timeout 1200
+        }
         foreach ($j in $jobs) {
             $r = Receive-Job $j -ErrorAction SilentlyContinue
             Remove-Job $j -Force -ErrorAction SilentlyContinue
@@ -1270,7 +1285,11 @@ function Exit-Gate {
 
 $script:overallSw = [System.Diagnostics.Stopwatch]::StartNew()
 
+if (Get-Command Reset-GateLiveLog -ErrorAction SilentlyContinue) { Reset-GateLiveLog }
 Write-Host "=== VIBE MULTI-REVIEWER QUALITY LOOP ===" -ForegroundColor Cyan
+if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+    Write-GateProgress ("profile={0} roles={1}" -f $script:ResolvedProfile.Name, ($script:ResolvedProfile.Roles -join ','))
+}
 Write-Host ("Profile: {0} - {1}" -f $script:ResolvedProfile.Name, $script:ResolvedProfile.Description) -ForegroundColor DarkCyan
 Write-Host ("Roles: {0}" -f ($script:ResolvedProfile.Roles -join ', ')) -ForegroundColor DarkCyan
 Write-Host ("MaxRounds={0}  Fix={1}  Parallel={2}  Cache={3}" -f $MaxRounds, (-not [bool]$NoFix), (-not [bool]$SequentialReviewers), (-not [bool]$NoCache)) -ForegroundColor DarkGray

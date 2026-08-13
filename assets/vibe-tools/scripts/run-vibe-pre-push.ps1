@@ -12,6 +12,8 @@ $ErrorActionPreference = 'Continue'
 $vibeScripts = Split-Path $MyInvocation.MyCommand.Path -Parent
 $runScans = Join-Path $vibeScripts 'run-vibe-scans.ps1'
 $aiReview = Join-Path $vibeScripts 'grok-ai-review.ps1'
+$progressPs1 = Join-Path $vibeScripts 'gate-progress.ps1'
+if (Test-Path -LiteralPath $progressPs1) { . $progressPs1; Reset-GateLiveLog }
 
 Write-Host ""
 Write-Host "+================================================================+" -ForegroundColor Magenta
@@ -98,6 +100,7 @@ if (-not $diff) {
 }
 
 Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
+if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 1/2 static scans' }
 if (-not $env:VIBE_REQUIRE_SCANNERS) { $env:VIBE_REQUIRE_SCANNERS = '1' }
 
 # Skip full rescans only when a prior Full pass hit (same treeHash + cwd, TTL ~2h).
@@ -139,6 +142,7 @@ if (-not $skipScans) {
 
 Write-Host ""
 Write-Host ">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile=fast, AutoProfile)" -ForegroundColor Cyan
+if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 2/2 grok AI review' }
 # fast + AutoProfile: docs stay cheap; sensitive paths add security reviewer
 # Reset so review check cannot see pre-scan / pre-review leftover codes.
 $global:LASTEXITCODE = 0
