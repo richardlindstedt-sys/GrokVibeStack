@@ -272,6 +272,17 @@ if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackF
 } else {
     Bad 'start-grok missing proxy fingerprint checks'
 }
+$snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
+if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6') {
+    Ok 'config: quoted grok-4.6 / grok-4.6-direct tables'
+} else {
+    Bad 'config-snippet missing quoted model tables (unquoted dotted ids are ignored)'
+}
+if ($rawReview -match 'Test-VanillaHatchEndpoint' -and $rawReview -match 'vanilla hatch') {
+    Ok 'review: hatch official endpoint before proxy-down fallback'
+} else {
+    Bad 'review missing Test-VanillaHatchEndpoint hatch check'
+}
 # Live RTK segment behavior (no network)
 $rtkScript = Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'
 function Invoke-RtkGate([string]$command) {

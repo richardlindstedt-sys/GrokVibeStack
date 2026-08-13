@@ -309,6 +309,19 @@ function Resolve-GrokExe {
     return $null
 }
 
+function Test-VanillaHatchEndpoint {
+    # Quoted table + non-loopback https base_url. Listing `grok models` is not enough.
+    $cfg = Join-Path $env:USERPROFILE '.grok\config.toml'
+    if (-not (Test-Path -LiteralPath $cfg)) { return $false }
+    $txt = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($txt)) { return $false }
+    $sec = [regex]::Match($txt, '(?ms)^\s*\[model\."grok-4\.6-direct"\]\s*$(.*?)(?=^\s*\[|\z)')
+    if (-not $sec.Success) { return $false }
+    $url = [regex]::Match($sec.Groups[1].Value, 'base_url\s*=\s*"(https://[^"]+)"')
+    if (-not $url.Success) { return $false }
+    return ($url.Groups[1].Value -notmatch '127\.0\.0\.1|localhost')
+}
+
 function Test-ReviewPreflight {
     param([string]$ModelName, [int]$Port)
     $exe = Resolve-GrokExe
@@ -317,7 +330,9 @@ function Test-ReviewPreflight {
         return $null
     }
     $resolvedModel = $ModelName
-    if ($ModelName -match 'headroom|8787') {
+    $hatch = 'grok-4.6-direct'
+    $needsProxy = ($ModelName -match 'headroom|8787') -or ($ModelName -eq 'grok-4.6')
+    if ($needsProxy) {
         if (-not (Test-PortListening $Port)) {
             $startGrok = Join-Path $env:USERPROFILE '.grok\token-saving\scripts\start-grok.ps1'
             if (Test-Path -LiteralPath $startGrok) {
@@ -326,8 +341,14 @@ function Test-ReviewPreflight {
             }
         }
         if (-not (Test-PortListening $Port)) {
-            Write-Host "Proxy still down - falling back to model grok-4.6." -ForegroundColor Yellow
-            $resolvedModel = 'grok-4.6'
+            # Unquoted [model.grok-4.6-direct] never registers (TOML nest).
+            # Require quoted table with its own official https base_url (not loopback).
+            if (-not (Test-VanillaHatchEndpoint)) {
+                Write-GateFail "Headroom proxy down and vanilla hatch '$hatch' has no official base_url. Quote [model.`"$hatch`"] in ~/.grok/config.toml (re-run installer). Do not use grok-4.6 (Headroom)."
+                return $null
+            }
+            Write-Host "Proxy still down - falling back to model $hatch (official endpoint)." -ForegroundColor Yellow
+            $resolvedModel = $hatch
         }
     }
     return @{ Exe = $exe; Model = $resolvedModel }

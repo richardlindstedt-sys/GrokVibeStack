@@ -14,7 +14,7 @@
 - **Shell:** prefix noisy commands with `rtk` (Rust Token Killer). See `~/.grok/RTK.md`.
 - Summarize noisy shell/test output; keep exact errors.
 - Stack: caveman ultra (chat) + **rtk** (shell) + Headroom proxy + MCP + early two-pass compaction.
-- Preferred launch: `start-grok` (auto proxy + rtk ensure + `grok-via-headroom`).
+- Preferred launch: `start-grok` (auto proxy + rtk ensure; `grok-4.6` goes through Headroom). Vanilla: `-m grok-4.6-direct`.
 
 ## Skills
 

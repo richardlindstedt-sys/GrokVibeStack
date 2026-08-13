@@ -29,8 +29,10 @@ args = [
 enabled = true
 startup_timeout_sec = 120
 
-[model.grok-via-headroom]
-model = "grok-4.6"
+# Quote dotted ids. Unquoted [model.grok-4.6] is parsed as model.grok-4 + field "6"
+# (Grok 1.0.3 inspect: unknown-field) so the table never registers.
+# Catalog default is grok-4.6 (beats [models].default). Override so default hits Headroom.
+[model."grok-4.6"]
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
 env_key = [
@@ -39,10 +41,32 @@ env_key = [
 ]
 name = "Grok 4.6 + Headroom proxy (max savings)"
 description = "Grok 4.6 via local Headroom proxy port 8787 - max token compression profile"
+
+# Explicit alias (older sessions / start-grok -m grok-via-headroom)
+[model.grok-via-headroom]
+model = "grok-4.6"
+base_url = "http://127.0.0.1:8787/v1"
+api_backend = "responses"
+env_key = [
+    "XAI_API_KEY",
+    "OPENAI_API_KEY",
+]
+name = "Grok 4.6 + Headroom proxy (alias)"
+description = "Same Headroom proxy as the grok-4.6 override; kept for -m grok-via-headroom"
+context_window = 500000
+
+# Vanilla hatch (no proxy). Quoted table is required; -m grok-4.6-direct is honored.
+# model= is the API id only; this table keeps its own official base_url.
+[model."grok-4.6-direct"]
+model = "grok-4.6"
+base_url = "https://cli-chat-proxy.grok.com/v1"
+api_backend = "responses"
+name = "Grok 4.6 (direct, no Headroom)"
+description = "Official Grok 4.6, bypasses local Headroom proxy"
 context_window = 500000
 
 [models]
-default = "grok-via-headroom"
+default = "grok-4.6"
 # medium for interactive chat savings; commit/push AI review forces high via grok-ai-review.ps1
 default_reasoning_effort = "medium"
 # --- grok-vibe-stack managed block (end) ---

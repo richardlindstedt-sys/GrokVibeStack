@@ -54,7 +54,7 @@ if ($proxyUp) {
 } else {
     Write-Host "  status: DOWN" -ForegroundColor Yellow
     Write-Host "  fix:    start-grok   (or start-headroom-proxy.ps1)" -ForegroundColor Yellow
-    Write-Host "  note:   default model grok-via-headroom needs proxy up" -ForegroundColor DarkGray
+    Write-Host "  note:   default grok-4.6 is overridden to Headroom; needs proxy up" -ForegroundColor DarkGray
 }
 
 # --- Session hooks ---
@@ -176,8 +176,11 @@ if (Test-Path -LiteralPath $cfg) {
         Write-Host '  WARN: permission_mode=always-approve (tools auto-run without prompts).' -ForegroundColor Yellow
         Write-Host '        Not set by vibe stack. Change via /settings if undesired.' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match 'grok-via-headroom' -and -not $proxyUp) {
-        Write-Host '  WARN: default model uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
+    if ($cfgTxt -match '127\.0\.0\.1:8787|grok-via-headroom' -and -not $proxyUp) {
+        Write-Host '  WARN: default grok-4.6 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
+    }
+    if ($cfgTxt -match '(?m)^\s*\[model\.grok-4\.6(?:-direct)?\]\s*$') {
+        Write-Host '  WARN: unquoted [model.grok-4.6*] is ignored by Grok 1.0.3 (nested table). Use [model."grok-4.6"] / [model."grok-4.6-direct"]. Re-run installer.' -ForegroundColor Yellow
     }
     $mcpCap = [regex]::Match([string]$cfgTxt, 'max_output_bytes\s*=\s*(\d+)')
     if ($mcpCap.Success) {

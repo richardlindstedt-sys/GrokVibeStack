@@ -4,14 +4,14 @@ Save context and tokens without losing correctness.
 
 ## Stack (this machine)
 
-- **Headroom proxy** via `start-grok` / `grok-via-headroom` (target keep-ratio **0.35**, lossless + code-aware + tool intercept + read-maturation)
+- **Headroom proxy** via `start-grok` / built-in `grok-4.6` override (target keep-ratio **0.35**, lossless + code-aware + tool intercept + read-maturation)
 - **RTK** on noisy shell — enforced by PreToolUse hook (`run-rtk-enforce.ps1`)
 - **Caveman ultra** for chat output
 - **Compact** at **55%** context + two-pass
 - **MCP** tool output capped at **20k** bytes
 - Interactive reasoning default **medium**; AI gates are **fail-closed**. Effort by profile: **standard/strict = high**, **fast = medium** (push / docs-only)
 - After install/hook **file changes**: restart Grok, or once run **`/hooks` then `r`** in an already-open session. New sessions load hooks from disk automatically (not every session).
-- Prefer `start-grok` (proxy up); bare `grok` with default `grok-via-headroom` fails if proxy down
+- Prefer `start-grok` (proxy up); bare `grok` with default `grok-4.6` fails if proxy down. Vanilla: `-m grok-4.6-direct`.
 
 ## Read path
 
