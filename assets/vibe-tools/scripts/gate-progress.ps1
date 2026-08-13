@@ -55,6 +55,9 @@ function Wait-VibeJobs {
         if ($running.Count -eq 0) { break }
         if ($sw.Elapsed.TotalSeconds -ge $TimeoutSec) {
             Write-GateProgress ('job timeout after {0:n0}s - stopping leftover jobs' -f $sw.Elapsed.TotalSeconds)
+            foreach ($j in $running) {
+                try { Stop-Job $j -ErrorAction SilentlyContinue } catch {}
+            }
             break
         }
         $names = ($running | ForEach-Object { $_.Name }) -join ', '

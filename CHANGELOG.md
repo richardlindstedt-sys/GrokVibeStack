@@ -12,7 +12,7 @@ All notable changes to this project are documented in this file.
 
 - Pre-push: null `Start-Process` / null `ExitCode` blocks the push (no silent scan skip)
 - Staged scan tree: no worktree `Copy-Item` fallback — missing index blob fails the gate
-- New-branch push: `rev-list --max-count=20` + parent/root patch (no `sha~20` tip-only fallback)
+- New-branch push: `rev-list --max-count=20` + parent/root patch (no `sha~20` tip-only fallback); flatten git `string[]` to one patch string (PS 5.1)
 
 ### Fixed (P1-B1…B3)
 
