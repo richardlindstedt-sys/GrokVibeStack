@@ -59,8 +59,13 @@ $noisy = @(
     '(?i)\b(pytest|go\s+test|mvn|gradle|dotnet)\b',
     '(?i)\b(docker|podman|kubectl|helm|compose)\b',
     '(?i)\b(gh|glab)\b',
-    '(?i)\b(rg|grep|findstr|find|fd|ag)\b',
-    '(?i)\b(Get-ChildItem|gci|Get-Content|gc|ls|dir|tree|find\.exe)\b',
+    # search tools (no bare \bfind\b — false-positive on Find-*/path words)
+    '(?i)\b(rg|grep|findstr|fd|ag)\b',
+    '(?i)\bfind\.exe\b',
+    '(?i)(?:^|[;&|(\s])find(?:\s|$)',
+    '(?i)\b(Get-ChildItem|gci|Get-Content|gc|ls|dir|tree)\b',
+    # code intel / size tools (token-efficiency prefers these — still compress output)
+    '(?i)\b(sg|ast-grep|difft|tokei|scc|jq)\b',
     '(?i)\b(trivy|gitleaks|semgrep|ruff|mypy|bandit|biome|eslint|jscpd|checkov|shellcheck|hadolint|vulture)\b',
     '(?i)\b(pip|pip3|uv)\b',
     '(?i)\b(headroom|vibe-review|run-vibe-scans|grok-ai-review)\b',

@@ -75,21 +75,39 @@ if (-not $diff) {
 
 Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
 if (-not $env:VIBE_REQUIRE_SCANNERS) { $env:VIBE_REQUIRE_SCANNERS = '1' }
-& $runScans -Quiet:$false
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ""
-    Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
-    Write-Host "Fix issues above, or emergency: git push --no-verify" -ForegroundColor Yellow
-    exit 1
+
+# Skip full rescans only when a prior Full pass hit (same treeHash + cwd, TTL ~2h).
+# Shared Test-ScanPassCache: Staged/Auto cache writes never authorize Full skip.
+. (Join-Path $vibeScripts 'scan-pass-cache.ps1')
+$skipScans = $false
+try {
+    $treeHash = Get-TreeHashForScanCache
+    $repoRoot = (Get-Location).Path
+    if (Test-ScanPassCache -TreeHash $treeHash -Cwd $repoRoot -RequiredScope 'Full') {
+        $skipScans = $true
+        $age = if ($null -ne $script:ScanPassCacheAgeSec) { $script:ScanPassCacheAgeSec } else { '?' }
+        $short = if ($treeHash -and $treeHash.Length -ge 12) { $treeHash.Substring(0, 12) } else { "$treeHash" }
+        Write-Host ("Skipping full scans (Full cache hit tree={0}... age={1}s)" -f $short, $age) -ForegroundColor DarkCyan
+    }
+} catch {}
+
+if (-not $skipScans) {
+    & $runScans -Quiet:$false -Scope Full
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
+        Write-Host "Fix issues above, or emergency: git push --no-verify" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 Write-Host ""
-Write-Host ">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile=fast)" -ForegroundColor Cyan
-# fast: 1 correctness reviewer, 1 round, no fix loop (cheaper second gate)
+Write-Host ">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile=fast, AutoProfile)" -ForegroundColor Cyan
+# fast + AutoProfile: docs stay cheap; sensitive paths add security reviewer
 if ($diff) {
-    & $aiReview -NoScans -Profile fast -DiffOverride $diff
+    & $aiReview -NoScans -Profile fast -AutoProfile -DiffOverride $diff
 } else {
-    & $aiReview -NoScans -Profile fast
+    & $aiReview -NoScans -Profile fast -AutoProfile
 }
 
 if ($LASTEXITCODE -ne 0) {

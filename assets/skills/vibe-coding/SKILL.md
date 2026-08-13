@@ -1,83 +1,79 @@
-﻿---
+---
 name: vibe-coding
 description: >
-  High-quality "vibe coding" workflow. Always use subagents (explore/plan/implementer/reviewer/security-auditor),
-  run scanners after writing code, and run the multi-reviewer fix/re-review gate (vibe-review) on your own output.
-  Pre-commit enforces the same panel loop on every commit.
+  High-quality vibe coding: when to use subagents, scanners, and the multi-reviewer
+  gate. Full panel is for commit hooks / explicit vibe-review — not every chat turn.
+  Use when implementing non-trivial work, installing hooks, or running quality gates.
 user-invocable: true
 ---
 
-# Vibe Coding Skill (always-on expectations)
+# Vibe Coding Skill (deep / on-demand)
 
-You are operating under the **vibe-coding** discipline.
+Always-on **rules** stay short. This skill is the full playbook.
 
-## Core Requirements (never skip)
-1. Use subagents by default for any non-trivial work.
-2. After generating or editing code, run relevant scanners — prefer orchestrator:
-   `& "$env:USERPROFILE\.grok\vibe-tools\scripts\run-vibe-scans.ps1"`
-   (or targeted: trivy, gitleaks, jscpd, semgrep/ruff/biome, mypy/bandit, etc.).
-3. Always do a rigorous self-review of your own changes:
-   - in-session: reviewer + security-auditor subagents
-   - full gate: `vibe-review` — default **profile=standard** (3 reviewers → arbiter → fix → re-review);
-     reports under `~/.grok/vibe-tools/reports/latest.md`. Profiles: `fast` | `standard` | `strict`.
-4. Prefer **Serena MCP** for symbol-level find/rename/diagnostics when tools are available;
-   activate project if needed ("activate current dir as Serena project").
-5. Explicitly hunt for: duplication, dead code, unwired/incomplete features ("not wired"), security issues, and bugs.
+## Chat vs gate
 
-## Orchestrators (use these — don't reinvent)
+| Layer | Expectation |
+|-------|-------------|
+| Chat / edits | Light self-check; on-edit hooks; Serena for symbols |
+| Before "done" on large work | Optional `run-vibe-scans` or `vibe-review` |
+| `git commit` | Hook: scans + multi-reviewer (path-aware profile) |
+| `git push` | Hook: scans + fast AI (+ security if sensitive paths) |
+
+Do **not** re-run a full 3-reviewer panel in-session when pre-commit will run standard — that doubles token cost for little gain.
+
+## When you want the full process
+
+1. Explore (grep / Serena / explore subagent) for non-trivial work.
+2. Plan if architectural or multi-file.
+3. Implement cleanly.
+4. Self-check; optional `run-vibe-scans.ps1`.
+5. Explicit full gate when needed:
+   `vibe-review` or `& "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile standard`
+
+## Profiles
+
+| Profile | Roles | Effort | Typical |
+|---------|-------|--------|---------|
+| **fast** | correctness (+ security if sensitive paths on push) | medium | push, docs-only commit |
+| **standard** | correctness + security + simplicity | high | pre-commit default |
+| **strict** | same as standard, more rounds | high | high-risk / release |
+
+Path-aware: docs/md-only → fast; sensitive paths (`auth`, `hook`, `crypto`, …) keep/add security.
+
+## Orchestrators
 
 | Tool | When |
 |------|------|
-| `run-vibe-scans.ps1` | After code changes — static scanners only |
-| `vibe-review` / `grok-ai-review.ps1` | End of non-trivial work or before commit — multi-reviewer + fix loop (`-Profile`) |
-| `install-vibe-hooks.ps1` | Once per repo — **pre-commit=standard** + **pre-push=fast** + global **on-edit** |
-| `doctor.ps1` | Proxy/hooks/latest report health |
-| `Invoke-VibeStackSmoke.ps1` | Offline stack smoke (no AI) |
+| `run-vibe-scans.ps1` | Static scanners (`-Scope Auto\|Staged\|Full`) |
+| `vibe-review` / `grok-ai-review.ps1` | Multi-reviewer + fix loop |
+| `install-vibe-hooks.ps1` | Once per repo |
+| `doctor.ps1` | Health + latest report |
+| `Invoke-VibeStackSmoke.ps1` | Offline smoke (no AI) |
 
-## Pre-Commit Hook Check (MANDATORY)
+## Hook install (per repo)
 
-**Every time you start working in a directory that looks like a project (especially if you see .git, package.json, *.py, *.rs, etc.):**
+If `.git` exists and hooks missing `Vibe pre-`:
 
-- Check whether vibe hooks are installed:
-  Look for `.git/hooks/pre-commit` and `.git/hooks/pre-push` containing "Vibe pre-".
+```powershell
+& "$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1" .
+```
 
-- If missing, you **must** tell the user immediately and offer:
+- **pre-commit** — scans (staged-first) + AI (`-AutoProfile`, default base standard)
+- **pre-push** — scans (full / cache) + AI fast + path-conditional security
+- **on-edit** — global PostToolUse fast checks
 
-  ```powershell
-  & "$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1" .
-  ```
+After install: if Grok was already open → `/hooks` then `r`, or restart.
 
-  That installs:
-  - **pre-commit** — scanners + **profile=standard** fix/re-review loop on staged diff (blocks)
-  - **pre-push** — scanners + **profile=fast** (1 correctness reviewer) on push range (blocks)
-  - **on-edit** — global Grok `PostToolUse` fast checks after file edits
-  - removes inert `*.sample` hooks
+## Scanners (gate / explicit)
 
-- Strongly recommend installing for any serious work. Only skip if user says "no hook".
+trivy, gitleaks, PSScriptAnalyzer, Pester, jscpd, biome, markdownlint (advisory),
+semgrep, ruff/mypy/bandit/vulture, yamllint/checkov, shellcheck, hadolint,
+rg for TODO/FIXME/unwired.
 
-- After install: "Vibe hooks live. Edit → fast checks. Commit → standard gate. Push → fast gate. If Grok was already open, reload once (/hooks → r) or restart; new sessions auto-load."
+Prefer orchestrator `run-vibe-scans.ps1` over inventing one-off commands.
 
-## Available Commands
+## Serena
 
-- Full multi-reviewer loop (scans + panel + fix/re-review, profile standard):  
-  `vibe-review`  
-  or `& "$env:USERPROFILE\.grok\vibe-tools\vibe-review.ps1"`  
-  Fast / strict / review-only:  
-  `& "...\grok-ai-review.ps1" -Profile fast`  
-  `& "...\grok-ai-review.ps1" -Profile strict`  
-  `& "...\grok-ai-review.ps1" -NoFix`
-
-- Install hooks in current repo:  
-  `& "$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1" .`
-
-- Just the scanners:  
-  `& "$env:USERPROFILE\.grok\vibe-tools\scripts\run-vibe-scans.ps1"`
-
-- Symbolic code tools: Serena MCP (`serena` / `mcp_servers.serena` in `~/.grok/config.toml`)
-
-## When the user asks you to implement, code, or "do vibe coding"
-- Follow the full process above.
-- After non-trivial edits, run `run-vibe-scans.ps1` (or `vibe-review` for the full gate).
-- If you are about to suggest a commit or the user runs `git commit`, remind them about the hook if it is missing.
-
-Never treat "I wrote some code" as complete until scans + self-review have happened.
+- **MCP on** by default — use for find_symbol / rename / diagnostics.
+- **Remind hooks off** by default — opt-in: `Enable-SerenaRemindHooks.ps1`.

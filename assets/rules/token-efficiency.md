@@ -9,7 +9,7 @@ Save context and tokens without losing correctness.
 - **Caveman ultra** for chat output
 - **Compact** at **55%** context + two-pass
 - **MCP** tool output capped at **20k** bytes
-- Interactive reasoning default **medium**; **commit/push AI review stays high effort** and is **fail-closed** (missing grok/proxy/verdict blocks)
+- Interactive reasoning default **medium**; AI gates are **fail-closed**. Effort by profile: **standard/strict = high**, **fast = medium** (push / docs-only)
 - After install/hook **file changes**: restart Grok, or once run **`/hooks` then `r`** in an already-open session. New sessions load hooks from disk automatically (not every session).
 - Prefer `start-grok` (proxy up); bare `grok` with default `grok-via-headroom` fails if proxy down
 
@@ -48,8 +48,9 @@ Bypass once only if needed: include `RTK_BYPASS` in the command string, or `rtk 
 ## Quality gates (do not disable)
 
 - On edit: fast secret/lint checks
-- On commit / push: full scanners + Grok AI review at **high** reasoning effort
+- On commit / push: scanners + Grok AI review (profile-aware effort; do not skip)
 - Never skip gates for convenience except true emergency `--no-verify`
+- Full multi-reviewer panel in chat is optional — pre-commit already runs it for code
 
 ## Do not
 
