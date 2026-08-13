@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Default upstream model for `grok-via-headroom`: **grok-4.6** (was grok-4.5); AI-review proxy fallback matches
+- Config merge always strips owned sections outside the managed block (fixes duplicate-key TOML parse failures on reinstall)
+
 ### Changed (P1 quality/token)
 
 - Slim always-on vibe rules/AGENTS; full panel lives in skill + commit hooks

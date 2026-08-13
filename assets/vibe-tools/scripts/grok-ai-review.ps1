@@ -326,8 +326,8 @@ function Test-ReviewPreflight {
             }
         }
         if (-not (Test-PortListening $Port)) {
-            Write-Host "Proxy still down - falling back to model grok-4.5." -ForegroundColor Yellow
-            $resolvedModel = 'grok-4.5'
+            Write-Host "Proxy still down - falling back to model grok-4.6." -ForegroundColor Yellow
+            $resolvedModel = 'grok-4.6'
         }
     }
     return @{ Exe = $exe; Model = $resolvedModel }
