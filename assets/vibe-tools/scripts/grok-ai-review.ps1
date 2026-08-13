@@ -852,23 +852,18 @@ function Invoke-ReviewerPanel {
         if (-not $r.Ok) { $fail += $role; continue }
         $obj = ConvertFrom-JsonLoose $r.Text
         if (-not $obj) {
-            # Fallback: vote line only
-            $vote = Get-MachineVerdict $r.Text
-            if (-not $vote) {
-                $vm = [regex]::Match($r.Text, '(?i)"vote"\s*:\s*"(BLOCK|APPROVE[^"]*)"')
-                if ($vm.Success) { $vote = $vm.Groups[1].Value.ToUpperInvariant() }
-            }
-            if ($vote) {
-                $obj = [pscustomobject]@{
-                    reviewer_id = $role
-                    summary     = "Unstructured output; vote parsed as $vote"
-                    vote        = $vote
-                    findings    = @()
-                }
-            }
+            # Fail-closed: no vote-only / empty-findings APPROVE path (false confidence)
+            Write-Host ("    unparseable JSON from {0} (fail-closed)" -f $role) -ForegroundColor Yellow
+            $fail += $role
+            continue
         }
-        if (-not $obj) { $fail += $role; continue }
         if (-not $obj.reviewer_id) { $obj | Add-Member -NotePropertyName reviewer_id -NotePropertyValue $role -Force }
+        $obj = Normalize-ReviewerVote $obj
+        if (-not $obj) {
+            Write-Host ("    inconsistent vote/findings from {0} (fail-closed)" -f $role) -ForegroundColor Yellow
+            $fail += $role
+            continue
+        }
         $parsed += $obj
         $rawBundle[$role] = $obj
         $voteStr = "$($obj.vote)"
@@ -884,6 +879,89 @@ function Invoke-ReviewerPanel {
         return @{ Ok = $false; Error = "Expected $($roles.Count) reviewers, got $($parsed.Count)"; Panel = $parsed; Bundle = $rawBundle }
     }
     return @{ Ok = $true; Panel = $parsed; Bundle = $rawBundle; Error = $null }
+}
+
+function Get-FindingSeverity([object]$finding) {
+    if (-not $finding) { return '' }
+    try {
+        return ("$($finding.severity)").ToLowerInvariant().Trim()
+    } catch {
+        return ''
+    }
+}
+
+function Normalize-ReviewerVote {
+    # Any severity=blocker forces vote=BLOCK. Unknown votes fail-closed.
+    # BLOCK with zero findings fails. BLOCK with only non-blocker findings promotes them to blocker.
+    param($obj)
+    if (-not $obj) { return $null }
+    $findings = @()
+    if ($null -ne $obj.findings) { $findings = @($obj.findings) }
+    $vote = ''
+    try { $vote = ("$($obj.vote)").ToUpperInvariant().Trim() } catch { $vote = '' }
+    $validVotes = @('STRONG_APPROVE', 'APPROVE', 'APPROVE_WITH_CHANGES', 'BLOCK')
+    if ($validVotes -notcontains $vote) {
+        Write-Host ("    normalize: {0} invalid/missing vote '{1}' (fail-closed)" -f $obj.reviewer_id, $vote) -ForegroundColor Yellow
+        return $null
+    }
+    $blockerCount = 0
+    foreach ($f in $findings) {
+        if ((Get-FindingSeverity $f) -eq 'blocker') { $blockerCount++ }
+    }
+    if ($blockerCount -gt 0 -and $vote -ne 'BLOCK') {
+        Write-Host ("    normalize: {0} vote {1} -> BLOCK ({2} blocker finding(s))" -f $obj.reviewer_id, $vote, $blockerCount) -ForegroundColor DarkYellow
+        $obj | Add-Member -NotePropertyName vote -NotePropertyValue 'BLOCK' -Force
+        $vote = 'BLOCK'
+    }
+    if ($vote -eq 'BLOCK' -and $blockerCount -eq 0) {
+        if ($findings.Count -eq 0) {
+            return $null
+        }
+        # Model said BLOCK but labeled findings advisory/unknown — promote so harvest cannot drop them
+        Write-Host ("    normalize: {0} BLOCK with non-blocker findings -> promote severity=blocker" -f $obj.reviewer_id) -ForegroundColor DarkYellow
+        $promoted = foreach ($f in $findings) {
+            if (-not $f) { continue }
+            try { $f | Add-Member -NotePropertyName severity -NotePropertyValue 'blocker' -Force } catch {}
+            $f
+        }
+        $obj | Add-Member -NotePropertyName findings -NotePropertyValue @($promoted) -Force
+    }
+    return $obj
+}
+
+function Get-PanelBlockerFindings {
+    param($Panel)
+    $out = [System.Collections.Generic.List[object]]::new()
+    $seen = @{}
+    foreach ($p in @($Panel)) {
+        $role = 'reviewer'
+        try { if ($p.reviewer_id) { $role = [string]$p.reviewer_id } } catch {}
+        foreach ($f in @($p.findings)) {
+            if (-not $f) { continue }
+            if ((Get-FindingSeverity $f) -ne 'blocker') { continue }
+            $id = $null
+            try { $id = [string]$f.id } catch {}
+            if (-not $id) {
+                $title = ''
+                $file = ''
+                try { $title = [string]$f.title } catch {}
+                try { $file = [string]$f.file } catch {}
+                $id = 'panel-{0}-{1}' -f $role, (($file + '|' + $title).GetHashCode())
+            }
+            if ($seen.ContainsKey($id)) { continue }
+            $seen[$id] = $true
+            $out.Add([pscustomobject]@{
+                    id        = $id
+                    file      = $(try { [string]$f.file } catch { '' })
+                    line      = $(try { [int]$f.line } catch { 0 })
+                    title     = $(try { [string]$f.title } catch { 'blocker' })
+                    detail    = $(try { [string]$f.detail } catch { '' })
+                    fix_hint  = $(try { [string]$f.fix_hint } catch { '' })
+                    sources   = @($role)
+                })
+        }
+    }
+    return @($out)
 }
 
 function Invoke-Arbiter {
@@ -904,11 +982,27 @@ function Invoke-Arbiter {
     if (-not $verdict) {
         return @{ Ok = $false; Error = 'Arbiter missing verdict'; Text = $r.Text; Result = $obj }
     }
-    # Enforce: any blockers => BLOCK
-    $blockers = @()
-    if ($obj -and $obj.blockers) { $blockers = @($obj.blockers) }
+    # Enforce: any arbiter blockers => BLOCK
+    $blockers = [System.Collections.Generic.List[object]]::new()
+    $seenIds = @{}
+    if ($obj -and $obj.blockers) {
+        foreach ($b in @($obj.blockers)) {
+            if (-not $b) { continue }
+            $bid = $(try { [string]$b.id } catch { '' })
+            if ($bid -and $seenIds.ContainsKey($bid)) { continue }
+            if ($bid) { $seenIds[$bid] = $true }
+            $blockers.Add($b)
+        }
+    }
+    # Harvest panel severity=blocker findings the arbiter dropped (no silent APPROVE)
+    foreach ($pb in @(Get-PanelBlockerFindings -Panel $Panel)) {
+        $bid = [string]$pb.id
+        if ($bid -and $seenIds.ContainsKey($bid)) { continue }
+        if ($bid) { $seenIds[$bid] = $true }
+        $blockers.Add($pb)
+    }
     if ($blockers.Count -gt 0) { $verdict = 'BLOCK' }
-    return @{ Ok = $true; Verdict = $verdict; Result = $obj; Text = $r.Text; Blockers = $blockers; Seconds = $r.Seconds }
+    return @{ Ok = $true; Verdict = $verdict; Result = $obj; Text = $r.Text; Blockers = @($blockers); Seconds = $r.Seconds }
 }
 
 function Invoke-Fixer {
@@ -923,13 +1017,33 @@ function Invoke-Fixer {
 }
 
 function Update-GitStageAfterFix {
-    # Re-stage tracked modifications so the next review sees what would commit
+    # Re-stage only tracked mods + explicit blocker paths (never blanket add-all)
+    param($Blockers)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         git add -u 2>$null | Out-Null
-        # Also add untracked files that look like source if they appeared (rare)
-        git add -A -- . ':!.git' 2>$null | Out-Null
+        $paths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($b in @($Blockers)) {
+            if (-not $b) { continue }
+            $fp = $null
+            try { $fp = [string]$b.file } catch { $fp = $null }
+            if ([string]::IsNullOrWhiteSpace($fp)) { continue }
+            $fp = $fp.Trim() -replace '^[.][\\/]+', ''
+            if ($fp -match '\.\.' -or $fp -match '(?i)(^|[\\/])\.git([\\/]|$)') { continue }
+            if ($fp.StartsWith('/') -or $fp -match '^[A-Za-z]:') { continue } # no absolute
+            [void]$paths.Add($fp)
+        }
+        foreach ($p in $paths) {
+            if (-not $p) { continue }
+            # Only add if path exists on disk or is already known to git
+            $exists = Test-Path -LiteralPath $p -ErrorAction SilentlyContinue
+            if (-not $exists) {
+                $ls = git ls-files --error-unmatch -- $p 2>$null
+                if (-not $ls) { continue }
+            }
+            git add -- $p 2>$null | Out-Null
+        }
     } finally {
         $ErrorActionPreference = $prev
     }
@@ -1170,7 +1284,7 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     }
 
     Write-Host "  Re-staging changes for next review round..." -ForegroundColor DarkGray
-    Update-GitStageAfterFix
+    Update-GitStageAfterFix -Blockers $blockers
     # refresh hash baseline after fix for next round cache (optional)
     $nextRound = $round + 1
     Write-Host ("  Continuing to round {0}..." -f $nextRound) -ForegroundColor Cyan

@@ -163,6 +163,56 @@ if ($scanSrc -match 'Secret heuristic' -and $scanSrc -match 'New-StagedScanTree'
 } else {
     Bad 'scans missing staged secret heuristic'
 }
+if ($scanSrc -match 'VIBE_REQUIRE_SCANNERS -ne ''0''' -or $scanSrc -match 'VIBE_REQUIRE_SCANNERS -ne "0"') {
+    Ok 'scans: require critical scanners by default'
+} else {
+    Bad 'scans missing default VIBE_REQUIRE_SCANNERS fail-closed'
+}
+if ($rawReview -match 'Normalize-ReviewerVote' -and $rawReview -match 'Get-PanelBlockerFindings' -and $rawReview -notmatch 'Unstructured output; vote parsed') {
+    Ok 'review: fail-closed panel + vote normalize'
+} else {
+    Bad 'review missing Normalize-ReviewerVote / still has unstructured vote fallback'
+}
+if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'git add -u' -and $rawReview -match 'Blockers' -and $rawReview -notmatch 'git add -A\s') {
+    Ok 'review: scoped restage (no git add -A)'
+} else {
+    Bad 'review still uses git add -A or missing scoped restage'
+}
+$rtkSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
+if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment') {
+    Ok 'rtk: per-segment enforce present'
+} else {
+    Bad 'rtk missing per-segment enforce'
+}
+$startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
+if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackFingerprint' -and $startSrc -match 'Save-ProxyFingerprint') {
+    Ok 'start-grok: proxy fingerprint / stale restart'
+} else {
+    Bad 'start-grok missing proxy fingerprint checks'
+}
+# Live RTK segment behavior (no network)
+$rtkScript = Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'
+function Invoke-RtkGate([string]$command) {
+    $payload = (@{ toolName = 'run_terminal_command'; toolInput = @{ command = $command } } | ConvertTo-Json -Compress -Depth 5)
+    $out = $payload | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rtkScript 2>$null
+    $text = ($out | Out-String).Trim()
+    try { return ($text | ConvertFrom-Json) } catch { return @{ decision = 'error'; raw = $text } }
+}
+$prevBypass = $env:RTK_BYPASS
+$env:RTK_BYPASS = $null
+$env:NO_RTK = $null
+try {
+    $a = Invoke-RtkGate 'rtk git status'
+    if ($a.decision -eq 'allow') { Ok 'rtk allow: single rtk-wrapped' } else { Bad "rtk should allow 'rtk git status' got $($a.decision)" }
+    $b = Invoke-RtkGate 'rtk git status && git log -p'
+    if ($b.decision -eq 'deny') { Ok 'rtk deny: chain second leg bare git' } else { Bad "rtk should deny bare second segment got $($b.decision)" }
+    $c = Invoke-RtkGate 'cd foo && rtk git status'
+    if ($c.decision -eq 'allow') { Ok 'rtk allow: tiny + rtk segment' } else { Bad "rtk should allow cd&&rtk got $($c.decision)" }
+    $d = Invoke-RtkGate 'echo hi'
+    if ($d.decision -eq 'allow') { Ok 'rtk allow: tiny echo' } else { Bad "rtk should allow echo got $($d.decision)" }
+} finally {
+    if ($null -ne $prevBypass) { $env:RTK_BYPASS = $prevBypass } else { Remove-Item Env:RTK_BYPASS -ErrorAction SilentlyContinue }
+}
 if (Test-Path (Join-Path $RepoRoot 'assets\bin-shims\checkov.cmd')) {
     Ok 'bin-shims/checkov.cmd present'
 } else {

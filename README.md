@@ -31,7 +31,6 @@ GrokVibeStack/ (this repo)
 
 - macOS / Linux as a first-class target  
 - Teams that need a zero-network / air-gapped default  
-- Anyone who wants silent always-approve tool use (this stack does **not** enable that)  
 - A substitute for a human security audit  
 
 ---
@@ -132,13 +131,16 @@ vibe-review
 & "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile strict
 $env:VIBE_GATE_PROFILE = 'strict'
 $env:VIBE_GATE_NO_CACHE = '1'
+$env:VIBE_REQUIRE_SCANNERS = '0'   # default is require trivy+gitleaks; 0 = soft-warn only
 ```
 
 - **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, leftover blockers → block commit/push  
-- **Advisories** do not block; **blockers** do  
+- **Critical scanners** (`trivy`, `gitleaks`) required by default; `VIBE_REQUIRE_SCANNERS=0` soft-warns only  
+- **Advisories** do not block; **blockers** do (panel `severity=blocker` forces BLOCK even if vote disagrees)  
 - Reports: `~\.grok\vibe-tools\reports\latest.md`  
 - Scanners in gates are **read-only** (Biome does not auto-write)  
 - **Serena MCP** installs by default; **Serena remind hooks stay off** (they broke Read UX). Opt-in: `Enable-SerenaRemindHooks.ps1`  
+- Work queue / backlog: [`TASKS.md`](./TASKS.md)  
 
 ### Token savings (max profile) — knobs and what they mean
 
@@ -147,7 +149,7 @@ Configured defaults (not a promise of one fixed % on your whole bill):
 | Layer | Configured value | What that means in practice |
 |-------|------------------|-----------------------------|
 | **Headroom proxy** | keep-ratio **target 0.35** (lossless + code-aware + tool-result intercept + read-maturation) | On traffic the proxy compresses, aim to **keep ~35%** of tokens → up to **~65% cut** on that path. Best on long sessions, big tool dumps, log/JSON-heavy turns. Does not shrink every prompt the same way. |
-| **RTK** | enforce prefix on noisy shell | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` style commands when you use `rtk …` (see `rtk gain`). Bare noisy commands are denied. |
+| **RTK** | enforce prefix on **each** noisy shell segment (`&&`/`||`/`;`) | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` when every noisy leg uses `rtk …` (see `rtk gain`). One `rtk` does not unlock the rest of a chain. |
 | **Caveman** | chat style **ultra** | Shorter model **replies** day-to-day (output tokens), not input context. |
 | **Compact** | fire at **55%** context, two-pass | Compacts earlier than a high threshold → fewer giant multi-hour contexts. |
 | **MCP** | `max_output_bytes = 20000` | Caps each MCP tool payload at **20 KB** so one tool cannot flood context. |
@@ -199,7 +201,7 @@ Set-ExecutionPolicy -Scope Process Bypass
    - If Grok was **already running** while you installed or changed hooks: either restart Grok, **or** once run `/hooks` then `r` in that session.  
    - You do **not** need `/hooks` + `r` at the start of every session.
 
-Permissions: this stack does **not** set `always-approve`. If tools auto-run, check Grok `/settings`. `doctor.ps1` warns when that mode is present.
+Tool auto-approve is a **Grok Build** setting (`/settings` / `permission_mode`), not controlled by this stack. Enable or disable it however you like; the installer neither turns it on nor requires it off. `doctor.ps1` only reports if it is already on.
 
 ---
 

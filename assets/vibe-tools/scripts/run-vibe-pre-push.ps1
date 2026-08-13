@@ -74,6 +74,7 @@ if (-not $diff) {
 }
 
 Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
+if (-not $env:VIBE_REQUIRE_SCANNERS) { $env:VIBE_REQUIRE_SCANNERS = '1' }
 & $runScans -Quiet:$false
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""

@@ -40,10 +40,13 @@ $EnsureRtkPs1  = Join-Path $TokenRoot 'scripts\ensure-rtk.ps1'
 $StateDir      = Join-Path $TokenRoot 'state'
 $LogDir        = Join-Path $TokenRoot 'logs'
 $ProxyPidFile  = Join-Path $StateDir 'headroom-proxy.pid'
+$ProxyFpFile   = Join-Path $StateDir 'headroom-proxy.fingerprint'
 $ProxyLog      = Join-Path $LogDir 'headroom-proxy.log'
 $ProxyErrLog   = Join-Path $LogDir 'headroom-proxy.err.log'
 $CavemanFlag   = Join-Path $GrokHome '.caveman-active'
 $XaiUpstream   = if ($env:OPENAI_TARGET_API_URL) { $env:OPENAI_TARGET_API_URL } else { 'https://api.x.ai/v1' }
+# Bump when stack CLI flags change so stale proxies restart
+$ProxyStackFingerprint = 'v1|mode=token|ratio=0.35|lossless|code-aware|intercept|read-maturation|no-ccr'
 
 function Write-Info([string]$msg)  { Write-Host "[start-grok] $msg" -ForegroundColor Cyan }
 function Write-Ok([string]$msg)    { Write-Host "[start-grok] $msg" -ForegroundColor Green }
@@ -131,6 +134,109 @@ function Ensure-Rtk {
     return $null
 }
 
+function Get-ExpectedProxyFingerprint {
+    return ("{0}|port={1}" -f $ProxyStackFingerprint, $Port)
+}
+
+function Save-ProxyFingerprint {
+    Ensure-Dirs
+    Set-Content -Path $ProxyFpFile -Value (Get-ExpectedProxyFingerprint) -Encoding ascii -NoNewline
+}
+
+function Get-ProcessCommandLine([int]$procId) {
+    try {
+        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+        if ($wmi -and $wmi.CommandLine) { return [string]$wmi.CommandLine }
+    } catch {}
+    return $null
+}
+
+function Test-ProxyCommandLineMatchesStack([string]$cmdLine) {
+    # Live argv must look like our headroom proxy stack (not any python on the port).
+    if ([string]::IsNullOrWhiteSpace($cmdLine)) { return $false }
+    if ($cmdLine -notmatch '(?i)headroom') { return $false }
+    if ($cmdLine -notmatch '(?i)(\s|^)proxy(\s|$)') { return $false }
+    # Expected flag tokens from Start-HeadroomProxyIfNeeded argList
+    $needles = @(
+        '--mode',
+        'token',
+        '--lossless',
+        '--code-aware',
+        '--intercept-tool-results',
+        '--target-ratio',
+        '0.35',
+        '--no-ccr-proactive-expansion',
+        '--read-maturation'
+    )
+    foreach ($n in $needles) {
+        if ($cmdLine -notlike "*$n*") { return $false }
+    }
+    # Port must appear (as --port N or bound in args)
+    if ($cmdLine -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $Port)) { return $false }
+    return $true
+}
+
+function Test-ProxyProcessOk([int]$procId) {
+    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if ($null -eq $proc) { return $false }
+    $name = [string]$proc.ProcessName
+    if ($name -notmatch '(?i)headroom|python|pythonw') {
+        # Still allow if cmdline clearly is headroom (renamed binary edge case)
+        $cl = Get-ProcessCommandLine $procId
+        if (-not $cl -or $cl -notmatch '(?i)headroom') { return $false }
+    }
+    $cmdLine = Get-ProcessCommandLine $procId
+    return (Test-ProxyCommandLineMatchesStack $cmdLine)
+}
+
+function Clear-StaleProxyFingerprint {
+    Remove-Item $ProxyFpFile -Force -ErrorAction SilentlyContinue
+}
+
+function Test-ProxyMatchesStack {
+    # Port listening + live owner cmdline has expected stack flags.
+    # Fingerprint file alone is never enough (stale after crash/kill).
+    if (-not (Test-PortListening $Port)) {
+        Clear-StaleProxyFingerprint
+        return $false
+    }
+
+    $expected = Get-ExpectedProxyFingerprint
+    $fp = $null
+    if (Test-Path $ProxyFpFile) {
+        $fp = (Get-Content $ProxyFpFile -Raw -ErrorAction SilentlyContinue).Trim()
+    }
+    if (-not $fp -or $fp -ne $expected) {
+        return $false
+    }
+
+    $candidatePids = [System.Collections.Generic.List[int]]::new()
+    $proxyPid = Get-ProxyPid
+    if ($proxyPid) { [void]$candidatePids.Add([int]$proxyPid) }
+
+    try {
+        $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        foreach ($c in $conns) {
+            if ($c.OwningProcess) {
+                $op = [int]$c.OwningProcess
+                if (-not $candidatePids.Contains($op)) { [void]$candidatePids.Add($op) }
+            }
+        }
+    } catch {}
+
+    foreach ($pidCand in $candidatePids) {
+        if (Test-ProxyProcessOk $pidCand) {
+            # Refresh pid file to the verified owner
+            Set-Content -Path $ProxyPidFile -Value $pidCand -Encoding ascii -NoNewline
+            return $true
+        }
+    }
+
+    # fp present but no live matching process — drop stale marker
+    Clear-StaleProxyFingerprint
+    return $false
+}
+
 function Stop-HeadroomProxy {
     Ensure-Dirs
     $stopped = $false
@@ -153,6 +259,7 @@ function Stop-HeadroomProxy {
         }
     } catch {}
     Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $ProxyFpFile -Force -ErrorAction SilentlyContinue
     if ($stopped) { Write-Ok "Proxy stopped." } else { Write-Warn "No Headroom proxy was running." }
 }
 
@@ -172,7 +279,12 @@ function Show-Status {
     Write-Host "headroom:     $(if ($headroomOk) { & $HeadroomExe -v 2>&1 } else { 'MISSING' })"
     Write-Host "rtk:          $(if ($rtkVer) { $rtkVer } else { 'MISSING — run ensure-rtk.ps1' })"
     Write-Host "caveman:      $caveman (always-on via ~/.grok/rules)"
-    Write-Host "proxy port:   $Port listening=$(if ($listening) { 'yes' } else { 'no' }) pid=$(if ($proxyPid) { $proxyPid } else { '-' })"
+    $fpOk = $false
+    if ($listening) { $fpOk = Test-ProxyMatchesStack }
+    $fpRaw = if (Test-Path $ProxyFpFile) { (Get-Content $ProxyFpFile -Raw -ErrorAction SilentlyContinue).Trim() } else { '-' }
+    Write-Host "proxy port:   $Port listening=$(if ($listening) { 'yes' } else { 'no' }) pid=$(if ($proxyPid) { $proxyPid } else { '-' }) stack_match=$(if ($fpOk) { 'yes' } else { 'no' })"
+    Write-Host "proxy fp:     $fpRaw"
+    Write-Host "proxy expect: $(Get-ExpectedProxyFingerprint)"
     Write-Host "proxy log:    $ProxyLog"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
     Write-Host "model:        grok-via-headroom (grok-4.5) -> http://127.0.0.1:$Port/v1"
@@ -191,9 +303,17 @@ function Start-HeadroomProxyIfNeeded {
     }
 
     if (Test-PortListening $Port) {
-        $proxyPid = Get-ProxyPid
-        Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" })."
-        return
+        if (Test-ProxyMatchesStack) {
+            $proxyPid = Get-ProxyPid
+            Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" }) [fingerprint ok]."
+            return
+        }
+        Write-Warn "Port $Port is up but fingerprint/process does not match this stack — restarting proxy."
+        Stop-HeadroomProxy
+        Start-Sleep -Milliseconds 500
+        if (Test-PortListening $Port) {
+            throw "Port $Port still in use after stop; free it or pass -Port <other>."
+        }
     }
 
     Write-Info "Starting Headroom proxy on 127.0.0.1:$Port ..."
@@ -271,11 +391,14 @@ function Start-HeadroomProxyIfNeeded {
     $deadline = (Get-Date).AddSeconds($ProxyWaitSeconds)
     while ((Get-Date) -lt $deadline) {
         if ($proc.HasExited) {
+            Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
+            Remove-Item $ProxyFpFile -Force -ErrorAction SilentlyContinue
             $err = Get-Content $ProxyErrLog -ErrorAction SilentlyContinue | Select-Object -Last 30
             $out = Get-Content $ProxyLog -ErrorAction SilentlyContinue | Select-Object -Last 15
             throw "Headroom proxy exited early (code $($proc.ExitCode)).`n--- stderr ---`n$($err -join "`n")`n--- stdout ---`n$($out -join "`n")"
         }
         if (Test-PortListening $Port) {
+            Save-ProxyFingerprint
             Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port"
             return
         }
