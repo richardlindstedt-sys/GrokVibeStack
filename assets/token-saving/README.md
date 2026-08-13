@@ -13,6 +13,8 @@ start-grok
 That will:
 
 1. Ensure **rtk** (Rust Token Killer) on PATH  
+1b. Serena MCP is installed by the stack installer (`ensure-serena.ps1`); Grok starts it from `config.toml`  
+
 2. Ensure caveman flag + PATH for Headroom tools  
 3. Start **Headroom proxy** on `127.0.0.1:8787` if not already running  
 4. Launch **Grok** with model `grok-4.6` (overridden to Headroom; traffic compressed)  

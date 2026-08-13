@@ -518,15 +518,28 @@ function Merge-GrokConfig {
     }
 
     $hr = Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'
-    $serenaExe = Join-Path $LocalBin 'serena.exe'
-    if (-not (Test-Path -LiteralPath $serenaExe)) {
-        $sc = Get-Command serena -ErrorAction SilentlyContinue
-        if ($sc) { $serenaExe = $sc.Source }
+    $serenaExe = Resolve-SerenaExe
+    $serenaOn = (-not $SkipSerena) -and (Test-SerenaAlive $serenaExe)
+    if (-not $serenaOn) {
+        if ($SkipSerena) {
+            Write-Info "config: Serena MCP disabled (SkipSerena)"
+        } else {
+            Write-Fail "config: no working serena.exe - MCP server will be disabled"
+        }
+        if (-not $serenaExe) { $serenaExe = Join-Path $LocalBin 'serena.exe' }
     }
 
     $snippet = Get-Content -LiteralPath $snippetPath -Raw
     $snippet = $snippet.Replace('command = "HEADROOM_MCP_CMD"', "command = '$hr'")
     $snippet = $snippet.Replace('command = "SERENA_EXE"', "command = '$serenaExe'")
+    if (-not $serenaOn) {
+        $snippet = [regex]::Replace(
+            $snippet,
+            '(?s)(\[mcp_servers\.serena\].*?enabled = )true',
+            '${1}false',
+            1
+        )
+    }
     $snippet = $snippet.TrimEnd() + "`n"
 
     $begin = '# --- grok-vibe-stack managed block (begin) ---'
@@ -663,55 +676,78 @@ function Install-GithubReleaseBinary {
     }
 }
 
-function Install-Serena {
-    if ($SkipSerena) { Write-Info "Skip Serena"; return }
-    $existing = Join-Path $LocalBin 'serena.exe'
-    if (Test-Path -LiteralPath $existing) {
-        Write-Ok "Serena already at $existing"
-        return
+function Resolve-SerenaExe {
+    $cands = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in @($LocalBin, $GrokBin)) {
+        foreach ($name in @('serena.exe', 'serena.cmd', 'serena')) {
+            [void]$cands.Add((Join-Path $dir $name))
+        }
     }
     $cmd = Get-Command serena -ErrorAction SilentlyContinue
-    if ($cmd) {
-        Write-Ok "Serena on PATH: $($cmd.Source)"
-        return
+    if ($cmd -and $cmd.Source) { [void]$cands.Add($cmd.Source) }
+    foreach ($p in $cands) {
+        if (Test-SerenaAlive $p) { return $p }
     }
+    return $null
+}
 
-    Ensure-Dir $LocalBin
+function Test-SerenaAlive([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        if (Test-CommandExists 'uv') {
-            Write-Info "uv tool install serena (git)"
-            if (-not $DryRun) {
-                $had = Test-Path -LiteralPath $existing
-                & uv tool install --force git+https://github.com/oraios/serena 2>&1 | ForEach-Object { Write-Info "$_" }
-                Refresh-ProcessPath
-                if ((Test-Path -LiteralPath $existing) -or (Test-CommandExists 'serena')) {
-                    if (-not $had) { $script:Manifest.serenaInstalledByUs = $true }
-                    Write-Ok "Serena via uv"
-                    return
-                }
-            } else {
-                Write-Info "DRY uv tool install serena"
-                return
-            }
-        }
-
-        $py = Find-Python310Plus
-        if ($py -and -not $DryRun) {
-            Write-Info "pip install serena --user"
-            & $py.Exe @($py.Args + @('-m', 'pip', 'install', '--user', 'git+https://github.com/oraios/serena')) 2>&1 | Out-Null
-            Refresh-ProcessPath
-            if (Test-CommandExists 'serena') {
-                $script:Manifest.serenaInstalledByUs = $true
-                Write-Ok "Serena via pip --user"
-                return
-            }
-        }
+        $null = & $Path --version 2>&1
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
     } finally {
         $ErrorActionPreference = $prev
     }
-    Write-Warn2 "Serena not installed. Later: uv tool install git+https://github.com/oraios/serena"
+}
+
+function Install-Serena {
+    if ($SkipSerena) { Write-Info "Skip Serena"; return }
+    $ensure = Join-Path $TokenRoot 'scripts\ensure-serena.ps1'
+    if (-not (Test-Path -LiteralPath $ensure)) {
+        $ensure = Join-Path $Assets 'token-saving\scripts\ensure-serena.ps1'
+    }
+    if (-not (Test-Path -LiteralPath $ensure)) {
+        Write-Fail "ensure-serena.ps1 missing after deploy"
+        return
+    }
+    if ($DryRun) {
+        Write-Info "DRY ensure-serena"
+        return
+    }
+    $had = Test-SerenaAlive (Resolve-SerenaExe)
+    $here = (Get-Location).Path
+    $repoArg = @()
+    if (Test-Path -LiteralPath (Join-Path $here '.git')) {
+        $repoArg = @('-RepoPath', $here)
+    }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $ensure @repoArg
+        $code = $LASTEXITCODE
+        Refresh-ProcessPath
+        $env:PATH = ($LocalBin + ';' + $GrokBin + ';' + $env:PATH)
+        $exe = Resolve-SerenaExe
+        if ((Test-SerenaAlive $exe)) {
+            if (-not $had) { $script:Manifest.serenaInstalledByUs = $true }
+            Write-Ok "Serena ready: $exe"
+            return
+        }
+        if ($code -ne 0) {
+            Write-Fail "ensure-serena failed (exit $code)"
+        } else {
+            Write-Fail "ensure-serena ran but serena.exe not runnable"
+        }
+    } catch {
+        Write-Fail "ensure-serena: $_"
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 function Install-PsModules {
@@ -838,10 +874,14 @@ function Test-StackHealth {
         if (Test-CommandExists $soft) { Write-Ok "check cmd $soft" }
         else { Write-Warn2 "check cmd $soft missing (some features degraded)" }
     }
-    if (Test-CommandExists 'serena' -or (Test-Path (Join-Path $LocalBin 'serena.exe'))) {
+    $serenaCheck = Resolve-SerenaExe
+    if ($SkipSerena) {
+        Write-Info "check serena skipped"
+    } elseif (Test-SerenaAlive $serenaCheck) {
         Write-Ok "check serena"
     } else {
-        Write-Warn2 "check serena missing"
+        Write-Fail "check serena missing or not runnable"
+        $bad++
     }
     return ($bad -eq 0)
 }
@@ -986,7 +1026,7 @@ if (Test-Path -LiteralPath $ensureRtk) {
         $ErrorActionPreference = 'Continue'
         try {
             & $ensureRtk
-            if (Test-Path (Join-Path $GrokBin 'rtk.exe') -or (Test-CommandExists 'rtk')) {
+            if ((Test-Path (Join-Path $GrokBin 'rtk.exe')) -or (Test-CommandExists 'rtk')) {
                 Write-Ok "rtk ready"
             } else {
                 Write-Warn2 "ensure-rtk ran but rtk.exe not found"
