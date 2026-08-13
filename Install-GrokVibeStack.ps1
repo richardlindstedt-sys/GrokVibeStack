@@ -547,13 +547,14 @@ function Merge-GrokConfig {
     Write-Info "Config backup: $bak"
 
     $raw = Get-Content -LiteralPath $cfgPath -Raw
+    # Drop any prior managed block, then strip owned sections left outside it
+    # (orphans from older installs / UI edits cause duplicate-key TOML parse failures).
     if ($raw.Contains($begin)) {
         $pattern = '(?s)' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-        $newRaw = [regex]::Replace($raw, $pattern, $snippet.TrimEnd())
-    } else {
-        $stripped = Remove-TomlSections -Raw $raw -SectionNames $owned
-        $newRaw = $stripped.TrimEnd() + "`n`n" + $snippet
+        $raw = [regex]::Replace($raw, $pattern, '').TrimEnd()
     }
+    $stripped = Remove-TomlSections -Raw $raw -SectionNames $owned
+    $newRaw = $stripped.TrimEnd() + "`n`n" + $snippet
     if (-not $newRaw.EndsWith("`n")) { $newRaw += "`n" }
     [System.IO.File]::WriteAllText($cfgPath, $newRaw)
     Write-Ok "Merged vibe stack into config.toml"

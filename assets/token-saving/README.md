@@ -15,7 +15,7 @@ That will:
 1. Ensure **rtk** (Rust Token Killer) on PATH  
 2. Ensure caveman flag + PATH for Headroom tools  
 3. Start **Headroom proxy** on `127.0.0.1:8787` if not already running  
-4. Launch **Grok** with model `grok-via-headroom` (Grok 4.5 via Headroom, traffic compressed)  
+4. Launch **Grok** with model `grok-via-headroom` (Grok 4.6 via Headroom, traffic compressed)  
 5. Caveman rules + RTK rules + token hygiene + Headroom MCP still load from `~/.grok` as usual  
 
 ### Useful flags

@@ -30,15 +30,15 @@ enabled = true
 startup_timeout_sec = 120
 
 [model.grok-via-headroom]
-model = "grok-4.5"
+model = "grok-4.6"
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
 env_key = [
     "XAI_API_KEY",
     "OPENAI_API_KEY",
 ]
-name = "Grok 4.5 + Headroom proxy (max savings)"
-description = "Grok 4.5 via local Headroom proxy port 8787 - max token compression profile"
+name = "Grok 4.6 + Headroom proxy (max savings)"
+description = "Grok 4.6 via local Headroom proxy port 8787 - max token compression profile"
 context_window = 500000
 
 [models]

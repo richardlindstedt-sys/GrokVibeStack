@@ -287,7 +287,7 @@ function Show-Status {
     Write-Host "proxy expect: $(Get-ExpectedProxyFingerprint)"
     Write-Host "proxy log:    $ProxyLog"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
-    Write-Host "model:        grok-via-headroom (grok-4.5) -> http://127.0.0.1:$Port/v1"
+    Write-Host "model:        grok-via-headroom (grok-4.6) -> http://127.0.0.1:$Port/v1"
     Write-Host "proxy flags:  MAX savings profile (token + lossless + code-aware + intercept + ratio 0.35)"
     Write-Host "context tool: rtk (auto-enforce hook + HEADROOM_CONTEXT_TOOL=rtk)"
     Write-Host "XAI_API_KEY:  $(if ($env:XAI_API_KEY) { 'set' } else { 'not set (session login / auth.json may still work)' })"
