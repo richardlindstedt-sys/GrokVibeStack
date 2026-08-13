@@ -141,19 +141,11 @@ function New-StagedScanTree {
                 $wrote = $true
             }
         } catch {}
-        if (-not $wrote) {
-            $src = Join-Path $root $relWin
-            if (Test-Path -LiteralPath $src -PathType Leaf) {
-                try {
-                    Copy-Item -LiteralPath $src -Destination $dest -Force -ErrorAction Stop
-                    $n++
-                    $wrote = $true
-                } catch {}
-            }
-        }
+        # Never copy the worktree: index blob missing must fail materialize
+        # (secret only in the index + cleaned disk would otherwise false-pass).
         if (-not $wrote) {
             [void]$missing.Add($relWin)
-            if (-not $Quiet) { Write-Host "  staged missing: $relWin (index + worktree unavailable)" -ForegroundColor Yellow }
+            if (-not $Quiet) { Write-Host "  staged missing: $relWin (index blob unavailable)" -ForegroundColor Yellow }
         }
     }
 

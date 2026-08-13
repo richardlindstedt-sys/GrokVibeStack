@@ -31,14 +31,14 @@ if ($stdin) {
         if ($parts.Count -ge 4) {
             $localSha = $parts[1]
             $remoteSha = $parts[3]
-            $zero = '0' * 40
-            if ($localSha -eq $zero) {
+            if ($localSha -match '^0+$') {
                 Write-Host "Deleting remote ref $($parts[2]); skip content review for this line." -ForegroundColor DarkGray
                 continue
             }
-            if ($remoteSha -eq $zero) {
-                # new branch: review last ~20 commits or all unique
-                $ranges += "$localSha~20..$localSha"
+            if ($remoteSha -match '^0+$') {
+                # New branch: walk up to 20 existing commits (never sha~20 — that
+                # fails on short/shallow history and the old fallback reviewed tip only).
+                $ranges += "NEW:$localSha"
             } else {
                 $ranges += "$remoteSha..$localSha"
             }
@@ -46,21 +46,45 @@ if ($stdin) {
     }
 }
 
+function Get-NewBranchPushDiff([string]$Tip) {
+    $commits = @(git rev-list --max-count=20 $Tip 2>$null | Where-Object { $_ })
+    if ($commits.Count -eq 0) { return $null }
+    $oldest = $commits[-1]
+    $parent = $null
+    try { $parent = (git rev-parse --verify --quiet "$oldest^" 2>$null | Select-Object -First 1) } catch {}
+    if ($parent -and "$parent" -notmatch '^0+$') {
+        $d = git diff --no-color "$parent..$Tip" 2>$null
+        if ($d) { return $d }
+    }
+    $rootPatch = git diff-tree -p --root --no-color $oldest 2>$null
+    if (-not $rootPatch) { $rootPatch = git show --no-color --pretty=format: -p $oldest 2>$null }
+    $rest = $null
+    if ($oldest -ne $Tip) { $rest = git diff --no-color "$oldest..$Tip" 2>$null }
+    $parts = @($rootPatch, $rest) | Where-Object { $_ }
+    if (-not $parts -or @($parts).Count -eq 0) { return $null }
+    return ((@($parts)) -join "`n`n")
+}
+
 $diff = $null
 if ($ranges.Count -gt 0) {
+    $labels = [System.Collections.Generic.List[string]]::new()
     $chunks = foreach ($r in $ranges) {
-        # tolerate shallow history / missing ~20
-        $d = git diff --no-color "$r" 2>$null
-        if (-not $d) {
-            $tip = ($r -split '\.\.')[-1]
-            $d = git show --no-color --format= --pretty=format: $tip 2>$null
-            if (-not $d) { $d = git log -1 -p --no-color $tip 2>$null }
+        if ($r.StartsWith('NEW:')) {
+            $tip = $r.Substring(4)
+            [void]$labels.Add("new-branch:$tip (rev-list<=20)")
+            $d = Get-NewBranchPushDiff $tip
+            if ($d) { $d }
+            continue
         }
-        if ($d) { $d }
+        $d = git diff --no-color "$r" 2>$null
+        if ($d) {
+            [void]$labels.Add($r)
+            $d
+        }
     }
     if ($chunks) {
         $diff = ($chunks -join "`n`n")
-        Write-Host "Reviewing push range diff ($($ranges -join ', '))." -ForegroundColor Green
+        Write-Host "Reviewing push range diff ($($labels -join ', '))." -ForegroundColor Green
     }
 }
 
@@ -96,7 +120,13 @@ if (-not $skipScans) {
     $scanProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runScans, '-Scope', 'Full'
     ) -Wait -PassThru -NoNewWindow
-    $scanEc = if ($null -eq $scanProc.ExitCode) { 0 } else { [int]$scanProc.ExitCode }
+    if ($null -eq $scanProc -or $null -eq $scanProc.ExitCode) {
+        Write-Host ""
+        Write-Host "PRE-PUSH BLOCKED: scanner process did not start or returned no exit code." -ForegroundColor Red
+        Write-Host "Fix the environment, or emergency: git push --no-verify" -ForegroundColor Yellow
+        exit 1
+    }
+    $scanEc = [int]$scanProc.ExitCode
     if ($scanEc -ne 0) {
         Write-Host ""
         Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
