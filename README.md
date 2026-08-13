@@ -91,6 +91,48 @@ Offline smoke (no AI spend):
 
 ---
 
+## Runtime layers
+
+How the pieces talk after install:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  YOU  (editor / Grok chat / git CLI)                        │
+└───────────────┬─────────────────────────────┬───────────────┘
+                │                             │
+        Grok session                    git commit / push
+                │                             │
+                ▼                             ▼
+┌──────────────────────────┐    ┌─────────────────────────────┐
+│  Session hooks           │    │  Repo git hooks             │
+│  on-edit → light scans   │    │  pre-commit = standard AI   │
+│  stop → remind if edited │    │  pre-push   = fast AI       │
+│  PreToolUse → RTK enforce│    └──────────────┬──────────────┘
+└──────────┬───────────────┘                   │
+           │                                   ▼
+           │                    ┌──────────────────────────────┐
+           │                    │  run-vibe-scans.ps1          │
+           │                    │  Scope Auto|Staged|Full      │
+           │                    │  + scan-pass cache (Full)    │
+           │                    └──────────────┬───────────────┘
+           │                                   │
+           │                                   ▼
+           │                    ┌──────────────────────────────┐
+           └───────────────────►│  grok-ai-review.ps1          │
+                                │  AutoProfile · panel · fixer │
+                                │  restage · reports           │
+                                └──────────────┬───────────────┘
+                                               │
+                    ┌──────────────────────────┼──────────────────┐
+                    ▼                          ▼                  ▼
+             static scanners            Headroom proxy      ~/.grok reports
+             (local CLIs)               → model API         + caches
+```
+
+Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **tokens** (slim rules, RTK, Headroom, caveman, compact).
+
+---
+
 ## What gets installed
 
 ### Quality gates
