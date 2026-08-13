@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file.
 - jscpd/checkov: blocking only in JS/TS or IaC domain; otherwise advisory
 - RTK noisy list: `sg`/`ast-grep`/`difft`/`tokei`/`scc`/`jq`; bare `find` tightened to `find.exe` / shell `find `
 
+### Fixed (pre-push false block)
+
+- `run-vibe-scans.ps1` success path now `exit 0` (advisory tools no longer poison `$LASTEXITCODE`)
+- `run-vibe-pre-push.ps1` runs scans via `powershell.exe -File` so process exit is authoritative
+
 ### Fixed (P0 gate / savings integrity)
 
 - Critical scanners (`trivy`, `gitleaks`) **required by default**; set `VIBE_REQUIRE_SCANNERS=0` to soft-warn only

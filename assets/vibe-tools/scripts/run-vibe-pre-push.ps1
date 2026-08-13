@@ -92,25 +92,35 @@ try {
 } catch {}
 
 if (-not $skipScans) {
-    & $runScans -Quiet:$false -Scope Full
-    if ($LASTEXITCODE -ne 0) {
+    # Prefer -File so process exit is the script's exit 0/1 (not leftover native codes).
+    $scanProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runScans, '-Scope', 'Full'
+    ) -Wait -PassThru -NoNewWindow
+    $scanEc = if ($null -eq $scanProc.ExitCode) { 0 } else { [int]$scanProc.ExitCode }
+    if ($scanEc -ne 0) {
         Write-Host ""
         Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
         Write-Host "Fix issues above, or emergency: git push --no-verify" -ForegroundColor Yellow
         exit 1
     }
+    # Start-Process does not update $LASTEXITCODE; clear stale codes before review.
+    $global:LASTEXITCODE = 0
 }
 
 Write-Host ""
 Write-Host ">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile=fast, AutoProfile)" -ForegroundColor Cyan
 # fast + AutoProfile: docs stay cheap; sensitive paths add security reviewer
+# Reset so review check cannot see pre-scan / pre-review leftover codes.
+$global:LASTEXITCODE = 0
 if ($diff) {
     & $aiReview -NoScans -Profile fast -AutoProfile -DiffOverride $diff
 } else {
     & $aiReview -NoScans -Profile fast -AutoProfile
 }
 
-if ($LASTEXITCODE -ne 0) {
+# Only the post-review exit matters (not scan Start-Process or earlier natives).
+$reviewEc = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+if ($reviewEc -ne 0) {
     Write-Host ""
     Write-Host "PRE-PUSH BLOCKED: Grok returned BLOCK (or review failed)." -ForegroundColor Red
     Write-Host "Fix issues, or emergency: git push --no-verify" -ForegroundColor Yellow

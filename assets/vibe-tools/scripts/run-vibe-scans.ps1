@@ -644,9 +644,11 @@ if ($advisory -gt 0 -and -not $Quiet) {
 if ($failed -gt 0) {
     Write-Host "Scans completed with $failed critical non-zero result(s) (check output above)." -ForegroundColor Yellow
     exit 1
-} else {
-    # Only Full-tree passes write cache (Staged/Auto must not authorize push Full skip).
-    $th = Get-TreeHashForScanCache
-    if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root }
-    if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
 }
+
+# Only Full-tree passes write cache (Staged/Auto must not authorize push Full skip).
+$th = Get-TreeHashForScanCache
+if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root }
+if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
+# Explicit 0: advisory tools leave $LASTEXITCODE non-zero; callers check it after &.
+exit 0
