@@ -1,16 +1,96 @@
-# Grok Vibe Stack Bootstrap
+# GrokVibeStack
 
-Portable **install / uninstall** for maximum **quality gates** + maximum **token savings** on Windows Grok Build.
+Self-contained **Windows** installer for maximum **quality gates** + **token savings** on [Grok Build](https://x.ai).
 
-Target machine: **only Grok Build CLI installed**. This repo installs everything else.
+**This repository is the full product.** Clone it, run `Install-GrokVibeStack.ps1`. All stack scripts, rules, skills, hook templates, and requirements live under `assets/`. The installer copies them onto the machine (`~\.grok\…`) and may download **third-party** tools (Python, scanners, Headroom, etc.). You do not need any other project or pack.
+
+```text
+GrokVibeStack/ (this repo)
+  Install-GrokVibeStack.ps1  +  assets/**
+           │
+           ▼  install
+  ~/.grok/  (runtime on the machine)  +  optional git hooks in projects you choose
+```
+
+| | |
+|--|--|
+| **License** | [MIT](./LICENSE) |
+| **Security** | [SECURITY.md](./SECURITY.md) |
+| **Platform** | Windows 10/11 (PowerShell 5.1+) |
+| **You already need** | Grok Build CLI (`grok.exe`), authenticated |
+
+---
+
+## Who this is for
+
+- You use **Grok Build on Windows** and want commit/push quality gates + aggressive token compression.
+- You are fine with first install pulling scanners and Python/Node tooling (network + disk + time).
+- You accept that **AI review on commit/push spends tokens and can take minutes**.
+
+## Who this is not for (yet)
+
+- macOS / Linux as a first-class target  
+- Teams that need a zero-network / air-gapped default  
+- Anyone who wants silent always-approve tool use (this stack does **not** enable that)  
+- A substitute for a human security audit  
+
+---
+
+## Requirements
+
+| Need | Notes |
+|------|--------|
+| Windows 10/11 | Primary supported OS |
+| Grok Build CLI | Installed and logged in; this repo does **not** ship `grok.exe` |
+| Network | winget / npm / pip / optional Serena on first install; AI gates need model access |
+| Headroom proxy | Default model is `grok-via-headroom` on `127.0.0.1:8787` via `start-grok` |
+| Admin (sometimes) | winget package installs may prompt; user-scope PATH preferred |
+
+---
+
+## Five-minute quickstart
+
+```powershell
+# 1) Clone
+git clone https://github.com/richardlindstedt-sys/GrokVibeStack.git
+cd GrokVibeStack
+
+# 2) Install (run from repo root — needs assets/ next to the script)
+Set-ExecutionPolicy -Scope Process Bypass
+.\Install-GrokVibeStack.ps1
+
+# 3) New terminal (PATH refresh), start proxy + Grok
+start-grok -Status
+start-grok
+
+# 4) In the Grok TUI — required once per session after install/hook changes:
+#    /hooks
+#    then press  r
+```
+
+Optional health check:
+
+```powershell
+& "$env:USERPROFILE\.grok\token-saving\scripts\doctor.ps1"
+```
+
+Offline smoke (no AI spend):
+
+```powershell
+& .\assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1 -WithHooksInstall
+```
+
+---
 
 ## Design goals
 
 | Goal | How |
 |------|-----|
-| **Quality** | On-edit checks · scanners · **3-reviewer panel + arbiter + fix/re-review loop** (fail-closed) |
+| **Quality** | On-edit checks · static scanners · multi-reviewer panel + arbiter + fix/re-review (fail-closed) |
 | **Token savings** | Headroom max-coding profile · RTK auto-enforce · caveman · early compact · MCP caps |
-| **Fresh machines** | Installer always applies **all** gates + max-savings settings (no watered-down default) |
+| **Fresh machines** | One installer applies full gates + max-savings defaults |
+
+---
 
 ## What gets installed
 
@@ -19,179 +99,200 @@ Target machine: **only Grok Build CLI installed**. This repo installs everything
 | Gate | Trigger | Action | Blocks? |
 |------|---------|--------|---------|
 | On-edit | Grok file write/edit | Secrets + linters on touched file | No (report) |
-| **pre-commit** | `git commit` | Scanners + **profile=standard** multi-reviewer loop on staged diff | **Yes** (fail-closed) |
-| **pre-push** | `git push` | Scanners + **profile=fast** (1 correctness reviewer) on push range | **Yes** (fail-closed) |
+| **pre-commit** | `git commit` | Scanners + **profile=standard** loop on staged diff | **Yes** |
+| **pre-push** | `git push` | Scanners + **profile=fast** on push range | **Yes** |
 | Stop reminder | Turn end | Remind if review skipped | No |
 
-### Multi-reviewer quality loop (core innovation)
+If you run the installer inside a git repo, that repo gets hooks automatically (unless `-SkipRepoHooks`).
+
+**Other local git projects on the same machine** are not other “products” — they simply need hooks once each:
+
+```powershell
+& "$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1" path\to\your\project
+```
+
+### Multi-reviewer quality loop
 
 ```text
-scans → reviewer panel (profile roles) → arbiter → blockers? fix → re-review
+scans → reviewer panel (by profile) → arbiter → blockers? implementer fix → re-review
       → APPROVE* passes · BLOCK after max rounds fails closed
-      → MD/HTML report under ~/.grok/vibe-tools/reports/
+      → reports: ~/.grok/vibe-tools/reports/
       → diff-hash pass cache (same diff+profile+model can skip AI)
 ```
 
-| Profile | Roles | Rounds | Fix loop | Typical use |
-|---------|-------|--------|----------|-------------|
-| **fast** | correctness | 1 | off | pre-push (cheap second gate) |
-| **standard** | correctness + security + simplicity | 2 | on | pre-commit, `vibe-review` default |
-| **strict** | same as standard | 3 | on | release / high-risk; higher turn budgets |
+| Profile | Roles | Rounds | Fix | Typical use |
+|---------|-------|--------|-----|-------------|
+| **fast** | correctness | 1 | off | pre-push |
+| **standard** | correctness + security + simplicity | 2 | on | pre-commit, `vibe-review` |
+| **strict** | same as standard | 3 | on | high-risk / release |
 
 ```powershell
-vibe-review                          # standard
-& ...\grok-ai-review.ps1 -Profile fast
-& ...\grok-ai-review.ps1 -Profile strict
-$env:VIBE_GATE_PROFILE = 'strict'    # override default
-$env:VIBE_GATE_NO_CACHE = '1'        # disable pass cache
+vibe-review
+& "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile fast
+& "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile strict
+$env:VIBE_GATE_PROFILE = 'strict'
+$env:VIBE_GATE_NO_CACHE = '1'
 ```
 
-- **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, or leftover blockers → block  
-- **Advisories** (`APPROVE_WITH_CHANGES`) do not block; **blockers** do  
-- Review-only: `grok-ai-review.ps1 -NoFix` (also default for **fast**)  
-- Reports: `~\.grok\vibe-tools\reports\latest.md` (+ `.html` / `.json`)  
-- Scanners are **read-only** (Biome never auto-writes in gates)  
-- **Serena remind hooks OFF by default** (they fired on every `read_file` and showed `hooks: N failed`). Serena **MCP** still installed. Opt-in: `Enable-SerenaRemindHooks.ps1`
-
-**Git hooks are per-repo.** Install cwd gets them; other repos need `install-vibe-hooks.ps1` once each.
+- **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, leftover blockers → block commit/push  
+- **Advisories** do not block; **blockers** do  
+- Reports: `~\.grok\vibe-tools\reports\latest.md`  
+- Scanners in gates are **read-only** (Biome does not auto-write)  
+- **Serena MCP** installs by default; **Serena remind hooks stay off** (they broke Read UX). Opt-in: `Enable-SerenaRemindHooks.ps1`  
 
 ### Token savings (max profile)
 
 | Layer | Setting |
 |-------|---------|
-| Headroom proxy | `--mode token --lossless --code-aware --intercept-tool-results --target-ratio **0.35** --no-ccr-proactive-expansion --read-maturation` |
-| Env profile | `HEADROOM_SAVINGS_PROFILE=coding` + dedupe, tool-search, protect-reads, min_tokens=25 |
-| RTK | Auto-**deny** bare noisy shell (`run-rtk-enforce.ps1`); must use `rtk …` |
-| Caveman | `ultra` chat output |
-| Compact | **55%** threshold + two-pass |
-| MCP | `max_output_bytes = **20000**` |
-| Interactive effort | `default_reasoning_effort = **medium**` (saves tokens) |
-| Gate effort | Multi-reviewer loop forced **`--reasoning-effort high`** |
+| Headroom proxy | token mode, lossless, code-aware, intercept tool results, target-ratio **0.35**, read-maturation |
+| RTK | Deny bare noisy shell; prefix with `rtk …` |
+| Caveman | `ultra` chat style |
+| Compact | **55%** + two-pass |
+| MCP | `max_output_bytes = 20000` |
+| Day-to-day effort | medium; **gates force high** |
 
-**Not enabled by default** (quality/loop risk): Headroom `--memory` / `--learn`, `HEADROOM_OUTPUT_SHAPER`, profile `agent-90` (too lossy on system prompts).
+### Tools pulled at install (third-party)
 
-### Tools
+winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, prettier, eslint, typescript, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
 
-| Source | Packages |
-|--------|----------|
-| winget | Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, **jq** |
-| npm | jscpd, markdownlint-cli, prettier, eslint, typescript |
-| pip venvs | headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture |
-| headroom tools | **difft**, scc, ast-grep cache |
-| other | rtk, Serena MCP, PSScriptAnalyzer, Pester 5+ |
+Those projects keep their own licenses and update cadence. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
 
-## Install
+---
+
+## Install options
 
 ```powershell
-cd path\to\this\repo
+cd path\to\GrokVibeStack
 Set-ExecutionPolicy -Scope Process Bypass
 .\Install-GrokVibeStack.ps1
 ```
 
-### Flags (opt-out only — default is max)
-
 | Flag | Effect |
 |------|--------|
 | `-DryRun` | Plan only |
-| `-SkipWinget` | Skip optional scanner CLIs (still installs Python/Git/Node/uv) |
+| `-SkipWinget` | Skip optional scanner CLIs (still tries Python/Git/Node/uv unless those Skip* flags are set) |
 | `-SkipNpm` | Skip npm globals |
-| `-SkipSerena` | Skip Serena |
-| `-SkipRepoHooks` | **Not recommended** — skips git quality gates in cwd |
+| `-SkipSerena` | Skip Serena MCP |
+| `-SkipRepoHooks` | Do not install git hooks in the current directory |
 | `-SkipPythonInstall` / `-SkipGitInstall` / `-SkipNodeInstall` | Skip that prereq auto-install |
-| `-UseFrozenReqs` | Optional pip freeze pins (not default) |
+| `-UseFrozenReqs` | Prefer pip freeze pins |
 
-### After install
+### After install (do not skip)
 
-```powershell
-# new terminal (PATH refresh)
-start-grok -Status
-start-grok
+1. Open a **new** terminal (PATH).  
+2. `start-grok` (starts Headroom; default model needs it).  
+3. In Grok: **`/hooks` then `r`** (or restart the session).  
 
-# In Grok TUI — REQUIRED or RTK/on-edit stay inactive for this session:
-/hooks
-# then press r
-```
+Permissions: this stack does **not** set `always-approve`. If tools auto-run, check Grok `/settings`. `doctor.ps1` warns when that mode is present.
 
-Default model is `grok-via-headroom` (needs proxy on `127.0.0.1:8787`). Prefer `start-grok` over bare `grok`.
+---
 
-Other repos (git quality gates):
+## Uninstall (safe teardown)
 
 ```powershell
-& "$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1" .
-```
-
-### Permissions note
-
-This stack **does not** set `permission_mode = "always-approve"`. If tools auto-run without prompts, check Grok `/settings` — that is separate from vibe/token install. `doctor.ps1` warns if always-approve is present.
-
-## Uninstall
-
-```powershell
-.\Uninstall-GrokVibeStack.ps1
-.\Uninstall-GrokVibeStack.ps1 -Force
+cd path\to\GrokVibeStack
 .\Uninstall-GrokVibeStack.ps1 -DryRun
+.\Uninstall-GrokVibeStack.ps1
+# or: .\Uninstall-GrokVibeStack.ps1 -Force
 ```
 
-Keeps Grok Build (`grok.exe`, `auth.json`, sessions). Removes only stack-owned files:
+**Keeps:** Grok Build (`grok.exe`), `auth.json`, sessions, and your projects.
 
-- `~\.grok\token-saving\`, `~\.grok\vibe-tools\`
-- Named hooks/rules/skills the stack installed (not entire `skills/` or `hooks/` trees)
-- PATH entries recorded in the install manifest (never strips `~\.grok\bin` while Grok lives there)
+**Removes (stack-owned only):** `~\.grok\token-saving\`, `~\.grok\vibe-tools\`, named hooks/rules/skills this stack wrote, PATH entries recorded in `vibe-stack-manifest.json`. Does not wipe all of `~\.grok` or strip `~\.grok\bin` while Grok lives there.
 
-Optional: `-RemoveWingetPackages`, `-RemoveNpmPackages`, `-RemoveSerena`, `-RemovePython` (only if stack installed them), etc.
+Optional aggressive flags (read script help first): `-RemoveWingetPackages`, `-RemoveNpmPackages`, `-RemoveSerena`, `-RemovePython` (only if the stack installed them).
 
-## Expected savings vs vanilla Grok
+---
+
+## Day-to-day commands
+
+```powershell
+start-grok                          # proxy + Grok
+start-grok -Status
+doctor                              # or full path under token-saving\scripts\doctor.ps1
+vibe-review                         # full scans + standard AI gate on current diff
+& ...\scripts\run-vibe-scans.ps1    # scanners only
+```
+
+Doctor shows: Headroom proxy up/down, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report.
+
+Emergency:
+
+```text
+git commit --no-verify
+git push --no-verify
+RTK_BYPASS=1 <command>
+```
+
+---
+
+## Layout after install
+
+```text
+~/.grok/
+  bin/                      start-grok, vibe-review, shims, …
+  rules/ skills/ hooks/     stack-owned names
+  token-saving/             Headroom, RTK enforce, doctor, start-grok
+  vibe-tools/               scanners, grok-ai-review, hook installer
+    reports/                latest.md / .html / .json
+    cache/                  gate pass cache
+  config.toml               managed block
+  vibe-stack-manifest.json  uninstall inventory
+```
+
+**This repository:**
+
+```text
+GrokVibeStack/
+  Install-GrokVibeStack.ps1
+  Uninstall-GrokVibeStack.ps1
+  LICENSE
+  SECURITY.md
+  README.md
+  assets/                   all portable scripts, rules, skills, reqs, hook templates
+  .github/workflows/        offline smoke CI
+```
+
+`assets/hooks/*.json` are templates (`__GROK_HOME__`). Live hooks are generated at install with absolute paths.
+
+---
+
+## Expected savings vs cost
 
 | Layer | Typical effect |
 |-------|----------------|
-| Headroom @ 0.35 keep-ratio + coding profile | Often **tens of %** on long sessions; more on log/JSON-heavy turns |
-| RTK (enforced) | Large cut on noisy command **stdout** when used consistently |
-| Caveman + medium effort | Fewer **output** / thinking tokens day-to-day |
+| Headroom @ 0.35 + coding profile | Often large savings on long / log-heavy sessions |
+| RTK (enforced) | Cuts noisy command stdout when you use `rtk` |
+| Caveman + medium effort | Fewer day-to-day output tokens |
 | Compact @ 55% | Fewer giant multi-hour contexts |
+| Commit/push AI gates | **Spend** tokens and wall time on purpose |
 
-Gates (commit/push AI review) **spend** tokens on purpose for quality.
+Live checks: `headroom savings` · `rtk gain` · `start-grok -Status` · `doctor.ps1`
 
-Check live: `headroom savings` · `rtk gain` · `start-grok -Status` · `doctor.ps1`
+---
 
-Doctor shows proxy status, session hooks validity, cwd git-hook profiles, and **latest gate report** verdict.
-
-### Offline smoke / CI
+## CI / smoke
 
 ```powershell
 & .\assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1 -WithHooksInstall
-# optional: -WithUninstallDryRun
 ```
 
 GitHub Actions: `.github/workflows/vibe-stack-smoke.yml` (Windows, parse + profiles + temp hooks; **no AI spend**).
 
-## Layout
+---
 
-```text
-~/.grok/
-  bin/                 grok + start-grok, rtk, vibe-review, …
-  rules/ skills/ hooks/   stack-owned names only under these
-  token-saving/        Headroom venv, start-grok (max profile), run-rtk-enforce, doctor
-  vibe-tools/          scanners, grok-ai-review, git hooks installer
-    reports/           gate MD/HTML/JSON (latest.md pointer)
-    cache/             diff-hash pass cache
-  config.toml          managed max-savings block
-  vibe-stack-manifest.json
-```
+## Safety summary
 
-`assets/hooks/*.json` in this repo are **templates** (`__GROK_HOME__` placeholders). Live hooks are generated at install with absolute `-File` paths (stdin-safe for RTK).
+- Idempotent install  
+- Config edits limited to the managed block  
+- Uninstall never deletes Grok auth or the entire `~\.grok` tree  
+- PATH: only existing dirs; no Program Files creation  
+- See [SECURITY.md](./SECURITY.md) for reporting and trust boundaries  
 
-## Safety
+---
 
-- Idempotent install
-- Config managed block only (`# --- grok-vibe-stack managed block ---`)
-- Uninstall never deletes `grok.exe` / `auth.json` / whole `~/.grok`
-- User PATH: only existing dirs; never creates under Program Files
-- Emergency: `git commit|push --no-verify` · shell `RTK_BYPASS=1 …`
+## License
 
-## Repo files
+[MIT](./LICENSE) — free to use, modify, and redistribute with attribution.
 
-| Path | Role |
-|------|------|
-| `Install-GrokVibeStack.ps1` | Bootstrap (max quality + max savings) |
-| `Uninstall-GrokVibeStack.ps1` | Teardown |
-| `assets/` | Portable scripts, rules, requirements, config snippet, hook templates |
+Third-party tools installed by the bootstrap retain **their** licenses.
