@@ -69,6 +69,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1'),
     (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\grok-ai-review.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-path-parse.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1'),
@@ -221,10 +222,35 @@ if ($rawReview -match 'Normalize-ReviewerVote' -and $rawReview -match 'Get-Panel
 }
 # Live restage must not call git add -u/-A (comments mentioning them OK)
 $restageLive = [regex]::Replace($rawReview, '(?m)^\s*#.*$', '')
-if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\s') {
-    Ok 'review: scoped restage (blocker + prior-staged + PreFixDirty)'
+if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $rawReview -match 'Normalize-RestagePath' -and $rawReview -match 'gate-path-parse\.ps1' -and $restageLive -match ':\(literal\)' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\s') {
+    Ok 'review: scoped restage (blocker + prior-staged + PreFixDirty); literal pathspec'
 } else {
-    Bad 'review restage still uses git add -u/-A or missing PriorStaged/PreFixDirty'
+    Bad 'review restage still uses git add -u/-A or missing Normalize-RestagePath / :(literal)'
+}
+if ($rawReview -match 'Get-PathsFromDiffText' -and $rawReview -match 'Add-NameStatusLineToList' -and $rawReview -match 'name-status') {
+    Ok 'AutoProfile: quoted headers + rename both sides (name-status)'
+} else {
+    Bad 'Get-GateChangedPaths missing quoted/rename helpers'
+}
+$pathHelper = Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-path-parse.ps1'
+if (Test-Path -LiteralPath $pathHelper) {
+    . $pathHelper
+    $ren = @(Get-PathsFromDiffText "diff --git a/auth/x.py b/docs/y.md`n")
+    $q = @(Get-PathsFromDiffText "diff --git `"a/my file.txt`" `"b/my file.txt`"`n")
+    $dot = Normalize-RestagePath '.'
+    $slashDir = Normalize-RestagePath 'src/'
+    $star = Normalize-RestagePath '*'
+    $qmark = Normalize-RestagePath '?'
+    $class = Normalize-RestagePath '[a-z]'
+    $glob = Normalize-RestagePath ':(glob)**'
+    $top = Normalize-RestagePath ':/'
+    if ($ren -contains 'auth/x.py' -and $ren -contains 'docs/y.md' -and $q -contains 'my file.txt' -and $null -eq $dot -and $null -eq $slashDir -and $null -eq $star -and $null -eq $qmark -and $null -eq $class -and $null -eq $glob -and $null -eq $top) {
+        Ok 'gate-path-parse: rename both sides, quoted header, reject . / dir/ / glob / pathspec'
+    } else {
+        Bad ("gate-path-parse behavior: ren=[{0}] q=[{1}] dot={2} dir={3} star={4} glob={5}" -f ($ren -join ','), ($q -join ','), $dot, $slashDir, $star, $glob)
+    }
+} else {
+    Bad 'missing gate-path-parse.ps1'
 }
 if ($scanSrc -match 'jscpdDomain' -and $scanSrc -match 'iacDomain' -and $scanSrc -match 'no JS/TS' -and $scanSrc -match 'no IaC domain') {
     Ok 'scans: jscpd/checkov path-domain advisory'

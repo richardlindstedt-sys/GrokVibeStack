@@ -55,6 +55,12 @@ param(
 $ErrorActionPreference = 'Continue'
 $vibeScripts = Split-Path $MyInvocation.MyCommand.Path -Parent
 $runScans = Join-Path $vibeScripts 'run-vibe-scans.ps1'
+$pathParse = Join-Path $vibeScripts 'gate-path-parse.ps1'
+if (-not (Test-Path -LiteralPath $pathParse)) {
+    Write-Host "[GATE FAIL] missing gate-path-parse.ps1 next to grok-ai-review.ps1" -ForegroundColor Red
+    exit 1
+}
+. $pathParse
 $vibeRoot = Split-Path $vibeScripts -Parent
 $reportsRoot = Join-Path $vibeRoot 'reports'
 $cacheDir = Join-Path $vibeRoot 'cache'
@@ -118,30 +124,22 @@ function Get-GateChangedPaths {
     param([string]$DiffOverride)
     $paths = [System.Collections.Generic.List[string]]::new()
     # Explicit DiffOverride (e.g. push range) wins over staged index noise.
+    # Quoted headers and both rename sides live in Get-PathsFromDiffText.
     if (-not [string]::IsNullOrWhiteSpace($DiffOverride)) {
-        foreach ($m in [regex]::Matches($DiffOverride, '(?m)^diff --git a/(.+?) b/(.+)$')) {
-            $a = $m.Groups[1].Value.Trim()
-            $b = $m.Groups[2].Value.Trim()
-            # Adds/mods/renames: b/ side. Pure deletes: b is /dev/null — use a/ path.
-            if ($b -and $b -ne '/dev/null') {
-                [void]$paths.Add($b)
-            } elseif ($a -and $a -ne '/dev/null') {
-                [void]$paths.Add($a)
-            }
-        }
-        if ($paths.Count -gt 0) {
-            return @($paths | Select-Object -Unique)
+        $fromDiff = @(Get-PathsFromDiffText $DiffOverride)
+        if ($fromDiff.Count -gt 0) {
+            return $fromDiff
         }
     }
-    # ACMRD: include deletes so AutoProfile sees removed sensitive/doc paths
+    # name-status: include deletes + rename old/new (name-only drops the old path)
     try {
-        $staged = @(git diff --cached --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ })
-        foreach ($p in $staged) { if ($p) { [void]$paths.Add($p) } }
+        $stagedNs = @(git -c core.quotepath=false diff --cached --name-status --diff-filter=ACMRD 2>$null | Where-Object { $_ })
+        foreach ($line in $stagedNs) { Add-NameStatusLineToList $paths $line }
     } catch {}
     if ($paths.Count -eq 0) {
         try {
-            $wt = @(git diff --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ })
-            foreach ($p in $wt) { if ($p) { [void]$paths.Add($p) } }
+            $wtNs = @(git -c core.quotepath=false diff --name-status --diff-filter=ACMRD 2>$null | Where-Object { $_ })
+            foreach ($line in $wtNs) { Add-NameStatusLineToList $paths $line }
         } catch {}
     }
     return @($paths | Select-Object -Unique)
@@ -398,8 +396,10 @@ function Get-DiffFileStats([string]$diff) {
     $cur = $null
     $hunk = New-Object System.Text.StringBuilder
     $add = 0; $del = 0
-    foreach ($line in ($diff -split "`n")) {
-        if ($line -match '^diff --git a/(.+?) b/(.+)$') {
+    foreach ($rawLine in ($diff -split "`n")) {
+        $line = $rawLine.TrimEnd("`r")
+        $sides = Split-DiffGitPaths $line
+        if ($sides) {
             if ($null -ne $cur) {
                 [void]$files.Add([pscustomobject]@{
                         Path    = $cur
@@ -408,12 +408,16 @@ function Get-DiffFileStats([string]$diff) {
                         Hunk    = $hunk.ToString()
                     })
             }
-            $cur = $Matches[2].Trim()
+            $cur = if ($sides.B -and $sides.B -ne '/dev/null') { $sides.B } else { $sides.A }
             $hunk = New-Object System.Text.StringBuilder
             $add = 0; $del = 0
             continue
         }
-        if ($line -match '^\+\+\+ b/(.+)$') { $cur = $Matches[1].Trim(); continue }
+        if ($line -match '^\+\+\+ (?:"b/(.+)"|b/(.+))$') {
+            $nb = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
+            if ($nb) { $cur = $nb.Trim() }
+            continue
+        }
         if ($line -match '^--- /dev/null') { continue }
         if ($null -eq $cur) { continue }
         [void]$hunk.AppendLine($line)
@@ -1179,18 +1183,14 @@ function Update-GitStageAfterFix {
             if (-not $b) { continue }
             $fp = $null
             try { $fp = [string]$b.file } catch { $fp = $null }
-            if ([string]::IsNullOrWhiteSpace($fp)) { continue }
-            $fp = $fp.Trim() -replace '^[.][\\/]+', ''
-            if ($fp -match '\.\.' -or $fp -match '(?i)(^|[\\/])\.git([\\/]|$)') { continue }
-            if ($fp.StartsWith('/') -or $fp -match '^[A-Za-z]:') { continue }
-            [void]$paths.Add(($fp -replace '\\', '/'))
+            $norm = Normalize-RestagePath $fp
+            if ($norm) { [void]$paths.Add($norm) }
         }
         # Prior staged set: if worktree now differs from index, re-add those paths only
         foreach ($ps in @($PriorStaged)) {
-            if ([string]::IsNullOrWhiteSpace($ps)) { continue }
-            $norm = ($ps.Trim() -replace '\\', '/')
-            if ($norm -match '\.\.') { continue }
-            $dirty = git diff --name-only -- $norm 2>$null
+            $norm = Normalize-RestagePath $ps
+            if (-not $norm) { continue }
+            $dirty = git diff --name-only -- (':(literal)' + $norm) 2>$null
             if ($dirty) { [void]$paths.Add($norm) }
         }
         # Tracked paths dirtied during fix (in post-dirty, not in pre-fix snapshot)
@@ -1202,22 +1202,21 @@ function Update-GitStageAfterFix {
         try {
             $postDirty = @(git diff --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ })
             foreach ($pd in $postDirty) {
-                if ([string]::IsNullOrWhiteSpace($pd)) { continue }
-                $norm = ($pd.Trim() -replace '\\', '/')
-                if ($norm -match '\.\.') { continue }
+                $norm = Normalize-RestagePath $pd
+                if (-not $norm) { continue }
                 if (-not $preSet.Contains($norm)) { [void]$paths.Add($norm) }
             }
         } catch {}
         foreach ($rawPath in @($paths)) {
             if (-not $rawPath) { continue }
             $p = $rawPath -replace '/', [IO.Path]::DirectorySeparatorChar
+            $spec = ':(literal)' + $rawPath
             $exists = Test-Path -LiteralPath $p -ErrorAction SilentlyContinue
             if (-not $exists) {
-                $ls = git ls-files --error-unmatch -- $rawPath 2>$null
+                $ls = git ls-files --error-unmatch -- $spec 2>$null
                 if (-not $ls) { continue }
-                $p = $rawPath
             }
-            git add -- $p 2>$null | Out-Null
+            git add -- $spec 2>$null | Out-Null
         }
     } finally {
         $ErrorActionPreference = $prev

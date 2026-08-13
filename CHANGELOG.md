@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed (P1-B1…B3)
+
+- AutoProfile keeps both rename sides (`auth/x.py` → `docs/y.md` still sensitive); staged/WT uses `--name-status`
+- Quoted `diff --git "a/my file"` headers parse (push DiffOverride no longer falls through to empty paths)
+- Fixer restage rejects `.`, dir paths, trailing slashes, and glob/pathspec (`* ? [ :`); `git add` uses `:(literal)`
+
 ### Fixed (P0 hotfix)
 
 - Session Stop hook is installed from `assets/hooks/vibe-coding.json` (`run-vibe-stop-remind.ps1`). Installer no longer overwrites it with an always-on `Write-Host` nag
