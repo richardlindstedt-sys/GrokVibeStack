@@ -17,7 +17,7 @@
     npm globals (jscpd, markdownlint-cli, prettier, eslint, typescript)
     PS modules (PSScriptAnalyzer, Pester)
     Serena MCP (uv tool)
-    config.toml managed block (Headroom + Serena MCP, grok-via-headroom)
+    config.toml managed block (Headroom + Serena MCP, grok-4.6 via proxy + grok-4.6-direct)
     install manifest for Uninstall-GrokVibeStack.ps1
 
   Does NOT install or remove Grok Build itself. Does NOT write API keys.
@@ -527,7 +527,8 @@ function Merge-GrokConfig {
     $owned = @(
         'session', 'features', 'mcp',
         'mcp_servers.headroom', 'mcp_servers.serena',
-        'model.grok-via-headroom', 'models'
+        'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+        'model."grok-4.6-direct"', 'model.grok-4.6-direct', 'models'
     )
 
     if ($DryRun) { Write-Info "DRY merge config.toml"; return }
@@ -1163,7 +1164,7 @@ Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  1. Open a NEW terminal (PATH refresh)"
 Write-Host "  2. start-grok -Status"
-Write-Host "  3. start-grok   (starts Headroom proxy; default model needs it)"
+Write-Host "  3. start-grok   (starts Headroom; grok-4.6 goes through the proxy)"
 Write-Host "  4. If Grok was already running: /hooks then r  (or restart Grok)"
 Write-Host "  5. Other projects:  & `"`$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1`" ."
 Write-Host "  6. Uninstall later:  .\Uninstall-GrokVibeStack.ps1"

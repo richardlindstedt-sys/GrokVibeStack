@@ -6,7 +6,8 @@
 .DESCRIPTION
   From any directory:
     start-grok
-    start-grok -m grok-build          # override model (skips default grok-via-headroom)
+    start-grok -m grok-build          # override model (skips default grok-4.6 / Headroom)
+    start-grok -m grok-4.6-direct     # vanilla Grok 4.6, no Headroom proxy
     start-grok -NoProxy               # skip Headroom proxy (MCP + rtk + caveman only)
     start-grok -ProxyOnly             # only ensure proxy is up, do not launch grok
     start-grok -StopProxy             # stop background Headroom proxy and exit
@@ -287,7 +288,7 @@ function Show-Status {
     Write-Host "proxy expect: $(Get-ExpectedProxyFingerprint)"
     Write-Host "proxy log:    $ProxyLog"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
-    Write-Host "model:        grok-via-headroom (grok-4.6) -> http://127.0.0.1:$Port/v1"
+    Write-Host "model:        grok-4.6 (Headroom override) -> http://127.0.0.1:$Port/v1"
     Write-Host "proxy flags:  MAX savings profile (token + lossless + code-aware + intercept + ratio 0.35)"
     Write-Host "context tool: rtk (auto-enforce hook + HEADROOM_CONTEXT_TOOL=rtk)"
     Write-Host "XAI_API_KEY:  $(if ($env:XAI_API_KEY) { 'set' } else { 'not set (session login / auth.json may still work)' })"
@@ -438,7 +439,7 @@ if (-not $NoProxy) {
 
 if ($ProxyOnly) {
     Show-Status
-    Write-Ok "Proxy-only done. Run: start-grok   (or grok -m grok-via-headroom)"
+    Write-Ok "Proxy-only done. Run: start-grok   (or grok -m grok-4.6)"
     exit 0
 }
 
@@ -455,7 +456,7 @@ if (-not $NoProxy) {
         }
     }
     if (-not $hasModel) {
-        $launch.Add('-m'); $launch.Add('grok-via-headroom')
+        $launch.Add('-m'); $launch.Add('grok-4.6')
     }
 }
 

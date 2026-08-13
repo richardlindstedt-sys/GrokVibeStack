@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Default upstream model for `grok-via-headroom`: **grok-4.6** (was grok-4.5); AI-review proxy fallback matches
+- Override built-in `grok-4.6` to Headroom proxy via quoted `[model."grok-4.6"]` (unquoted dotted ids are ignored as nested tables); vanilla hatch `[model."grok-4.6-direct"]` (`-m` honored); AI-review proxy-down fallback requires the hatch table's official `base_url`
 - Config merge always strips owned sections outside the managed block (fixes duplicate-key TOML parse failures on reinstall)
 
 ### Changed (P1 quality/token)
