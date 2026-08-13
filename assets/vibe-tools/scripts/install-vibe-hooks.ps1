@@ -87,6 +87,7 @@ echo ""
 echo ">>> STEP 2/2 : MULTI-REVIEWER LOOP (staged diff, AutoProfile)"
 echo "    base=standard; docs-only may drop to fast; path-aware roles"
 echo "    reports: ~/.grok/vibe-tools/reports/latest.md"
+echo "    live:    ~/.grok/vibe-tools/reports/live-gate.log"
 echo ""
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/grok-ai-review.ps1" -NoScans -Profile standard -AutoProfile
@@ -115,6 +116,7 @@ echo "+================================================================+"
 echo "|   VIBE PRE-PUSH HOOK  [profile=fast]                           |"
 echo "|   Scans + 1-reviewer (correctness) on push range               |"
 echo "+================================================================+"
+echo "live: ~/.grok/vibe-tools/reports/live-gate.log"
 echo ""
 
 VIBE_SCRIPTS="$HOME/.grok/vibe-tools/scripts"
