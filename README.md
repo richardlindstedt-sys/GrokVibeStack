@@ -63,9 +63,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 start-grok -Status
 start-grok
 
-# 4) In the Grok TUI — required once per session after install/hook changes:
-#    /hooks
-#    then press  r
+# 4) Only if Grok was ALREADY open during install: reload hooks once
+#    In TUI:  /hooks  then press  r
+#    Or just restart Grok. New sessions load hooks from disk automatically.
 ```
 
 Optional health check:
@@ -140,16 +140,30 @@ $env:VIBE_GATE_NO_CACHE = '1'
 - Scanners in gates are **read-only** (Biome does not auto-write)  
 - **Serena MCP** installs by default; **Serena remind hooks stay off** (they broke Read UX). Opt-in: `Enable-SerenaRemindHooks.ps1`  
 
-### Token savings (max profile)
+### Token savings (max profile) — knobs and what they mean
 
-| Layer | Setting |
-|-------|---------|
-| Headroom proxy | token mode, lossless, code-aware, intercept tool results, target-ratio **0.35**, read-maturation |
-| RTK | Deny bare noisy shell; prefix with `rtk …` |
-| Caveman | `ultra` chat style |
-| Compact | **55%** + two-pass |
-| MCP | `max_output_bytes = 20000` |
-| Day-to-day effort | medium; **gates force high** |
+Configured defaults (not a promise of one fixed % on your whole bill):
+
+| Layer | Configured value | What that means in practice |
+|-------|------------------|-----------------------------|
+| **Headroom proxy** | keep-ratio **target 0.35** (lossless + code-aware + tool-result intercept + read-maturation) | On traffic the proxy compresses, aim to **keep ~35%** of tokens → up to **~65% cut** on that path. Best on long sessions, big tool dumps, log/JSON-heavy turns. Does not shrink every prompt the same way. |
+| **RTK** | enforce prefix on noisy shell | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` style commands when you use `rtk …` (see `rtk gain`). Bare noisy commands are denied. |
+| **Caveman** | chat style **ultra** | Shorter model **replies** day-to-day (output tokens), not input context. |
+| **Compact** | fire at **55%** context, two-pass | Compacts earlier than a high threshold → fewer giant multi-hour contexts. |
+| **MCP** | `max_output_bytes = 20000` | Caps each MCP tool payload at **20 KB** so one tool cannot flood context. |
+| **Interactive effort** | default **medium** | Lower thinking cost for normal chat vs always-high. |
+| **Commit/push AI gates** | forced **high** effort, multi-reviewer | These **spend** tokens on purpose for quality (not a savings feature). |
+
+**How to measure on your machine** (after some real use):
+
+```powershell
+headroom savings    # proxy-side compression stats
+rtk gain            # RTK stdout reduction stats
+start-grok -Status
+doctor
+```
+
+End-to-end “% off my monthly bill” depends on mix of chat vs gates vs tool noise — use the commands above rather than a single marketing number.
 
 ### Tools pulled at install (third-party)
 
@@ -177,11 +191,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 | `-SkipPythonInstall` / `-SkipGitInstall` / `-SkipNodeInstall` | Skip that prereq auto-install |
 | `-UseFrozenReqs` | Prefer pip freeze pins |
 
-### After install (do not skip)
+### After install
 
-1. Open a **new** terminal (PATH).  
-2. `start-grok` (starts Headroom; default model needs it).  
-3. In Grok: **`/hooks` then `r`** (or restart the session).  
+1. Open a **new** terminal (PATH refresh).  
+2. `start-grok` (starts Headroom; default model `grok-via-headroom` needs the proxy).  
+3. **Grok session hooks** (`~\.grok\hooks\*.json`) load automatically on **new** Grok sessions.  
+   - If Grok was **already running** while you installed or changed hooks: either restart Grok, **or** once run `/hooks` then `r` in that session.  
+   - You do **not** need `/hooks` + `r` at the start of every session.
 
 Permissions: this stack does **not** set `always-approve`. If tools auto-run, check Grok `/settings`. `doctor.ps1` warns when that mode is present.
 
@@ -257,17 +273,17 @@ GrokVibeStack/
 
 ---
 
-## Expected savings vs cost
+## Savings vs cost (summary)
 
-| Layer | Typical effect |
-|-------|----------------|
-| Headroom @ 0.35 + coding profile | Often large savings on long / log-heavy sessions |
-| RTK (enforced) | Cuts noisy command stdout when you use `rtk` |
-| Caveman + medium effort | Fewer day-to-day output tokens |
-| Compact @ 55% | Fewer giant multi-hour contexts |
-| Commit/push AI gates | **Spend** tokens and wall time on purpose |
+| You save on | You spend on |
+|-------------|--------------|
+| Compressible context via Headroom (~**0.35 keep** ⇒ up to ~**65%** off that path) | Commit/push **AI** multi-reviewer gates (high effort, by design) |
+| Noisy shell stdout via **RTK** (see `rtk gain`) | First install (winget/npm/pip time + disk) |
+| Shorter chat replies (caveman ultra) + medium interactive effort | |
+| Earlier compact (55%) + MCP 20 KB caps | |
 
-Live checks: `headroom savings` · `rtk gain` · `start-grok -Status` · `doctor.ps1`
+Measure live: `headroom savings` · `rtk gain` · `start-grok -Status` · `doctor.ps1`  
+Details: [Token savings table](#token-savings-max-profile--knobs-and-what-they-mean) above.
 
 ---
 

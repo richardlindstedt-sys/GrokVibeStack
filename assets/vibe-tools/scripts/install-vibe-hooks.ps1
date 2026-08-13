@@ -194,9 +194,8 @@ Write-Host "  PostToolUse (edits) -> run-vibe-on-edit.ps1 (secrets + linters)" -
 Write-Host "  Stop                -> reminder to finish vibe-review if code changed" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "==============================================================" -ForegroundColor Yellow
-Write-Host " REQUIRED: reload hooks or on-edit / RTK stay inactive" -ForegroundColor Yellow
-Write-Host "   In Grok TUI:  /hooks   then press  r" -ForegroundColor Yellow
-Write-Host "   Or restart the Grok session." -ForegroundColor Yellow
+Write-Host " If Grok is already open: reload hooks once (/hooks then r)" -ForegroundColor Yellow
+Write-Host " or restart Grok. New sessions load hooks automatically." -ForegroundColor Yellow
 Write-Host "==============================================================" -ForegroundColor Yellow
 Write-Host "Bypass (emergency only): git commit|push --no-verify" -ForegroundColor DarkGray
 Write-Host "AI review gate is fail-closed (missing grok/proxy/verdict blocks)." -ForegroundColor DarkGray

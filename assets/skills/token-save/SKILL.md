@@ -31,7 +31,7 @@ user-invocable: true
 - If Headroom MCP tools are available and a tool result or file dump is huge, compress before reasoning on full text when the task allows.
 - Keep code/commands/errors exact; compress only prose and noise.
 - Chat stays caveman ultra; do not drop clarity for security / irreversible ops.
-- After stack install or hook changes: remind user **`/hooks` then `r`** if RTK deny is not firing.
+- After stack install or hook file changes in an already-open session: remind **`/hooks` then `r`** (or restart) if RTK deny is not firing. New sessions load hooks automatically.
 
 ## Launcher (preferred)
 

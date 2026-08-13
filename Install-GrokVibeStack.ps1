@@ -1154,17 +1154,17 @@ if ($script:Failed.Count) {
 
 Write-Host ""
 Write-Host "==============================================================" -ForegroundColor Yellow
-Write-Host " REQUIRED: reload Grok hooks or RTK/on-edit gates stay OFF" -ForegroundColor Yellow
+Write-Host " If Grok is ALREADY open: reload hooks once (or restart Grok)" -ForegroundColor Yellow
 Write-Host "   In Grok TUI:  /hooks   then press  r" -ForegroundColor Yellow
-Write-Host "   Or restart the Grok session after install." -ForegroundColor Yellow
+Write-Host " New Grok sessions load hooks from disk automatically." -ForegroundColor Yellow
 Write-Host "==============================================================" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  1. Open a NEW terminal (PATH refresh)"
 Write-Host "  2. start-grok -Status"
 Write-Host "  3. start-grok   (starts Headroom proxy; default model needs it)"
-Write-Host "  4. In Grok: /hooks then press r   <-- do not skip"
-Write-Host "  5. Other repos:  & `"`$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1`" ."
+Write-Host "  4. If Grok was already running: /hooks then r  (or restart Grok)"
+Write-Host "  5. Other projects:  & `"`$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1`" ."
 Write-Host "  6. Uninstall later:  .\Uninstall-GrokVibeStack.ps1"
 Write-Host ""
 Write-Host "Quality gates: profiles fast|standard|strict; fail-closed AI; reports in ~/.grok/vibe-tools/reports/" -ForegroundColor DarkGray

@@ -113,7 +113,7 @@ install-vibe-hooks.ps1 .
 
 Also deletes inert `*.sample` hooks from `.git/hooks/`.
 
-Reload Grok hooks after install: `/hooks` then `r` (or restart session).
+If Grok was already open during install: `/hooks` then `r`, or restart. New sessions load hooks automatically.
 
 Emergency bypass only: `git commit --no-verify` / `git push --no-verify`.
 

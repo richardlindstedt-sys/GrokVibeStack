@@ -55,7 +55,7 @@ You are operating under the **vibe-coding** discipline.
 
 - Strongly recommend installing for any serious work. Only skip if user says "no hook".
 
-- After install: "Vibe hooks live. Edit → fast checks. Commit → standard gate. Push → fast gate. Reload Grok hooks with /hooks → r."
+- After install: "Vibe hooks live. Edit → fast checks. Commit → standard gate. Push → fast gate. If Grok was already open, reload once (/hooks → r) or restart; new sessions auto-load."
 
 ## Available Commands
 

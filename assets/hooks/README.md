@@ -18,5 +18,5 @@ RTK enforce / post-shell (required for deny decisions).
 | `vibe-coding.json` | On-edit checks + Stop reminder |
 | `serena-hooks.json` | **Not installed by default.** Serena MCP still works. Opt-in remind hooks: `Enable-SerenaRemindHooks.ps1` (uses fail-soft wrapper). |
 
-After install or hook changes: in Grok TUI run **`/hooks` then `r`** (or restart).
+After install or hook **file** changes in an already-open Grok session: run **`/hooks` then `r`**, or restart Grok. New sessions load hooks from disk automatically.
 Hooks do not apply to the already-running session until reloaded.
