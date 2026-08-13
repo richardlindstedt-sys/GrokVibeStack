@@ -72,7 +72,9 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-on-edit.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
@@ -146,8 +148,52 @@ if ($rawReview -match 'NoFixDefault\s*=\s*\$true' -and $rawReview -match "Roles\
 } else {
     Bad 'fast profile shape unexpected'
 }
+if ($rawReview -match "ReasoningEffort\s*=\s*'medium'" -and $rawReview -match 'Apply-PathAwareProfile' -and $rawReview -match 'AutoProfile') {
+    Ok 'fast medium effort + AutoProfile path-aware'
+} else {
+    Bad 'missing fast medium effort or AutoProfile helpers'
+}
+# DiffOverride must win over staged; json/yaml/toml must not be docs-only by default
+if ($rawReview -match 'DiffOverride \(e\.g\. push range\) wins' -or ($rawReview -match 'IsNullOrWhiteSpace\(\$DiffOverride\)' -and $rawReview -match 'return @\(\$paths \| Select-Object -Unique\)')) {
+    Ok 'AutoProfile: DiffOverride preferred over staged'
+} else {
+    Bad 'Get-GateChangedPaths still prefers staged over DiffOverride'
+}
+if ($rawReview -match 'never treat \*\.json' -or ($rawReview -match 'docs\?/' -and $rawReview -notmatch 'package\\.json\|tsconfig\|pyproject')) {
+    Ok 'AutoProfile: config/IaC not docs-only'
+} else {
+    Bad 'Test-PathIsDocOnly still treats json/yaml/toml as docs'
+}
+if ($rawReview -match 'No \\.lock' -or ($rawReview -match 'drawio\)\$' -and $rawReview -notmatch 'ico\|lock\|drawio') -or ($rawReview -match 'supply-chain' -and $rawReview -match 'go\\.sum')) {
+    Ok 'AutoProfile: lockfiles not docs-only'
+} else {
+    # extension list without lock between ico and drawio
+    if ($rawReview -match 'ico\|drawio' -or $rawReview -match 'webp\|ico\|drawio') {
+        Ok 'AutoProfile: lockfiles not docs-only'
+    } else {
+        Bad 'Test-PathIsDocOnly still allowlists .lock'
+    }
+}
+$vibeRule = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\rules\vibe-coding.md') -Raw -ErrorAction SilentlyContinue
+if ($vibeRule -and $vibeRule.Length -lt 2500 -and $vibeRule -match 'pre-commit' -and $vibeRule -notmatch 'Tools You Must Use') {
+    Ok 'vibe-coding rule slimmed (no scanner laundry list)'
+} else {
+    Bad 'vibe-coding.md not slimmed'
+}
 
 $scanSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1') -Raw
+$cacheSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1') -Raw -ErrorAction SilentlyContinue
+$prePushSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1') -Raw
+if ($scanSrc -match 'checkout-index' -and $scanSrc -match 'Save-ScanPassCache' -and $scanSrc -match "Scope = 'Auto'") {
+    Ok 'scans: binary staged tree + pass cache + Scope'
+} else {
+    Bad 'scans missing checkout-index / scan cache / Scope'
+}
+if ($cacheSrc -and $cacheSrc -match 'ScopeUsed -ne ''Full''' -and $cacheSrc -match 'cachedScope -ne ''Full''' -and $cacheSrc -match 'Normalize-ScanCacheCwd' -and $prePushSrc -match 'scan-pass-cache\.ps1' -and $prePushSrc -match 'Test-ScanPassCache') {
+    Ok 'scan-pass cache: Full-only save + cwd/scope match; pre-push shares Test-ScanPassCache'
+} else {
+    Bad 'scan-pass cache missing Full/cwd policy or pre-push still has weak reader'
+}
 if ($scanSrc -match 'New-StagedScanTree' -and $scanSrc -match 'Gitleaks \(staged\)' -and $scanSrc -match 'Invoke-Checkov') {
     Ok 'scans: staged secrets tree + checkov via venv'
 } else {
@@ -173,10 +219,33 @@ if ($rawReview -match 'Normalize-ReviewerVote' -and $rawReview -match 'Get-Panel
 } else {
     Bad 'review missing Normalize-ReviewerVote / still has unstructured vote fallback'
 }
-if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'git add -u' -and $rawReview -match 'Blockers' -and $rawReview -notmatch 'git add -A\s') {
-    Ok 'review: scoped restage (no git add -A)'
+if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -notmatch 'git add -u' -and $rawReview -notmatch 'git add -A\s') {
+    Ok 'review: scoped restage (blocker + prior-staged only)'
 } else {
-    Bad 'review still uses git add -A or missing scoped restage'
+    Bad 'review restage still uses git add -u/-A or missing PriorStaged'
+}
+if ($scanSrc -match 'jscpdDomain' -and $scanSrc -match 'iacDomain' -and $scanSrc -match 'no JS/TS' -and $scanSrc -match 'no IaC domain') {
+    Ok 'scans: jscpd/checkov path-domain advisory'
+} else {
+    Bad 'scans missing jscpd/checkov advisory domain split'
+}
+$rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
+if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {
+    Ok 'rtk: sg/ast-grep/difft/tokei + no bare find'
+} else {
+    # bare find may still appear as find\.exe — check no '\bfind\b' alone in noisy list
+    if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'find\\.exe') {
+        Ok 'rtk: expanded noisy list (find.exe only)'
+    } else {
+        Bad 'rtk noisy list missing sg/tokei/difft tighten'
+    }
+}
+$stopSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1') -Raw -ErrorAction SilentlyContinue
+$onEditSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-on-edit.ps1') -Raw
+if ($stopSrc -and $stopSrc -match 'edited-this-session' -and $onEditSrc -match 'edited-this-session.flag') {
+    Ok 'stop remind gated on edit flag'
+} else {
+    Bad 'stop/on-edit session flag wiring missing'
 }
 $rtkSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment') {
@@ -226,9 +295,17 @@ if (Test-Path (Join-Path $RepoRoot '_hook_debug.ps1')) {
 
 # Hook wiring
 $hookInst = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
-if ($hookInst -match '-Profile standard') { Ok 'pre-commit wires -Profile standard' } else { Bad 'pre-commit missing -Profile standard' }
+if ($hookInst -match '-Profile standard' -and $hookInst -match '-AutoProfile' -and $hookInst -match '-Scope Auto') {
+    Ok 'pre-commit wires standard + AutoProfile + Scope Auto'
+} else {
+    Bad 'pre-commit missing AutoProfile/Scope Auto'
+}
 $prePushPs1 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1') -Raw
-if ($prePushPs1 -match '-Profile fast') { Ok 'pre-push wires -Profile fast' } else { Bad 'pre-push missing -Profile fast' }
+if ($prePushPs1 -match '-Profile fast' -and $prePushPs1 -match '-AutoProfile' -and $prePushPs1 -match '-Scope Full') {
+    Ok 'pre-push wires fast + AutoProfile + Scope Full/cache'
+} else {
+    Bad 'pre-push missing AutoProfile/Scope Full'
+}
 
 # --- 4) Doctor (best-effort; should not throw) ---
 Write-Host ""

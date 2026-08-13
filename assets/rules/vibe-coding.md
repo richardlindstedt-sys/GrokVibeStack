@@ -1,51 +1,27 @@
-﻿# Vibe Coding Rules (always active)
+# Vibe Coding Rules (always active)
 
-You are doing "vibe coding": produce code that feels excellent because it has been rigorously reviewed by you (the AI) using every available tool and subagent.
+Ship solid code. Prefer quality at the **commit gate**; keep chat light.
 
-## Mandatory Process for Any Code Change
+## During chat (cheap)
 
-1. **Exploration** — Use the explore subagent (or rg + fd + ast-grep) before making big changes.
-2. **Planning** — For anything > ~30 lines or architectural, use the plan subagent first.
-3. **Implementation** — Write the code cleanly.
-4. **Self-Review loop (NON-NEGOTIABLE)**:
-   - Immediately after writing, run relevant scanners via the installed tools (see below).
-   - Prefer the full gate: `vibe-review` / `grok-ai-review.ps1` which runs:
-     • **3 independent reviewers** — correctness, security, simplicity
-     • **Arbiter** — merges findings; resolves blocker vs advisory disputes
-     • **Fix pass** on blockers → **re-review** (up to 3 rounds)
-   - In-session, also spawn reviewer + security-auditor when not running the full gate.
-   - Critically analyze for bugs, secrets, duplication, dead/unwired code, bad errors, missing tests.
-5. Only when the multi-reviewer loop passes (no remaining blockers) consider the task complete.
+1. Explore with grep / Serena / small subagents when needed — not a full panel every edit.
+2. Write clean code. Prefer Serena / ast-grep for symbols over dumping whole files.
+3. After non-trivial edits: quick self-check (bugs, secrets, dead/unwired code). On-edit hooks already run fast linters/secrets.
+4. Do **not** spawn a full multi-reviewer panel or full scanner laundry list on every change — that is what **pre-commit** is for.
 
-## Tools You Must Use
+## Done means
 
-- trivy fs . --scanners vuln,secret,misconfig
-- gitleaks detect
-- PSScriptAnalyzer (PowerShell) via Invoke-ScriptAnalyzer
-- Pester (PowerShell tests) via Invoke-Pester when *.Tests.ps1 exist
-- jscpd (duplication)
-- biome check (web projects)
-- markdownlint (Markdown/docs)
-- semgrep scan
-- ruff + mypy + bandit + vulture (Python)
-- yamllint + checkov (YAML/IaC)
-- shellcheck (shell)
-- hadolint (Dockerfiles)
-- rg for TODO/FIXME/unwired hints + ast-grep when available
+- You did a light self-check on what you touched.
+- For risky / large work, optional: `vibe-review` (or wait for commit hook).
+- **Commit** runs scanners + multi-reviewer (`standard` by default; docs-only may use `fast`).
+- Never `--no-verify` except true emergencies.
 
-## Commit Discipline
+## Full gate (on demand / hooks)
 
-When the user (or you) are about to commit:
-- The pre-commit hook runs scanners + the multi-reviewer panel/arbiter/fix loop on staged changes.
-- Blockers are auto-fixed and re-reviewed when possible; remaining blockers block the commit.
-- Never bypass with `--no-verify` except true emergencies.
+| When | What |
+|------|------|
+| `git commit` | pre-commit: scans + AI panel (path-aware profile) |
+| `git push` | pre-push: scans + fast AI (security role if sensitive paths) |
+| Explicit | `vibe-review` / `grok-ai-review.ps1 -Profile standard\|strict\|fast` |
 
-## Subagent Usage
-
-Default to spawning subagents for:
-- Any search of the codebase -> explore
-- Design or multi-file work -> plan
-- Writing implementation -> implementer (but you still review)
-- Every piece of code you produce -> reviewer + security-auditor
-
-You are not done until the reviewer has had its say on your work.
+Deep workflow, scanner list, hook install: skill **vibe-coding** (`/vibe-coding` or skill load).

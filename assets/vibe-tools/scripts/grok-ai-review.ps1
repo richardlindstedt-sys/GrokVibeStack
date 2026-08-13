@@ -12,9 +12,11 @@
       5) Diff-hash cache: identical diff+profile that already PASSED can skip AI
 
     Profiles (also env VIBE_GATE_PROFILE):
-      fast     - 1 reviewer (correctness), 1 round, no fix (cheap; default for push)
-      standard - 3 reviewers, 2 rounds, fix on (default for commit / vibe-review)
-      strict   - 3 reviewers, 3 rounds, fix on, higher turn budgets
+      fast     - 1 reviewer (correctness), 1 round, no fix, effort medium (push / docs)
+      standard - 3 reviewers, 2 rounds, fix on, effort high (commit / vibe-review)
+      strict   - 3 reviewers, 3 rounds, fix on, effort high, higher turn budgets
+
+    -AutoProfile: path-aware adjust (docs-only -> fast; sensitive paths add security on fast).
 
     Fail-closed: missing grok, empty/unparseable panel or arbiter output,
     or exhausted rounds still carrying blockers.
@@ -24,13 +26,16 @@ param(
     [switch]$NoScans,
     [string]$DiffOverride,
     [string]$Model = 'grok-via-headroom',
-    [string]$ReasoningEffort = 'high',
+    # Empty = use profile default (fast=medium, standard/strict=high)
+    [string]$ReasoningEffort = '',
     [int]$ProxyPort = 8787,
     # fast | standard | strict (default standard; push hook uses fast)
     # Named GateProfile (not Profile) — $Profile is a PowerShell automatic variable.
     [Alias('Profile')]
     [ValidateSet('fast', 'standard', 'strict', '')]
     [string]$GateProfile = '',
+    # Adjust profile/roles from changed paths (docs-only, sensitive)
+    [switch]$AutoProfile,
     # Full vibe loop (default). -NoFix = review-only panel + arbiter (no implementer).
     [switch]$NoFix,
     [ValidateRange(1, 5)]
@@ -74,7 +79,8 @@ function Resolve-GateProfile {
                 ReviewerMaxTurns  = 8
                 ArbiterMaxTurns   = 6
                 FixerMaxTurns     = 20
-                Description       = '1 reviewer (correctness), 1 round, no auto-fix'
+                ReasoningEffort   = 'medium'
+                Description       = '1 reviewer (correctness), 1 round, no auto-fix, medium effort'
             }
         }
         'strict' {
@@ -87,6 +93,7 @@ function Resolve-GateProfile {
                 ReviewerMaxTurns  = 16
                 ArbiterMaxTurns   = 10
                 FixerMaxTurns     = 50
+                ReasoningEffort   = 'high'
                 Description       = '3 reviewers, 3 rounds, fix loop, higher budgets'
             }
         }
@@ -100,17 +107,133 @@ function Resolve-GateProfile {
                 ReviewerMaxTurns  = 12
                 ArbiterMaxTurns   = 8
                 FixerMaxTurns     = 40
+                ReasoningEffort   = 'high'
                 Description       = '3 reviewers, 2 rounds, fix loop'
             }
         }
     }
 }
 
-$script:ResolvedProfile = Resolve-GateProfile -Name $GateProfile
+function Get-GateChangedPaths {
+    param([string]$DiffOverride)
+    $paths = [System.Collections.Generic.List[string]]::new()
+    # Explicit DiffOverride (e.g. push range) wins over staged index noise.
+    if (-not [string]::IsNullOrWhiteSpace($DiffOverride)) {
+        foreach ($m in [regex]::Matches($DiffOverride, '(?m)^diff --git a/(.+?) b/(.+)$')) {
+            $a = $m.Groups[1].Value.Trim()
+            $b = $m.Groups[2].Value.Trim()
+            # Adds/mods/renames: b/ side. Pure deletes: b is /dev/null — use a/ path.
+            if ($b -and $b -ne '/dev/null') {
+                [void]$paths.Add($b)
+            } elseif ($a -and $a -ne '/dev/null') {
+                [void]$paths.Add($a)
+            }
+        }
+        if ($paths.Count -gt 0) {
+            return @($paths | Select-Object -Unique)
+        }
+    }
+    # ACMRD: include deletes so AutoProfile sees removed sensitive/doc paths
+    try {
+        $staged = @(git diff --cached --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ })
+        foreach ($p in $staged) { if ($p) { [void]$paths.Add($p) } }
+    } catch {}
+    if ($paths.Count -eq 0) {
+        try {
+            $wt = @(git diff --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ })
+            foreach ($p in $wt) { if ($p) { [void]$paths.Add($p) } }
+        } catch {}
+    }
+    return @($paths | Select-Object -Unique)
+}
+
+function Test-PathIsDocOnly([string]$p) {
+    if ([string]::IsNullOrWhiteSpace($p)) { return $true }
+    # True doc / media allowlist only — never treat *.json/*.yaml/*.yml/*.toml as docs-only
+    # (workflows, compose, chart values, appsettings are gate-relevant config/IaC).
+    if ($p -match '(?i)(^|/)(LICENSE|CHANGELOG|README)(\.|$)') { return $true }
+    if ($p -match '(?i)(^|/)docs?/') { return $true }
+    # No .lock / go.sum — lockfiles are supply-chain surface, not docs
+    if ($p -match '(?i)\.(md|markdown|txt|rst|csv|svg|png|jpe?g|gif|webp|ico|drawio)$') { return $true }
+    return $false
+}
+
+function Test-PathIsSensitive([string]$p) {
+    if ($p -match '(?i)(^|/)(.*lock.*|go\.sum|Cargo\.lock|poetry\.lock|Gemfile\.lock|composer\.lock|pnpm-lock\.yaml|package-lock\.json|yarn\.lock)(\.|$)') {
+        return $true
+    }
+    return [bool]($p -match '(?i)(auth|secret|pass|token|crypto|hook|install|security|credential|oauth|jwt|cert|private.?key)')
+}
+
+function Apply-PathAwareProfile {
+    param($BaseProfile, [string[]]$Paths)
+    $name = $BaseProfile.Name
+    $roles = [System.Collections.Generic.List[string]]::new()
+    foreach ($r in @($BaseProfile.Roles)) { [void]$roles.Add([string]$r) }
+
+    if (-not $Paths -or $Paths.Count -eq 0) {
+        return @{ ProfileName = $name; Roles = @($roles); Note = 'no paths' }
+    }
+
+    $allDoc = $true
+    $anySensitive = $false
+    foreach ($p in $Paths) {
+        if (Test-PathIsSensitive $p) { $anySensitive = $true }
+        if (-not (Test-PathIsDocOnly $p)) { $allDoc = $false }
+    }
+
+    $note = @()
+    if ($allDoc -and -not $anySensitive -and $name -ne 'strict') {
+        $name = 'fast'
+        $roles.Clear()
+        [void]$roles.Add('correctness')
+        $note += 'docs-only->fast'
+    }
+    if ($anySensitive -and $roles -notcontains 'security') {
+        [void]$roles.Add('security')
+        $note += 'sensitive+security'
+    }
+    return @{
+        ProfileName = $name
+        Roles       = @($roles)
+        Note        = ($note -join ', ')
+    }
+}
+
+# Resolve base profile name first
+$baseName = $GateProfile
+if (-not $baseName) { $baseName = $env:VIBE_GATE_PROFILE }
+if (-not $baseName) { $baseName = 'standard' }
+
+$pathNote = ''
+if ($AutoProfile -or $env:VIBE_GATE_AUTO_PROFILE -eq '1') {
+    $changedPaths = Get-GateChangedPaths -DiffOverride $DiffOverride
+    $tmpProf = Resolve-GateProfile -Name $baseName
+    $adj = Apply-PathAwareProfile -BaseProfile $tmpProf -Paths $changedPaths
+    if ($adj.ProfileName -ne $baseName) {
+        Write-Host ("[AutoProfile] {0} -> {1} ({2})" -f $baseName, $adj.ProfileName, $adj.Note) -ForegroundColor DarkCyan
+        $baseName = $adj.ProfileName
+    } elseif ($adj.Note) {
+        Write-Host ("[AutoProfile] keep {0} ({1})" -f $baseName, $adj.Note) -ForegroundColor DarkCyan
+    }
+    $pathNote = $adj.Note
+    $script:PathAwareRoles = @($adj.Roles)
+} else {
+    $script:PathAwareRoles = $null
+}
+
+$script:ResolvedProfile = Resolve-GateProfile -Name $baseName
+if ($script:PathAwareRoles -and $script:PathAwareRoles.Count -gt 0) {
+    $script:ResolvedProfile.Roles = @($script:PathAwareRoles)
+}
 if ($MaxRounds -le 0) { $MaxRounds = [int]$script:ResolvedProfile.MaxRounds }
 if ($ReviewerMaxTurns -le 0) { $ReviewerMaxTurns = [int]$script:ResolvedProfile.ReviewerMaxTurns }
 if ($ArbiterMaxTurns -le 0) { $ArbiterMaxTurns = [int]$script:ResolvedProfile.ArbiterMaxTurns }
 if ($FixerMaxTurns -le 0) { $FixerMaxTurns = [int]$script:ResolvedProfile.FixerMaxTurns }
+if ([string]::IsNullOrWhiteSpace($ReasoningEffort)) {
+    $ReasoningEffort = [string]$script:ResolvedProfile.ReasoningEffort
+    if (-not $ReasoningEffort) { $ReasoningEffort = 'high' }
+}
 # Large diffs: compress into brief (below). Slight turn headroom for panel JSON only.
 if (-not $PSBoundParameters.ContainsKey('ReviewerMaxTurns')) {
     try {
@@ -133,6 +256,9 @@ $script:GateRun = [ordered]@{
     startedAt     = (Get-Date -Format 'o')
     profile       = $script:ResolvedProfile.Name
     model         = $Model
+    effort        = $ReasoningEffort
+    autoProfile   = [bool]$AutoProfile
+    pathNote      = $pathNote
     noFix         = [bool]$NoFix
     maxRounds     = $MaxRounds
     roles         = @($script:ResolvedProfile.Roles)
@@ -1017,12 +1143,16 @@ function Invoke-Fixer {
 }
 
 function Update-GitStageAfterFix {
-    # Re-stage only tracked mods + explicit blocker paths (never blanket add-all)
-    param($Blockers)
+    # Re-stage blocker paths + prior-staged dirtied + tracked paths newly dirty since fix start.
+    # Never blanket add-all or update-all (avoids pulling unrelated pre-existing dirty tracked files).
+    param(
+        $Blockers,
+        [string[]]$PriorStaged = @(),
+        [string[]]$PreFixDirty = @()
+    )
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        git add -u 2>$null | Out-Null
         $paths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($b in @($Blockers)) {
             if (-not $b) { continue }
@@ -1031,16 +1161,40 @@ function Update-GitStageAfterFix {
             if ([string]::IsNullOrWhiteSpace($fp)) { continue }
             $fp = $fp.Trim() -replace '^[.][\\/]+', ''
             if ($fp -match '\.\.' -or $fp -match '(?i)(^|[\\/])\.git([\\/]|$)') { continue }
-            if ($fp.StartsWith('/') -or $fp -match '^[A-Za-z]:') { continue } # no absolute
-            [void]$paths.Add($fp)
+            if ($fp.StartsWith('/') -or $fp -match '^[A-Za-z]:') { continue }
+            [void]$paths.Add(($fp -replace '\\', '/'))
         }
-        foreach ($p in $paths) {
-            if (-not $p) { continue }
-            # Only add if path exists on disk or is already known to git
+        # Prior staged set: if worktree now differs from index, re-add those paths only
+        foreach ($ps in @($PriorStaged)) {
+            if ([string]::IsNullOrWhiteSpace($ps)) { continue }
+            $norm = ($ps.Trim() -replace '\\', '/')
+            if ($norm -match '\.\.') { continue }
+            $dirty = git diff --name-only -- $norm 2>$null
+            if ($dirty) { [void]$paths.Add($norm) }
+        }
+        # Tracked paths dirtied during fix (in post-dirty, not in pre-fix snapshot)
+        $preSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($d in @($PreFixDirty)) {
+            if ([string]::IsNullOrWhiteSpace($d)) { continue }
+            [void]$preSet.Add(($d.Trim() -replace '\\', '/'))
+        }
+        try {
+            $postDirty = @(git diff --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ })
+            foreach ($pd in $postDirty) {
+                if ([string]::IsNullOrWhiteSpace($pd)) { continue }
+                $norm = ($pd.Trim() -replace '\\', '/')
+                if ($norm -match '\.\.') { continue }
+                if (-not $preSet.Contains($norm)) { [void]$paths.Add($norm) }
+            }
+        } catch {}
+        foreach ($rawPath in @($paths)) {
+            if (-not $rawPath) { continue }
+            $p = $rawPath -replace '/', [IO.Path]::DirectorySeparatorChar
             $exists = Test-Path -LiteralPath $p -ErrorAction SilentlyContinue
             if (-not $exists) {
-                $ls = git ls-files --error-unmatch -- $p 2>$null
+                $ls = git ls-files --error-unmatch -- $rawPath 2>$null
                 if (-not $ls) { continue }
+                $p = $rawPath
             }
             git add -- $p 2>$null | Out-Null
         }
@@ -1268,6 +1422,11 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     }
 
     Write-Phase ("Round {0} - implementer fix pass ({1} blockers)" -f $round, $blockers.Count)
+    # Snapshot before fixer so restage can pick helper/shared edits without git add -u
+    $preFixDirty = @()
+    try { $preFixDirty = @(git diff --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ }) } catch {}
+    $priorStaged = @()
+    try { $priorStaged = @(git diff --cached --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ }) } catch {}
     $fix = Invoke-Fixer -GrokExe $grokExe -ModelName $useModel -DiffText $diff -Blockers $blockers -RoundDir $roundDir -Round $round -Effort $ReasoningEffort -MaxTurns $FixerMaxTurns
     Write-Host ("  fixer finished ok={0} {1}s exit={2}" -f $fix.Ok, $fix.Seconds, $fix.ExitCode) -ForegroundColor DarkCyan
     $roundRec.fixerOk = [bool]$fix.Ok
@@ -1284,7 +1443,7 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     }
 
     Write-Host "  Re-staging changes for next review round..." -ForegroundColor DarkGray
-    Update-GitStageAfterFix -Blockers $blockers
+    Update-GitStageAfterFix -Blockers $blockers -PriorStaged $priorStaged -PreFixDirty $preFixDirty
     # refresh hash baseline after fix for next round cache (optional)
     $nextRound = $round + 1
     Write-Host ("  Continuing to round {0}..." -f $nextRound) -ForegroundColor Cyan

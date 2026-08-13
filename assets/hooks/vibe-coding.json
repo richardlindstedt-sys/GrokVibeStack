@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Write-Host '[vibe] Turn end - if you edited code, confirm vibe-review / scans ran before done.' -ForegroundColor Cyan\"",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"__GROK_HOME__\\vibe-tools\\scripts\\run-vibe-stop-remind.ps1\"",
             "timeout": 5
           }
         ]

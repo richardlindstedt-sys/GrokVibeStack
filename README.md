@@ -119,11 +119,13 @@ scans → reviewer panel (by profile) → arbiter → blockers? implementer fix 
       → diff-hash pass cache (same diff+profile+model can skip AI)
 ```
 
-| Profile | Roles | Rounds | Fix | Typical use |
-|---------|-------|--------|-----|-------------|
-| **fast** | correctness | 1 | off | pre-push |
-| **standard** | correctness + security + simplicity | 2 | on | pre-commit, `vibe-review` |
-| **strict** | same as standard | 3 | on | high-risk / release |
+| Profile | Roles | Rounds | Fix | Effort | Typical use |
+|---------|-------|--------|-----|--------|-------------|
+| **fast** | correctness (+ security if sensitive paths) | 1 | off | medium | pre-push, docs-only commit |
+| **standard** | correctness + security + simplicity | 2 | on | high | pre-commit, `vibe-review` |
+| **strict** | same as standard | 3 | on | high | high-risk / release |
+
+Hooks use `-AutoProfile` (docs-only → fast; sensitive paths keep/add security). Scans: staged-first on commit (`-Scope Auto`); full on push with short scan-pass cache.
 
 ```powershell
 vibe-review

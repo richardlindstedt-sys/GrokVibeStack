@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed (P1 quality/token)
+
+- Slim always-on vibe rules/AGENTS; full panel lives in skill + commit hooks
+- `fast` profile AI effort **medium**; standard/strict stay **high**
+- Path-aware gates (`-AutoProfile`): docs-only → fast; sensitive paths add security
+- Scanners: `-Scope Auto|Staged|Full`, binary-safe staged tree (`git checkout-index`), push scan-pass cache (~2h TTL)
+- Stop hook reminds only after edits this session (`run-vibe-stop-remind.ps1`); opt-in always: `VIBE_STOP_REMIND=1`
+- Fixer restage: blocker paths + prior-staged dirtied paths only (no `git add -u`)
+- jscpd/checkov: blocking only in JS/TS or IaC domain; otherwise advisory
+- RTK noisy list: `sg`/`ast-grep`/`difft`/`tokei`/`scc`/`jq`; bare `find` tightened to `find.exe` / shell `find `
+
 ### Fixed (P0 gate / savings integrity)
 
 - Critical scanners (`trivy`, `gitleaks`) **required by default**; set `VIBE_REQUIRE_SCANNERS=0` to soft-warn only

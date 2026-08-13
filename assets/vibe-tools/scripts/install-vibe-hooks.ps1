@@ -58,8 +58,8 @@ $preCommit = @'
 
 echo ""
 echo "+================================================================+"
-echo "|   VIBE PRE-COMMIT HOOK  [profile=standard]                     |"
-echo "|   Scans + 3-reviewer panel + arbiter + fix/re-review loop      |"
+echo "|   VIBE PRE-COMMIT HOOK  [AutoProfile base=standard]            |"
+echo "|   Staged-first scans + path-aware AI panel + fix loop          |"
 echo "+================================================================+"
 echo ""
 
@@ -72,7 +72,8 @@ echo "    trivy, gitleaks, pssa, pester, jscpd, biome, markdownlint,"
 echo "    semgrep, ruff/mypy/bandit, yamllint/checkov, shellcheck, hadolint"
 echo ""
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/run-vibe-scans.ps1"
+# Auto = staged-first when index non-empty
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/run-vibe-scans.ps1" -Scope Auto
 SCAN_EXIT=$?
 
 if [ $SCAN_EXIT -ne 0 ]; then
@@ -83,12 +84,12 @@ if [ $SCAN_EXIT -ne 0 ]; then
 fi
 
 echo ""
-echo ">>> STEP 2/2 : MULTI-REVIEWER LOOP (staged diff, profile=standard)"
-echo "    correctness + security + simplicity -> arbiter -> fix -> re-review"
+echo ">>> STEP 2/2 : MULTI-REVIEWER LOOP (staged diff, AutoProfile)"
+echo "    base=standard; docs-only may drop to fast; path-aware roles"
 echo "    reports: ~/.grok/vibe-tools/reports/latest.md"
 echo ""
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/grok-ai-review.ps1" -NoScans -Profile standard
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/grok-ai-review.ps1" -NoScans -Profile standard -AutoProfile
 REVIEW_EXIT=$?
 
 if [ $REVIEW_EXIT -ne 0 ]; then
@@ -148,8 +149,8 @@ foreach ($h in @($preCommitPath, $prePushPath)) {
 
 Write-Host ""
 Write-Host "Installed vibe git hooks in: $hooksDir" -ForegroundColor Green
-Write-Host "  pre-commit  -> scans + grok-ai-review -Profile standard (staged)" -ForegroundColor Yellow
-Write-Host "  pre-push    -> scans + grok-ai-review -Profile fast (push range)" -ForegroundColor Yellow
+Write-Host "  pre-commit  -> scans -Scope Auto + grok-ai-review -Profile standard -AutoProfile" -ForegroundColor Yellow
+Write-Host "  pre-push    -> scans Full/cache + grok-ai-review -Profile fast -AutoProfile" -ForegroundColor Yellow
 Write-Host "  reports     -> ~/.grok/vibe-tools/reports/latest.md" -ForegroundColor DarkGray
 
 # Global Grok on-edit hook (session lifecycle) — vibe-coding only; do not touch token-saving.json
@@ -158,7 +159,9 @@ New-Item -ItemType Directory -Force -Path $grokHooksDir | Out-Null
 $vibeHookJson = Join-Path $grokHooksDir 'vibe-coding.json'
 
 $onEditPs1 = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\run-vibe-on-edit.ps1'
+$stopPs1 = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\run-vibe-stop-remind.ps1'
 $onEditCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $onEditPs1 + '"'
+$stopCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $stopPs1 + '"'
 
 $hookObj = [ordered]@{
     hooks = [ordered]@{
@@ -179,7 +182,7 @@ $hookObj = [ordered]@{
                 hooks = @(
                     [ordered]@{
                         type    = 'command'
-                        command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ''[vibe] Turn end - if you edited code, confirm scans/review ran (vibe-review) before calling done.'' -ForegroundColor Cyan"'
+                        command = $stopCmd
                         timeout = 5
                     }
                 )
@@ -192,8 +195,8 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($vibeHookJson, ($hookObj | ConvertTo-Json -Depth 8), $utf8NoBom)
 Write-Host ""
 Write-Host "Installed Grok session hook: $vibeHookJson" -ForegroundColor Green
-Write-Host "  PostToolUse (edits) -> run-vibe-on-edit.ps1 (secrets + linters)" -ForegroundColor Yellow
-Write-Host "  Stop                -> reminder to finish vibe-review if code changed" -ForegroundColor Yellow
+Write-Host "  PostToolUse (edits) -> run-vibe-on-edit.ps1 (secrets + linters + session flag)" -ForegroundColor Yellow
+Write-Host "  Stop                -> remind only if edited this session (or VIBE_STOP_REMIND=1)" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "==============================================================" -ForegroundColor Yellow
 Write-Host " If Grok is already open: reload hooks once (/hooks then r)" -ForegroundColor Yellow

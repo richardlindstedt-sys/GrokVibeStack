@@ -55,6 +55,16 @@ if (-not $toolInput) { $toolInput = $evt.tool_input }
 $edited = @(Get-EditedPaths $toolInput)
 if ($edited.Count -eq 0) { exit 0 }
 
+# Mark session for Stop-hook reminder (P1-12)
+try {
+    $stateDir = Join-Path $env:USERPROFILE '.grok\vibe-tools\state'
+    if (-not (Test-Path -LiteralPath $stateDir)) {
+        New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+    }
+    $flag = Join-Path $stateDir 'edited-this-session.flag'
+    Set-Content -Path $flag -Value ((Get-Date -Format 'o') + "`n" + ($edited -join "`n")) -Encoding utf8
+} catch {}
+
 $root = if ($evt.workspaceRoot) { $evt.workspaceRoot } elseif ($evt.cwd) { $evt.cwd } else { (Get-Location).Path }
 Push-Location $root
 
