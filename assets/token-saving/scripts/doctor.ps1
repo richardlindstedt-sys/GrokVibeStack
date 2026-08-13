@@ -60,7 +60,9 @@ if ($proxyUp) {
 # --- Session hooks ---
 Write-Host ""
 Write-Host "--- Session hooks (~/.grok/hooks) ---" -ForegroundColor Cyan
-Write-Host "  reload: In Grok TUI run /hooks then press r  (or restart session)" -ForegroundColor DarkGray
+Write-Host "  load:   new Grok sessions pick these up automatically" -ForegroundColor DarkGray
+Write-Host "  reload: only after install/hook edits in an already-open session:" -ForegroundColor DarkGray
+Write-Host "          /hooks then r  — or restart Grok" -ForegroundColor DarkGray
 foreach ($hf in @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')) {
     $p = Join-Path $hooksDir $hf
     if (Test-Path -LiteralPath $p) {
@@ -218,5 +220,5 @@ Write-Host "Rules:  caveman.md + token-efficiency.md + rtk.md under ~/.grok/rule
 Write-Host "RTK.md: ~/.grok/RTK.md"
 Write-Host "MCP:    [mcp_servers.headroom] in ~/.grok/config.toml"
 Write-Host "Launch: start-grok (or start-grok -Status)"
-Write-Host "Hooks:  /hooks then r after install"
+Write-Host "Hooks:  new sessions auto-load; reload only if Grok was open during install (/hooks r)"
 Write-Host "Smoke:  Invoke-VibeStackSmoke.ps1 (no AI spend)"

@@ -10,7 +10,7 @@ Save context and tokens without losing correctness.
 - **Compact** at **55%** context + two-pass
 - **MCP** tool output capped at **20k** bytes
 - Interactive reasoning default **medium**; **commit/push AI review stays high effort** and is **fail-closed** (missing grok/proxy/verdict blocks)
-- After install: **`/hooks` then `r`** or RTK/on-edit hooks stay inactive for the session
+- After install/hook **file changes**: restart Grok, or once run **`/hooks` then `r`** in an already-open session. New sessions load hooks from disk automatically (not every session).
 - Prefer `start-grok` (proxy up); bare `grok` with default `grok-via-headroom` fails if proxy down
 
 ## Read path
