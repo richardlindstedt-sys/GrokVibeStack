@@ -533,13 +533,17 @@ if (Get-Command rg -ErrorAction SilentlyContinue) {
     }
 }
 
-# Critical scanner presence (soft warn; set VIBE_REQUIRE_SCANNERS=1 to fail gate)
+# Critical scanner presence — default FAIL if missing (set VIBE_REQUIRE_SCANNERS=0 to soft-warn only)
 $haveTrivy = [bool](Get-Command trivy -ErrorAction SilentlyContinue)
 $haveGitleaks = [bool](Get-Command gitleaks -ErrorAction SilentlyContinue)
+$requireScanners = $env:VIBE_REQUIRE_SCANNERS -ne '0'
 if (-not $haveTrivy -or -not $haveGitleaks) {
     $msg = "Critical scanners missing: $(if (-not $haveTrivy) { 'trivy ' })$(if (-not $haveGitleaks) { 'gitleaks' })".Trim()
-    if (-not $Quiet) { Write-Host "[WARN] $msg — gate coverage degraded. Install via winget or re-run Install-GrokVibeStack." -ForegroundColor Yellow }
-    if ($env:VIBE_REQUIRE_SCANNERS -eq '1') {
+    if (-not $Quiet) {
+        $hint = if ($requireScanners) { 'Gate FAIL. Install via winget or re-run Install-GrokVibeStack. Soft-warn only: VIBE_REQUIRE_SCANNERS=0' } else { 'Gate soft-warn (VIBE_REQUIRE_SCANNERS=0). Coverage degraded.' }
+        Write-Host "[WARN] $msg — $hint" -ForegroundColor Yellow
+    }
+    if ($requireScanners) {
         $script:failed++
     }
 }

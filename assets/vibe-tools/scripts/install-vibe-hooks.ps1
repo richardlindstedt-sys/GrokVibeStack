@@ -64,6 +64,8 @@ echo "+================================================================+"
 echo ""
 
 VIBE_SCRIPTS="$HOME/.grok/vibe-tools/scripts"
+# Default require trivy+gitleaks (script also defaults on; 0 = soft-warn only)
+export VIBE_REQUIRE_SCANNERS="${VIBE_REQUIRE_SCANNERS:-1}"
 
 echo ">>> STEP 1/2 : STATIC SCANS"
 echo "    trivy, gitleaks, pssa, pester, jscpd, biome, markdownlint,"

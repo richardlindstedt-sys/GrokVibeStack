@@ -62,7 +62,7 @@ Write-Host ""
 Write-Host "--- Session hooks (~/.grok/hooks) ---" -ForegroundColor Cyan
 Write-Host "  load:   new Grok sessions pick these up automatically" -ForegroundColor DarkGray
 Write-Host "  reload: only after install/hook edits in an already-open session:" -ForegroundColor DarkGray
-Write-Host "          /hooks then r  — or restart Grok" -ForegroundColor DarkGray
+Write-Host "          /hooks then r  - or restart Grok" -ForegroundColor DarkGray
 foreach ($hf in @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')) {
     $p = Join-Path $hooksDir $hf
     if (Test-Path -LiteralPath $p) {
@@ -92,14 +92,15 @@ Write-Host "--- Vibe gate ---" -ForegroundColor Cyan
 $reviewPs1 = Join-Path $vibeScripts 'grok-ai-review.ps1'
 $hooksInstall = Join-Path $vibeScripts 'install-vibe-hooks.ps1'
 Write-Host "  scripts: $(if (Test-Path $reviewPs1) { 'ok' } else { 'MISSING grok-ai-review.ps1' })" -ForegroundColor (Get-StatusColor (Test-Path $reviewPs1))
-Write-Host "  profiles: fast | standard | strict  (env VIBE_GATE_PROFILE overrides default)"
+Write-Host '  profiles: fast | standard | strict  (env VIBE_GATE_PROFILE overrides default)'
 $envProf = if ($env:VIBE_GATE_PROFILE) { $env:VIBE_GATE_PROFILE } else { '(unset -> standard)' }
 Write-Host "  VIBE_GATE_PROFILE: $envProf"
-Write-Host "  commit hook: -Profile standard (3 reviewers + fix loop)"
-Write-Host "  push hook:   -Profile fast (1 correctness reviewer, no fix)"
-Write-Host "  cache:       $(if (Test-Path $cacheFile) { $cacheFile } else { 'none yet (pass cache after first APPROVE)' })" -ForegroundColor DarkGray
+Write-Host '  commit hook: Profile=standard (3 reviewers + fix loop)'
+Write-Host '  push hook:   Profile=fast (1 correctness reviewer, no fix)'
+$cacheMsg = if (Test-Path $cacheFile) { $cacheFile } else { 'none yet (pass cache after first APPROVE)' }
+Write-Host "  cache:       $cacheMsg" -ForegroundColor DarkGray
 if ($env:VIBE_GATE_NO_CACHE -eq '1') {
-    Write-Host "  VIBE_GATE_NO_CACHE=1 (pass cache disabled)" -ForegroundColor Yellow
+    Write-Host '  VIBE_GATE_NO_CACHE=1 (pass cache disabled)' -ForegroundColor Yellow
 }
 
 # --- Latest report ---
@@ -161,7 +162,7 @@ if (Test-Path $gitDir) {
         Write-Host "  pre-push:   MISSING - run install-vibe-hooks.ps1 ." -ForegroundColor Yellow
     }
     if (-not $pcOk -and (Test-Path $hooksInstall)) {
-        Write-Host "  fix: & `"$hooksInstall`" ." -ForegroundColor Yellow
+        Write-Host ('  fix: run install-vibe-hooks.ps1 on this repo: {0}' -f $hooksInstall) -ForegroundColor Yellow
     }
 } else {
     Write-Host "  no .git in cwd - per-repo gates N/A here" -ForegroundColor DarkGray
@@ -171,18 +172,20 @@ if (Test-Path -LiteralPath $cfg) {
     Write-Host ""
     Write-Host "--- config.toml ---" -ForegroundColor Cyan
     $cfgTxt = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
-    if ($cfgTxt -match '(?m)^\s*permission_mode\s*=\s*"always-approve"') {
-        Write-Host "  WARN: permission_mode=always-approve (tools auto-run without prompts)." -ForegroundColor Yellow
-        Write-Host "        Not set by vibe stack. Change via /settings if undesired." -ForegroundColor Yellow
+    if ($cfgTxt -match 'permission_mode\s*=\s*"always-approve"') {
+        Write-Host '  WARN: permission_mode=always-approve (tools auto-run without prompts).' -ForegroundColor Yellow
+        Write-Host '        Not set by vibe stack. Change via /settings if undesired.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match 'grok-via-headroom' -and -not $proxyUp) {
-        Write-Host "  WARN: default model uses Headroom but proxy is down. Use start-grok." -ForegroundColor Yellow
+        Write-Host '  WARN: default model uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match 'max_output_bytes\s*=\s*(\d+)') {
-        Write-Host "  mcp max_output_bytes: $($Matches[1])"
+    $mcpCap = [regex]::Match([string]$cfgTxt, 'max_output_bytes\s*=\s*(\d+)')
+    if ($mcpCap.Success) {
+        Write-Host ("  mcp max_output_bytes: {0}" -f $mcpCap.Groups[1].Value)
     }
-    if ($cfgTxt -match 'default_reasoning_effort\s*=\s*"([^"]+)"') {
-        Write-Host "  default_reasoning_effort: $($Matches[1])"
+    $effort = [regex]::Match([string]$cfgTxt, "default_reasoning_effort\s*=\s*`"([^`"]+)`"")
+    if ($effort.Success) {
+        Write-Host ("  default_reasoning_effort: {0}" -f $effort.Groups[1].Value)
     }
 }
 
@@ -208,17 +211,17 @@ if (Test-Path $headroom) {
 }
 Write-Host ""
 Write-Host "Max stack:"
-Write-Host "  caveman: ultra (chat output)"
-Write-Host "  rtk:     prefix noisy shell (git/test/build/docker/gh/...)"
-Write-Host "  proxy:   --mode token --lossless --code-aware --intercept-tool-results --target-ratio 0.35 + read-maturation + no-ccr-proactive-expansion"
-Write-Host "  mcp:     max_output_bytes=20000 (config)"
-Write-Host "  compact: 55% + two-pass"
-Write-Host "  gates:   profiles fast|standard|strict; AI fail-closed; reports under vibe-tools/reports"
+Write-Host '  caveman: ultra (chat output)'
+Write-Host '  rtk:     prefix noisy shell (git/test/build/docker/gh/...)'
+Write-Host '  proxy:   mode=token lossless code-aware intercept target-ratio=0.35 read-maturation no-ccr'
+Write-Host '  mcp:     max_output_bytes=20000 (config)'
+Write-Host '  compact: 55% + two-pass'
+Write-Host '  gates:   profiles fast|standard|strict; AI fail-closed; reports under vibe-tools/reports'
 Write-Host ""
-Write-Host "Skills: caveman + token-save under ~/.grok/skills"
-Write-Host "Rules:  caveman.md + token-efficiency.md + rtk.md under ~/.grok/rules"
-Write-Host "RTK.md: ~/.grok/RTK.md"
-Write-Host "MCP:    [mcp_servers.headroom] in ~/.grok/config.toml"
-Write-Host "Launch: start-grok (or start-grok -Status)"
-Write-Host "Hooks:  new sessions auto-load; reload only if Grok was open during install (/hooks r)"
-Write-Host "Smoke:  Invoke-VibeStackSmoke.ps1 (no AI spend)"
+Write-Host 'Skills: caveman + token-save under ~/.grok/skills'
+Write-Host 'Rules:  caveman.md + token-efficiency.md + rtk.md under ~/.grok/rules'
+Write-Host 'RTK.md: ~/.grok/RTK.md'
+Write-Host 'MCP:    mcp_servers.headroom in ~/.grok/config.toml'
+Write-Host 'Launch: start-grok (or start-grok -Status)'
+Write-Host 'Hooks:  new sessions auto-load; reload only if Grok was open during install (/hooks r)'
+Write-Host 'Smoke:  Invoke-VibeStackSmoke.ps1 (no AI spend)'
