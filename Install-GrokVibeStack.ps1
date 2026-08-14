@@ -83,6 +83,7 @@ $ManifestPath = Join-Path $GrokHome 'vibe-stack-manifest.json'
 $script:WingetOkCodes = @(0, -1978335189, -1978335215)
 
 $script:Failed = New-Object System.Collections.Generic.List[string]
+$script:GithubReleasePins = $null
 $script:Warned = New-Object System.Collections.Generic.List[string]
 $script:Ok = New-Object System.Collections.Generic.List[string]
 $script:Manifest = [ordered]@{
@@ -625,10 +626,40 @@ function Install-HooksJson {
     Write-Ok "hooks: token-saving (rtk-enforce), vibe-coding (on-edit + gated stop-remind)"
 }
 
+function Get-GithubReleasePin([string]$DestName) {
+    if ($null -eq $script:GithubReleasePins) {
+        $pinPath = Join-Path $Assets 'requirements\github-release-pins.json'
+        if (-not (Test-Path -LiteralPath $pinPath)) {
+            $script:GithubReleasePins = @()
+        } else {
+            $doc = (Get-Content -LiteralPath $pinPath -Raw) | ConvertFrom-Json
+            $script:GithubReleasePins = @($doc.pins)
+        }
+    }
+    foreach ($p in $script:GithubReleasePins) {
+        if ($p.dest -eq $DestName) { return $p }
+    }
+    return $null
+}
+
+function Test-FileSha256([string]$Path, [string]$Expected) {
+    $want = (($Expected -replace '(?i)^sha256:', '')).Trim().ToLowerInvariant()
+    if ($want.Length -ne 64 -or $want -notmatch '^[0-9a-f]{64}$') { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $fs = [System.IO.File]::OpenRead($Path)
+    try {
+        $got = [BitConverter]::ToString($sha.ComputeHash($fs)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $fs.Dispose()
+        $sha.Dispose()
+    }
+    return ($got -eq $want)
+}
+
 function Install-GithubReleaseBinary {
     param(
-        [string]$Repo,
-        [string]$AssetPattern,
+        [Parameter(Mandatory = $true)]
         [string]$DestName
     )
     Ensure-Dir $GrokBin
@@ -637,21 +668,37 @@ function Install-GithubReleaseBinary {
         Write-Info "$DestName already present"
         return $true
     }
-    if ($DryRun) { Write-Info "DRY download $DestName from $Repo"; return $true }
+    $pin = Get-GithubReleasePin $DestName
+    if (-not $pin) {
+        Write-Fail "no GitHub pin for $DestName (assets/requirements/github-release-pins.json)"
+        return $false
+    }
+    $tag = [string]$pin.tag
+    $asset = [string]$pin.asset
+    $repo = [string]$pin.repo
+    $sha = [string]$pin.sha256
+    if (-not $tag -or -not $asset -or -not $repo -or -not $sha) {
+        Write-Fail "incomplete GitHub pin for $DestName"
+        return $false
+    }
+    if ($DryRun) {
+        Write-Info ('DRY download {0} from {1}@{2} ({3})' -f $DestName, $repo, $tag, $asset)
+        return $true
+    }
+    $url = "https://github.com/$repo/releases/download/$tag/$asset"
+    $tmp = Join-Path $env:TEMP ("gvibe-" + [guid]::NewGuid().ToString('n'))
     try {
-        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{
+        Ensure-Dir $tmp
+        $dl = Join-Path $tmp $asset
+        Write-Info ('download {0} {1}@{2}' -f $DestName, $repo, $tag)
+        Invoke-WebRequest -Uri $url -OutFile $dl -UseBasicParsing -Headers @{
             'User-Agent' = 'Install-GrokVibeStack'
         }
-        $asset = $rel.assets | Where-Object { $_.name -match $AssetPattern } | Select-Object -First 1
-        if (-not $asset) {
-            Write-Warn2 "No release asset for $DestName ($Repo)"
+        if (-not (Test-FileSha256 $dl $sha)) {
+            Write-Fail ('SHA256 mismatch for {0} ({1} from {2}@{3}) - not installing' -f $DestName, $asset, $repo, $tag)
             return $false
         }
-        $tmp = Join-Path $env:TEMP ("gvibe-" + [guid]::NewGuid().ToString('n'))
-        Ensure-Dir $tmp
-        $dl = Join-Path $tmp $asset.name
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dl -UseBasicParsing
-        if ($asset.name -match '\.zip$') {
+        if ($asset -match '\.zip$') {
             Expand-Archive -Path $dl -DestinationPath $tmp -Force
             $exe = Get-ChildItem -Path $tmp -Recurse -Filter $DestName -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $exe) {
@@ -660,19 +707,25 @@ function Install-GithubReleaseBinary {
                     Select-Object -First 1
             }
             if ($exe) { Copy-Item -LiteralPath $exe.FullName -Destination $dest -Force }
-        } elseif ($asset.name -match '\.exe$') {
+        } elseif ($asset -match '\.exe$') {
             Copy-Item -LiteralPath $dl -Destination $dest -Force
+        } else {
+            Write-Fail "pinned asset for $DestName is not .zip/.exe: $asset"
+            return $false
         }
-        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $dest) {
-            Write-Ok "Installed $DestName"
+            Write-Ok ('Installed {0} ({1}@{2}, hash ok)' -f $DestName, $repo, $tag)
             return $true
         }
-        Write-Warn2 "Failed to place $DestName"
+        Write-Fail "Failed to place $DestName after verified download"
         return $false
     } catch {
-        Write-Warn2 "Download $DestName failed: $_"
+        Write-Fail "Download $DestName failed: $_"
         return $false
+    } finally {
+        if (Test-Path -LiteralPath $tmp) {
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -1069,8 +1122,8 @@ Write-Step "PowerShell modules"
 Install-PsModules
 
 Write-Step "Optional binaries (scc, tokei, difft via headroom tools)"
-[void](Install-GithubReleaseBinary -Repo 'boyter/scc' -AssetPattern '(?i)(windows|win64|x86_64.*windows).*\.zip$' -DestName 'scc.exe')
-[void](Install-GithubReleaseBinary -Repo 'XAMPPRocky/tokei' -AssetPattern '(?i)(x86_64-pc-windows|windows).*\.(zip|exe)$' -DestName 'tokei.exe')
+[void](Install-GithubReleaseBinary -DestName 'scc.exe')
+[void](Install-GithubReleaseBinary -DestName 'tokei.exe')
 # Headroom bundles ast-grep + difft + scc into user cache (structural diff = fewer tokens than raw diffs)
 $hrExe = Join-Path $TokenRoot 'venv\Scripts\headroom.exe'
 if ((Test-Path -LiteralPath $hrExe) -and -not $DryRun) {

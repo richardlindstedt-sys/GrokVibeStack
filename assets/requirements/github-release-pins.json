@@ -1,0 +1,20 @@
+{
+  "_comment": "Pinned GitHub release assets for Install-GithubReleaseBinary. Bump: set tag+asset, SHA256 the downloaded file, commit. Never use /releases/latest.",
+  "pins": [
+    {
+      "dest": "scc.exe",
+      "repo": "boyter/scc",
+      "tag": "v3.7.0",
+      "asset": "scc_Windows_x86_64.zip",
+      "sha256": "97abf9d55d4b79d3310536d576ccbdf5017aeb425780e850336120b6e67622e1"
+    },
+    {
+      "dest": "tokei.exe",
+      "repo": "XAMPPRocky/tokei",
+      "tag": "v13.0.0-alpha.0",
+      "asset": "tokei-x86_64-pc-windows-msvc.exe",
+      "sha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
+      "note": "v13/v14 source-only tags ship no Windows binaries; this is the newest x64 exe."
+    }
+  ]
+}

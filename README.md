@@ -214,7 +214,7 @@ End-to-end “% off my monthly bill” depends on mix of chat vs gates vs tool n
 
 winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, prettier, eslint, typescript, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
 
-Those projects keep their own licenses and update cadence. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
+Those projects keep their own licenses and update cadence. GitHub binaries (`scc`, `tokei`) use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install). Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
 
 ---
 
