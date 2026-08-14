@@ -309,6 +309,12 @@ if ($stopSrc -and $stopSrc -match 'edited-this-session' -and $onEditSrc -match '
 } else {
     Bad 'stop/on-edit session flag wiring missing'
 }
+$verFile = Join-Path $RepoRoot 'VERSION'
+if ((Test-Path -LiteralPath $verFile) -and ((Get-Content -LiteralPath $verFile -TotalCount 1).Trim() -match '^\d+\.\d+\.\d+$') -and ((Get-Content -LiteralPath (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1') -Raw) -match 'function Get-StackVersion') -and ((Get-Content -LiteralPath (Join-Path $RepoRoot 'CHANGELOG.md') -Raw) -match '\[1\.0\.3\]')) {
+    Ok 'stack version 1.0.3 in VERSION + installer + changelog'
+} else {
+    Bad 'VERSION / Get-StackVersion / changelog 1.0.3 missing'
+}
 $instSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1') -Raw
 $unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
 $hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw

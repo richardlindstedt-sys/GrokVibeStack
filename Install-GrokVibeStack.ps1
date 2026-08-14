@@ -86,8 +86,19 @@ $script:Failed = New-Object System.Collections.Generic.List[string]
 $script:GithubReleasePins = $null
 $script:Warned = New-Object System.Collections.Generic.List[string]
 $script:Ok = New-Object System.Collections.Generic.List[string]
+function Get-StackVersion {
+    $vf = Join-Path $ScriptRoot 'VERSION'
+    if (Test-Path -LiteralPath $vf) {
+        $v = (Get-Content -LiteralPath $vf -TotalCount 1).Trim()
+        if ($v -match '^\d+\.\d+\.\d+') { return $v }
+    }
+    return '0.0.0'
+}
+$script:StackVersion = Get-StackVersion
+
 $script:Manifest = [ordered]@{
     version              = 1
+    stackVersion         = $script:StackVersion
     installedAt          = (Get-Date -Format 'o')
     scriptRoot           = $ScriptRoot
     grokHome             = $GrokHome
@@ -915,6 +926,7 @@ function Save-Manifest {
     # Convert lists to arrays for JSON
     $obj = [ordered]@{
         version             = $script:Manifest.version
+        stackVersion        = $script:Manifest.stackVersion
         installedAt         = $script:Manifest.installedAt
         scriptRoot          = $script:Manifest.scriptRoot
         grokHome            = $script:Manifest.grokHome
@@ -986,7 +998,7 @@ function Test-StackHealth {
 # ===================== MAIN =====================
 Write-Host ""
 Write-Host "+================================================================+" -ForegroundColor Magenta
-Write-Host "|  Install-GrokVibeStack                                         |" -ForegroundColor Magenta
+Write-Host ('|  Install-GrokVibeStack  {0,-39}|' -f $script:StackVersion) -ForegroundColor Magenta
 Write-Host "|  Full stack for machines that only have Grok Build CLI         |" -ForegroundColor Magenta
 Write-Host "+================================================================+" -ForegroundColor Magenta
 Write-Host "Assets: $Assets"
@@ -1030,6 +1042,10 @@ if (-not $DryRun) {
     Copy-Item (Join-Path $Assets 'vibe-tools\*.ps1') $VibeRoot -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $Assets 'vibe-tools\README.md') (Join-Path $VibeRoot 'README.md') -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $Assets 'bin-shims\*') $GrokBin -Force
+    $verSrc = Join-Path $ScriptRoot 'VERSION'
+    if (Test-Path -LiteralPath $verSrc) {
+        Copy-Item -LiteralPath $verSrc -Destination (Join-Path $GrokHome 'VERSION') -Force
+    }
     Copy-Item (Join-Path $Assets 'config\AGENTS.md') (Join-Path $GrokHome 'AGENTS.md') -Force
     Copy-Item (Join-Path $Assets 'config\RTK.md') (Join-Path $GrokHome 'RTK.md') -Force
     # portable mcp launcher

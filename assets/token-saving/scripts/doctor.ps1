@@ -30,6 +30,14 @@ function Get-StatusColor([bool]$ok) {
 }
 
 Write-Host "=== Token-saving / vibe doctor ===" -ForegroundColor Cyan
+$stackVer = $null
+foreach ($vf in @((Join-Path $grokHome 'VERSION'), (Join-Path $PSScriptRoot '..\..\..\VERSION'))) {
+    if (Test-Path -LiteralPath $vf) {
+        $stackVer = (Get-Content -LiteralPath $vf -TotalCount 1).Trim()
+        break
+    }
+}
+Write-Host "stack:    $(if ($stackVer) { $stackVer } else { 'unknown' })"
 Write-Host "headroom: $(if (Test-Path $headroom) { & $headroom -v 2>&1 } else { 'MISSING' })"
 Write-Host "ast-grep: $(if (Test-Path (Join-Path $scripts 'ast-grep.exe')) { & (Join-Path $scripts 'ast-grep.exe') --version 2>&1 } else { 'MISSING' })"
 Write-Host "sg:       $(if (Test-Path (Join-Path $scripts 'sg.exe')) { & (Join-Path $scripts 'sg.exe') --version 2>&1 } else { 'MISSING' })"
