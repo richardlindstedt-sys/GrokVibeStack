@@ -24,6 +24,15 @@ function Get-TreeHashForScanCache {
     return $null
 }
 
+function Test-ScanPathsWholeTree([string[]]$Paths) {
+    if ($null -eq $Paths -or @($Paths).Count -eq 0) { return $true }
+    foreach ($p in @($Paths)) {
+        $t = ("$p").Trim().TrimEnd('\', '/')
+        if ($t -and $t -ne '.' -and $t -ne './') { return $false }
+    }
+    return $true
+}
+
 function Normalize-ScanCacheCwd([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
     try {
@@ -37,10 +46,12 @@ function Save-ScanPassCache {
     param(
         [string]$TreeHash,
         [string]$ScopeUsed,
-        [string]$Cwd
+        [string]$Cwd,
+        [string[]]$Paths = @()
     )
     # Only a Full-tree pass may authorize a later Full skip.
     if ($ScopeUsed -ne 'Full') { return }
+    if (-not (Test-ScanPathsWholeTree $Paths)) { return }
     if (-not $TreeHash) { return }
     if (-not $Cwd) { $Cwd = (Get-Location).Path }
     try {

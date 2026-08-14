@@ -54,7 +54,7 @@ if ($serenaExe) {
     $sv = & $serenaExe --version 2>&1
     Write-Host "serena:   $sv @ $serenaExe"
 } else {
-    Write-Host "serena:   MISSING - uv tool install serena-agent" -ForegroundColor Yellow
+    Write-Host "serena:   MISSING - uv tool install serena-agent==1.7.0" -ForegroundColor Yellow
 }
 if (Test-Path -LiteralPath $cfg) {
     $cfgRaw = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue

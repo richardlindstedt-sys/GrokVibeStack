@@ -101,7 +101,7 @@ function Install-SerenaBinary {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            & $uv tool install --force serena-agent 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
+            & $uv tool install --force serena-agent==1.7.0 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
         } finally {
             $ErrorActionPreference = $prev
         }
@@ -112,7 +112,7 @@ function Install-SerenaBinary {
         Write-Msg "PyPI miss; trying git+https://github.com/oraios/serena" 'Yellow'
         $ErrorActionPreference = 'Continue'
         try {
-            & $uv tool install --force git+https://github.com/oraios/serena 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
+            & $uv tool install --force git+https://github.com/oraios/serena@v1.7.0 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
         } finally {
             $ErrorActionPreference = $prev
         }
@@ -131,7 +131,7 @@ function Install-SerenaBinary {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            & $py -m pip install --user --upgrade serena-agent 2>&1 | Out-Null
+            & $py -m pip install --user serena-agent==1.7.0 2>&1 | Out-Null
         } finally {
             $ErrorActionPreference = $prev
         }

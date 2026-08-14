@@ -645,7 +645,7 @@ if ($failed -gt 0) {
 
 # Only Full-tree passes write cache (Staged/Auto must not authorize push Full skip).
 $th = Get-TreeHashForScanCache
-if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root }
+if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
 if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
 # Explicit 0: advisory tools leave $LASTEXITCODE non-zero; callers check it after &.
 exit 0

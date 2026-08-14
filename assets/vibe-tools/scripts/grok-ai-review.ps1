@@ -1188,7 +1188,8 @@ function Update-GitStageAfterFix {
     param(
         $Blockers,
         [string[]]$PriorStaged = @(),
-        [string[]]$PreFixDirty = @()
+        [string[]]$PreFixDirty = @(),
+        [string[]]$PreFixUntracked = @()
     )
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -1220,6 +1221,20 @@ function Update-GitStageAfterFix {
                 $norm = Normalize-RestagePath $pd
                 if (-not $norm) { continue }
                 if (-not $preSet.Contains($norm)) { [void]$paths.Add($norm) }
+            }
+        } catch {}
+        $preU = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($u in @($PreFixUntracked)) {
+            $norm = Normalize-RestagePath $u
+            if (-not $norm) { continue }
+            [void]$preU.Add($norm)
+        }
+        try {
+            $postU = @(git ls-files --others --exclude-standard 2>$null | Where-Object { $_ })
+            foreach ($u in $postU) {
+                $norm = Normalize-RestagePath $u
+                if (-not $norm) { continue }
+                if (-not $preU.Contains($norm)) { [void]$paths.Add($norm) }
             }
         } catch {}
         foreach ($rawPath in @($paths)) {
@@ -1464,6 +1479,8 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     # Snapshot before fixer so restage can pick helper/shared edits without git add -u
     $preFixDirty = @()
     try { $preFixDirty = @(git diff --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ }) } catch {}
+    $preFixUntracked = @()
+    try { $preFixUntracked = @(git ls-files --others --exclude-standard 2>$null | Where-Object { $_ }) } catch {}
     $priorStaged = @()
     try { $priorStaged = @(git diff --cached --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ }) } catch {}
     $fix = Invoke-Fixer -GrokExe $grokExe -ModelName $useModel -DiffText $diff -Blockers $blockers -RoundDir $roundDir -Round $round -Effort $ReasoningEffort -MaxTurns $FixerMaxTurns
@@ -1482,7 +1499,7 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     }
 
     Write-Host "  Re-staging changes for next review round..." -ForegroundColor DarkGray
-    Update-GitStageAfterFix -Blockers $blockers -PriorStaged $priorStaged -PreFixDirty $preFixDirty
+    Update-GitStageAfterFix -Blockers $blockers -PriorStaged $priorStaged -PreFixDirty $preFixDirty -PreFixUntracked $preFixUntracked
     # refresh hash baseline after fix for next round cache (optional)
     $nextRound = $round + 1
     Write-Host ("  Continuing to round {0}..." -f $nextRound) -ForegroundColor Cyan

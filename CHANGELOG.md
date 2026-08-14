@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Public polish: private vulnerability reporting, secret scanning, CONTRIBUTING, issue security link; Serena pin `1.7.0`; restage untracked fixer files (P1-B4); Full scan-cache only for whole-tree Paths (P1-B6); proxy fingerprint requires `--mode token` (P1-B9); dest SHA256 + pin allowlist
 - GitHub binaries (`scc`, `tokei`): pin tag + SHA256 in `assets/requirements/github-release-pins.json`; installer downloads that release only and refuses a hash mismatch (no `/releases/latest`)
 - Gate live progress: flushed stdout/stderr + `~/.grok/vibe-tools/reports/live-gate.log`; 15s heartbeats while reviewer jobs run (`Write-Host` is silent under redirected git/Grok hooks)
 

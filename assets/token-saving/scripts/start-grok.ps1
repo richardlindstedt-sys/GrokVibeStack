@@ -157,10 +157,9 @@ function Test-ProxyCommandLineMatchesStack([string]$cmdLine) {
     if ([string]::IsNullOrWhiteSpace($cmdLine)) { return $false }
     if ($cmdLine -notmatch '(?i)headroom') { return $false }
     if ($cmdLine -notmatch '(?i)(\s|^)proxy(\s|$)') { return $false }
-    # Expected flag tokens from Start-HeadroomProxyIfNeeded argList
+    # Bare 'token' matches token-saving\venv\...; require the flag pair.
+    if ($cmdLine -notmatch '(?i)--mode(\s+|=)token(\s|$)') { return $false }
     $needles = @(
-        '--mode',
-        'token',
         '--lossless',
         '--code-aware',
         '--intercept-tool-results',

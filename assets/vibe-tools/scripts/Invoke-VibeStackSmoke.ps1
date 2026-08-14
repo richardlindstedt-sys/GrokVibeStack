@@ -192,7 +192,7 @@ if ($scanSrc -match 'checkout-index' -and $scanSrc -match 'Save-ScanPassCache' -
 } else {
     Bad 'scans missing checkout-index / scan cache / Scope'
 }
-if ($cacheSrc -and $cacheSrc -match 'ScopeUsed -ne ''Full''' -and $cacheSrc -match 'cachedScope -ne ''Full''' -and $cacheSrc -match 'Normalize-ScanCacheCwd' -and $prePushSrc -match 'scan-pass-cache\.ps1' -and $prePushSrc -match 'Test-ScanPassCache') {
+if ($cacheSrc -and $cacheSrc -match 'ScopeUsed -ne ''Full''' -and $cacheSrc -match 'cachedScope -ne ''Full''' -and $cacheSrc -match 'Normalize-ScanCacheCwd' -and $cacheSrc -match 'Test-ScanPathsWholeTree' -and $prePushSrc -match 'scan-pass-cache\.ps1' -and $prePushSrc -match 'Test-ScanPassCache') {
     Ok 'scan-pass cache: Full-only save + cwd/scope match; pre-push shares Test-ScanPassCache'
 } else {
     Bad 'scan-pass cache missing Full/cwd policy or pre-push still has weak reader'
@@ -224,8 +224,8 @@ if ($rawReview -match 'Normalize-ReviewerVote' -and $rawReview -match 'Get-Panel
 }
 # Live restage must not call git add -u/-A (comments mentioning them OK)
 $restageLive = [regex]::Replace($rawReview, '(?m)^\s*#.*$', '')
-if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $rawReview -match 'Normalize-RestagePath' -and $rawReview -match 'gate-path-parse\.ps1' -and $restageLive -match ':\(literal\)' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\s') {
-    Ok 'review: scoped restage (blocker + prior-staged + PreFixDirty); literal pathspec'
+if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $rawReview -match 'PreFixUntracked' -and $rawReview -match 'ls-files --others --exclude-standard' -and $rawReview -match 'Normalize-RestagePath' -and $rawReview -match 'gate-path-parse\.ps1' -and $restageLive -match ':\(literal\)' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\s') {
+    Ok 'review: scoped restage (blocker + prior-staged + PreFixDirty + new untracked); literal pathspec'
 } else {
     Bad 'review restage still uses git add -u/-A or missing Normalize-RestagePath / :(literal)'
 }
@@ -325,12 +325,12 @@ if ((Test-Path $projYmlSrc) -and ((Get-Content $projYmlSrc -Raw) -match '(?m)^-\
     Bad 'serena project.yml missing or language_servers empty'
 }
 $pinFile = Join-Path $RepoRoot 'assets\requirements\github-release-pins.json'
-if ($instSrc -notmatch 'releases/latest' -and $instSrc -match 'github-release-pins\.json' -and $instSrc -match 'function Test-FileSha256' -and (Test-Path -LiteralPath $pinFile)) {
+if ($instSrc -notmatch 'releases/latest' -and $instSrc -match 'github-release-pins\.json' -and $instSrc -match 'function Test-FileSha256' -and $instSrc -match 'function Test-GithubReleasePinShape' -and $instSrc -match 'destSha256' -and (Test-Path -LiteralPath $pinFile)) {
     $pinDoc = Get-Content -LiteralPath $pinFile -Raw | ConvertFrom-Json
     $pinOk = $true
     foreach ($need in @('scc.exe', 'tokei.exe')) {
         $hit = @($pinDoc.pins) | Where-Object { $_.dest -eq $need } | Select-Object -First 1
-        if (-not $hit -or [string]$hit.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or -not $hit.tag -or -not $hit.asset -or -not $hit.repo) {
+        if (-not $hit -or [string]$hit.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or [string]$hit.destSha256 -notmatch '^[0-9a-fA-F]{64}$' -or -not $hit.tag -or -not $hit.asset -or -not $hit.repo) {
             $pinOk = $false
         }
     }
@@ -364,7 +364,7 @@ if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment
     Bad 'rtk missing per-segment enforce'
 }
 $startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
-if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackFingerprint' -and $startSrc -match 'Save-ProxyFingerprint') {
+if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackFingerprint' -and $startSrc -match 'Save-ProxyFingerprint' -and $startSrc -match 'require the flag pair') {
     Ok 'start-grok: proxy fingerprint / stale restart'
 } else {
     Bad 'start-grok missing proxy fingerprint checks'

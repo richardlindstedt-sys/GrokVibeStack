@@ -49,7 +49,8 @@ This stack **reduces risk** (secrets heuristics, scanners, multi-reviewer loop).
 If you find a security issue in **this repository’s scripts** (installer, hooks, scanners orchestration):
 
 1. **Do not** open a public issue with exploit details if it is high severity.
-2. Prefer a private report via GitHub **Security Advisories** on this repo, or contact the maintainer listed on the GitHub profile that owns the repository.
+2. Prefer a **private** GitHub Security Advisory:
+   https://github.com/richardlindstedt-sys/GrokVibeStack/security/advisories/new
 3. Include: affected script path, Windows version, Grok/stack version if known, and steps to reproduce.
 
 We aim to acknowledge reports within a reasonable time and fix confirmed issues before any public write-up.
@@ -60,7 +61,7 @@ The installer downloads or installs **third-party** tools (winget, npm, pip, uv,
 
 **GitHub binaries** (`scc`, `tokei`) are **pinned** in `assets/requirements/github-release-pins.json` (repo + tag + asset + SHA256). The installer downloads that exact release URL and **refuses to install** on hash mismatch. It does **not** follow `/releases/latest`. Bump a pin by changing tag/asset and the SHA256 of the downloaded file.
 
-Pip sets can still float; `-UseFrozenReqs` uses `assets/requirements/*-freeze.txt`. Winget/npm/uv/Serena stay unpinned unless those tools pin themselves. Review what you install on locked-down machines.
+Serena installs as pinned `serena-agent==1.7.0` (PyPI, then git tag `v1.7.0`). Pip sets can still float; `-UseFrozenReqs` uses `assets/requirements/*-freeze.txt`. Winget and npm packages track current upstream. Review what you install on locked-down machines.
 
 ## Safe uninstall
 

@@ -16,6 +16,7 @@ GrokVibeStack/ (this repo)
 |--|--|
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
+| **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 | **Platform** | Windows 10/11 (PowerShell 5.1+) |
 | **You already need** | Grok Build CLI (`grok.exe`), authenticated |
 

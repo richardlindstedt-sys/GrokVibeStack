@@ -629,11 +629,14 @@ function Install-HooksJson {
 function Get-GithubReleasePin([string]$DestName) {
     if ($null -eq $script:GithubReleasePins) {
         $pinPath = Join-Path $Assets 'requirements\github-release-pins.json'
-        if (-not (Test-Path -LiteralPath $pinPath)) {
-            $script:GithubReleasePins = @()
-        } else {
-            $doc = (Get-Content -LiteralPath $pinPath -Raw) | ConvertFrom-Json
-            $script:GithubReleasePins = @($doc.pins)
+        $script:GithubReleasePins = @()
+        if (Test-Path -LiteralPath $pinPath) {
+            try {
+                $doc = (Get-Content -LiteralPath $pinPath -Raw) | ConvertFrom-Json
+                if ($doc -and $doc.pins) { $script:GithubReleasePins = @($doc.pins) }
+            } catch {
+                Write-Fail "github-release-pins.json parse failed: $_"
+            }
         }
     }
     foreach ($p in $script:GithubReleasePins) {
@@ -657,6 +660,18 @@ function Test-FileSha256([string]$Path, [string]$Expected) {
     return ($got -eq $want)
 }
 
+function Test-GithubReleasePinShape($Pin) {
+    if (-not $Pin) { return $false }
+    if ([string]$Pin.repo -notmatch '^[\w.-]+/[\w.-]+$') { return $false }
+    if ([string]$Pin.tag -notmatch '^[\w./-]+$') { return $false }
+    if ([string]$Pin.asset -notmatch '^[\w.+-]+$') { return $false }
+    $sha = (([string]$Pin.sha256) -replace '(?i)^sha256:', '').Trim()
+    if ($sha -notmatch '^[0-9a-fA-F]{64}$') { return $false }
+    $dsha = [string]$Pin.destSha256
+    if ($dsha -and $dsha -notmatch '^[0-9a-fA-F]{64}$') { return $false }
+    return $true
+}
+
 function Install-GithubReleaseBinary {
     param(
         [Parameter(Mandatory = $true)]
@@ -664,28 +679,44 @@ function Install-GithubReleaseBinary {
     )
     Ensure-Dir $GrokBin
     $dest = Join-Path $GrokBin $DestName
-    if (Test-Path -LiteralPath $dest) {
-        Write-Info "$DestName already present"
-        return $true
-    }
     $pin = Get-GithubReleasePin $DestName
-    if (-not $pin) {
-        Write-Fail "no GitHub pin for $DestName (assets/requirements/github-release-pins.json)"
+    if (-not $pin -or -not (Test-GithubReleasePinShape $pin)) {
+        Write-Fail "no valid GitHub pin for $DestName (assets/requirements/github-release-pins.json)"
         return $false
     }
     $tag = [string]$pin.tag
     $asset = [string]$pin.asset
     $repo = [string]$pin.repo
     $sha = [string]$pin.sha256
-    if (-not $tag -or -not $asset -or -not $repo -or -not $sha) {
-        Write-Fail "incomplete GitHub pin for $DestName"
-        return $false
+    $destSha = [string]$pin.destSha256
+    $reinstall = $false
+    if (Test-Path -LiteralPath $dest) {
+        if ($destSha -and (Test-FileSha256 $dest $destSha)) {
+            Write-Info "$DestName already present (hash ok)"
+            return $true
+        }
+        if ($destSha) {
+            Write-Warn2 "$DestName present but dest hash mismatch - reinstalling"
+            $reinstall = $true
+        } else {
+            Write-Info "$DestName already present"
+            return $true
+        }
     }
     if ($DryRun) {
-        Write-Info ('DRY download {0} from {1}@{2} ({3})' -f $DestName, $repo, $tag, $asset)
+        if ($reinstall) {
+            Write-Info ('DRY would reinstall {0} from {1}@{2} ({3})' -f $DestName, $repo, $tag, $asset)
+        } else {
+            Write-Info ('DRY download {0} from {1}@{2} ({3})' -f $DestName, $repo, $tag, $asset)
+        }
         return $true
     }
-    $url = "https://github.com/$repo/releases/download/$tag/$asset"
+    $removedDest = $false
+    if ($reinstall -and (Test-Path -LiteralPath $dest)) {
+        Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+        $removedDest = -not (Test-Path -LiteralPath $dest)
+    }
+    $url = 'https://github.com/{0}/releases/download/{1}/{2}' -f $repo, $tag, $asset
     $tmp = Join-Path $env:TEMP ("gvibe-" + [guid]::NewGuid().ToString('n'))
     try {
         Ensure-Dir $tmp
@@ -713,14 +744,27 @@ function Install-GithubReleaseBinary {
             Write-Fail "pinned asset for $DestName is not .zip/.exe: $asset"
             return $false
         }
-        if (Test-Path -LiteralPath $dest) {
+        if ((Test-Path -LiteralPath $dest) -and ((-not $destSha) -or (Test-FileSha256 $dest $destSha))) {
             Write-Ok ('Installed {0} ({1}@{2}, hash ok)' -f $DestName, $repo, $tag)
             return $true
         }
-        Write-Fail "Failed to place $DestName after verified download"
+        if (Test-Path -LiteralPath $dest) {
+            Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+            Write-Fail "placed $DestName but dest SHA256 mismatch - removed"
+            return $false
+        }
+        if ($removedDest) {
+            Write-Fail "Failed to place $DestName after verified download (prior dest removed)"
+        } else {
+            Write-Warn2 "Failed to place $DestName after verified download"
+        }
         return $false
     } catch {
-        Write-Fail "Download $DestName failed: $_"
+        if ($removedDest) {
+            Write-Fail "Download $DestName failed after dest removed: $_"
+        } else {
+            Write-Warn2 "Download $DestName failed: $_"
+        }
         return $false
     } finally {
         if (Test-Path -LiteralPath $tmp) {
