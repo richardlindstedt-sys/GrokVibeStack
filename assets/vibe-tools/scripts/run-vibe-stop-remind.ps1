@@ -14,8 +14,14 @@ if ($env:VIBE_STOP_REMIND -eq '1' -or $env:VIBE_STOP_REMIND -eq 'always') {
 }
 
 $flag = Join-Path $env:USERPROFILE '.grok\vibe-tools\state\edited-this-session.flag'
+$findingsFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\state\on-edit-findings.json'
+$hadFindings = Test-Path -LiteralPath $findingsFile
 if (Test-Path -LiteralPath $flag) {
-    [Console]::Error.WriteLine('[vibe] Turn end - you edited code: confirm on-edit clean / vibe-review before done.')
+    if ($hadFindings) {
+        [Console]::Error.WriteLine('[vibe] Turn end - on-edit findings pending; next prompt will inject them. Fix before commit.')
+    } else {
+        [Console]::Error.WriteLine('[vibe] Turn end - you edited code: confirm on-edit clean / vibe-review before done.')
+    }
     Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
 }
 exit 0

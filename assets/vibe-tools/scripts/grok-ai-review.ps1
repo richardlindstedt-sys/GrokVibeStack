@@ -9,7 +9,7 @@
       2) Reviewer panel (profile-dependent) + arbiter
       3) On blockers: implementer fixes (unless -NoFix) then re-review
       4) Writes MD+HTML report under ~/.grok/vibe-tools/reports/
-      5) Diff-hash cache: identical diff+profile that already PASSED can skip AI
+      5) Diff-hash cache: identical diff+profile+model+schema that already PASSED can skip AI
 
     Profiles (also env VIBE_GATE_PROFILE):
       fast     - 1 reviewer (correctness), 1 round, no fix, effort medium (push / docs)
@@ -61,6 +61,14 @@ if (-not (Test-Path -LiteralPath $pathParse)) {
     exit 1
 }
 . $pathParse
+foreach ($helperName in @('gate-schema.ps1', 'gate-review-context.ps1', 'gate-fixer-worktree.ps1')) {
+    $hp = Join-Path $vibeScripts $helperName
+    if (-not (Test-Path -LiteralPath $hp)) {
+        Write-Host "[GATE FAIL] missing $helperName next to grok-ai-review.ps1" -ForegroundColor Red
+        exit 1
+    }
+    . $hp
+}
 $progressPs1 = Join-Path $vibeScripts 'gate-progress.ps1'
 if (Test-Path -LiteralPath $progressPs1) { . $progressPs1 }
 $vibeRoot = Split-Path $vibeScripts -Parent
@@ -271,6 +279,10 @@ $script:GateRun = [ordered]@{
     workDir       = ''
     reportDir     = ''
     failReason    = ''
+    schemaVersion = $(Get-GateSchemaVersion)
+    promptChars   = 0
+    outputChars   = 0
+    tokenEstimate = 0
 }
 
 # --- helpers ---
@@ -536,15 +548,24 @@ function Compress-DiffForReview {
     return $out
 }
 
+function ConvertTo-SinglePatchText($raw) {
+    # git.exe on Windows PowerShell 5.1 returns string[] for multi-line patches.
+    # Returning the array makes .Length = line count and briefs collapse to a stub.
+    if ($null -eq $raw) { return $null }
+    $s = if ($raw -is [string]) { $raw } else { (@($raw) | ForEach-Object { "$_" }) -join "`n" }
+    if ([string]::IsNullOrWhiteSpace($s)) { return $null }
+    return $s
+}
+
 function Get-GitDiffText {
     param([string]$Override)
-    if ($Override) { return $Override }
-    $staged = git diff --cached --no-color 2>$null
+    if ($Override) { return (ConvertTo-SinglePatchText $Override) }
+    $staged = ConvertTo-SinglePatchText (git diff --cached --no-color 2>$null)
     if ($staged) {
         Write-Host "Using staged diff (what will be committed)." -ForegroundColor Green
         return $staged
     }
-    $wt = git diff --no-color 2>$null
+    $wt = ConvertTo-SinglePatchText (git diff --no-color 2>$null)
     if ($wt) {
         Write-Host "Using working tree diff (no staged changes)." -ForegroundColor Yellow
         return $wt
@@ -567,7 +588,8 @@ function Invoke-GrokHeadless {
         [string]$Effort = 'high',
         [int]$MaxTurns = 12,
         [switch]$AllowWrites,
-        [string]$OutLog
+        [string]$OutLog,
+        [string]$WorkingDirectory = ''
     )
 
     $argList = [System.Collections.Generic.List[string]]::new()
@@ -598,19 +620,33 @@ function Invoke-GrokHeadless {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $output = $null
     $code = 0
+    $pushed = $false
     try {
+        if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {
+            Push-Location -LiteralPath $WorkingDirectory
+            $pushed = $true
+        }
         $output = & $GrokExe @($argList.ToArray()) 2>&1
         $code = $LASTEXITCODE
     } catch {
         $sw.Stop()
+        if ($pushed) { Pop-Location }
         return @{ Ok = $false; Text = "$_"; ExitCode = -1; Seconds = $sw.Elapsed.TotalSeconds }
     }
+    if ($pushed) { Pop-Location }
     $sw.Stop()
     if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
         Write-GateProgress ("done {0} {1:n0}s exit={2}" -f $Label, $sw.Elapsed.TotalSeconds, $code)
     }
     $text = if ($output) { ($output | ForEach-Object { "$_" }) -join "`n" } else { '' }
     if ($OutLog) { Save-Text $OutLog $text }
+    try {
+        $pc = 0
+        if (Test-Path -LiteralPath $PromptFile) { $pc = [int](Get-Item -LiteralPath $PromptFile).Length }
+        $script:GateRun.promptChars = [int]$script:GateRun.promptChars + $pc
+        $script:GateRun.outputChars = [int]$script:GateRun.outputChars + $text.Length
+        $script:GateRun.tokenEstimate = [int][math]::Round(($script:GateRun.promptChars + $script:GateRun.outputChars) / 4.0)
+    } catch {}
     $ok = ($code -eq 0 -or $null -eq $code) -and -not [string]::IsNullOrWhiteSpace($text)
     return @{ Ok = $ok; Text = $text; ExitCode = $code; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
 }
@@ -740,6 +776,7 @@ function New-FixerPrompt {
     [void]$sb.AppendLine('3) Keep changes minimal and correct.')
     [void]$sb.AppendLine('4) After edits, briefly summarize what you changed.')
     [void]$sb.AppendLine('5) Do NOT commit. Do NOT push. Staging is handled by the gate script.')
+    [void]$sb.AppendLine('6) Cwd may be an isolated git worktree of HEAD + staged patch. Edit only files here; do not touch other checkouts.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('BLOCKERS (JSON):')
     [void]$sb.AppendLine($BlockersJson)
@@ -778,7 +815,11 @@ function Test-GatePassCache {
     } catch { return $null }
     $repo = Get-RepoCacheKey
     $entries = @($cache.entries)
+    $wantSchema = Get-GateSchemaVersion
     foreach ($e in $entries) {
+        $gotSchema = 0
+        try { $gotSchema = [int]$e.schemaVersion } catch { $gotSchema = 0 }
+        if ($gotSchema -ne $wantSchema) { continue }
         if ($e.diffHash -eq $DiffHash -and $e.profile -eq $ProfileName -and $e.model -eq $ModelName -and $e.repo -eq $repo -and $e.passed -eq $true) {
             return $e
         }
@@ -791,7 +832,7 @@ function Save-GatePassCache {
     if ($NoCache) { return }
     try {
         New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-        $cache = @{ version = 1; entries = @() }
+        $cache = @{ version = 2; entries = @() }
         if (Test-Path -LiteralPath $cacheFile) {
             try { $cache = Get-Content -LiteralPath $cacheFile -Raw | ConvertFrom-Json } catch {}
         }
@@ -803,19 +844,22 @@ function Save-GatePassCache {
                 [void]$list.Add($e)
             }
         }
+        $schema = 0
+        if (Get-Command Get-GateSchemaVersion -ErrorAction SilentlyContinue) { $schema = Get-GateSchemaVersion }
         [void]$list.Add([pscustomobject]@{
-                diffHash  = $DiffHash
-                profile   = $ProfileName
-                model     = $ModelName
-                repo      = Get-RepoCacheKey
-                passed    = $true
-                verdict   = $Verdict
-                at        = (Get-Date -Format 'o')
-                reportDir = $ReportDir
+                diffHash      = $DiffHash
+                profile       = $ProfileName
+                model         = $ModelName
+                repo          = Get-RepoCacheKey
+                schemaVersion = $schema
+                passed        = $true
+                verdict       = $Verdict
+                at            = (Get-Date -Format 'o')
+                reportDir     = $ReportDir
             })
         # keep last 40
         while ($list.Count -gt 40) { $list.RemoveAt(0) }
-        $out = @{ version = 1; entries = @($list.ToArray()) } | ConvertTo-Json -Depth 6
+        $out = @{ version = 2; entries = @($list.ToArray()) } | ConvertTo-Json -Depth 6
         $utf8 = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($cacheFile, $out, $utf8)
     } catch {}
@@ -848,6 +892,8 @@ function Write-GateReport {
         [void]$md.AppendLine(("- **Profile:** {0}" -f $Run.profile))
         [void]$md.AppendLine(("- **Model:** {0}" -f $Run.model))
         [void]$md.AppendLine(("- **Elapsed:** {0}s" -f $Run.elapsedSec))
+        [void]$md.AppendLine(("- **Token estimate:** ~{0} (prompt {1} + output {2} chars / 4)" -f $Run.tokenEstimate, $Run.promptChars, $Run.outputChars))
+        [void]$md.AppendLine(("- **Gate schema:** {0}" -f $Run.schemaVersion))
         [void]$md.AppendLine(('- **Diff hash:** `{0}`' -f $Run.diffHash))
         [void]$md.AppendLine(("- **Cache hit:** {0}" -f $Run.cacheHit))
         [void]$md.AppendLine(("- **NoFix:** {0}" -f $Run.noFix))
@@ -1178,8 +1224,29 @@ function Invoke-Fixer {
     $lf = Join-Path $RoundDir 'fixer.log.txt'
     Save-Text $pf (New-FixerPrompt -DiffText $DiffText -BlockersJson $bjson -Round $Round)
     Save-Text (Join-Path $RoundDir 'blockers.json') $bjson
-    $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'implementer-fix' -Effort $Effort -MaxTurns $MaxTurns -AllowWrites -OutLog $lf
-    return $r
+
+    $wt = $null
+    $before = $null
+    if (Get-Command New-FixerWorktree -ErrorAction SilentlyContinue) {
+        $wt = New-FixerWorktree
+        if ($wt) {
+            $before = Get-WorktreeFileFingerprints -Root $wt.Root
+            Write-Host ('  fixer worktree: {0}' -f $wt.Root) -ForegroundColor DarkCyan
+        } else {
+            Write-Host '  fixer worktree unavailable; editing main tree' -ForegroundColor DarkYellow
+        }
+    }
+    $wd = if ($wt) { $wt.Root } else { '' }
+    try {
+        $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'implementer-fix' -Effort $Effort -MaxTurns $MaxTurns -AllowWrites -OutLog $lf -WorkingDirectory $wd
+        if ($wt) {
+            $copied = @(Copy-FixerWorktreeBack -Worktree $wt -BeforeHashes $before)
+            Write-Host ('  fixer copied {0} file(s) back from worktree' -f $copied.Count) -ForegroundColor DarkCyan
+        }
+        return $r
+    } finally {
+        if ($wt) { Remove-FixerWorktree -Worktree $wt }
+    }
 }
 
 function Update-GitStageAfterFix {
@@ -1345,6 +1412,9 @@ Write-Host "  workdir=$WorkDir" -ForegroundColor DarkGray
 $rawDiff = Get-GitDiffText -Override $DiffOverride
 $rawLen = if ($rawDiff) { $rawDiff.Length } else { 0 }
 $initialDiff = Compress-DiffForReview $rawDiff
+if (Get-Command Add-ReviewContext -ErrorAction SilentlyContinue) {
+    $initialDiff = Add-ReviewContext -Brief $initialDiff -RawDiff $rawDiff -ProfileName $script:ResolvedProfile.Name -Round 1
+}
 $diffHash = Get-DiffHash $rawDiff
 $script:GateRun.diffHash = $diffHash
 $script:GateRun.rawDiffChars = $rawLen
@@ -1383,7 +1453,13 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     $diff = if ($round -eq 1) {
         $initialDiff
     } else {
-        Compress-DiffForReview (Get-GitDiffText -Override $null)
+        $rawRound = Get-GitDiffText -Override $null
+        $next = Compress-DiffForReview $rawRound
+        if (Get-Command Add-ReviewContext -ErrorAction SilentlyContinue) {
+            Add-ReviewContext -Brief $next -RawDiff $rawRound -ProfileName $script:ResolvedProfile.Name -Round $round
+        } else {
+            $next
+        }
     }
     Save-Text (Join-Path $roundDir 'diff.patch') $diff
 

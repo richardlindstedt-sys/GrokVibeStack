@@ -202,12 +202,17 @@ if ($hookText -notmatch 'run-vibe-stop-remind\.ps1') {
     Write-Error "refusing to write vibe-coding.json without run-vibe-stop-remind.ps1"
     exit 1
 }
+if ($hookText -notmatch 'run-vibe-prompt-context\.ps1') {
+    Write-Error "refusing to write vibe-coding.json without run-vibe-prompt-context.ps1"
+    exit 1
+}
 $null = $hookText | ConvertFrom-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($vibeHookJson, $hookText, $utf8NoBom)
 Write-Host ""
 Write-Host "Installed Grok session hook: $vibeHookJson" -ForegroundColor Green
 Write-Host "  PostToolUse (edits) -> run-vibe-on-edit.ps1 (secrets + linters + session flag)" -ForegroundColor Yellow
+Write-Host "  UserPromptSubmit    -> inject pending on-edit findings (additionalContext)" -ForegroundColor Yellow
 Write-Host "  Stop                -> remind only if edited this session (or VIBE_STOP_REMIND=1)" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "==============================================================" -ForegroundColor Yellow
@@ -231,4 +236,4 @@ if (Test-Path -LiteralPath $ensureSerena) {
         $ErrorActionPreference = $prev
     }
 }
-Write-Host "Done. Edit -> fast checks. Commit -> standard gate. Push -> fast gate." -ForegroundColor Green
+Write-Host "Done. Edit -> fast checks. Commit -> standard. Push -> fast (version tags -> strict)." -ForegroundColor Green

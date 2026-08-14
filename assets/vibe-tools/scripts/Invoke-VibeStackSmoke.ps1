@@ -77,6 +77,12 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-on-edit.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-prompt-context.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-evals.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-schema.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-push-plan.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-review-context.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-fixer-worktree.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
@@ -145,6 +151,11 @@ if ($rawReview -match 'Compress-DiffForReview' -and $rawReview -match 'Get-DiffF
     Ok 'large-diff compress helpers present'
 } else {
     Bad 'missing Compress-DiffForReview / Get-DiffFileStats'
+}
+if ($rawReview -match 'function ConvertTo-SinglePatchText' -and $rawReview -match 'ConvertTo-SinglePatchText \(git diff --cached') {
+    Ok 'review: staged/WT patches flattened to one string'
+} else {
+    Bad 'Get-GitDiffText still returns git string[]'
 }
 if ($rawReview -match 'NoFixDefault\s*=\s*\$true' -and $rawReview -match "Roles\s*=\s*@\('correctness'\)") {
     Ok 'fast profile: NoFix + single correctness role'
@@ -310,12 +321,21 @@ if ($stopSrc -and $stopSrc -match 'edited-this-session' -and $onEditSrc -match '
     Bad 'stop/on-edit session flag wiring missing'
 }
 $verFile = Join-Path $RepoRoot 'VERSION'
-if ((Test-Path -LiteralPath $verFile) -and ((Get-Content -LiteralPath $verFile -TotalCount 1).Trim() -match '^\d+\.\d+\.\d+$') -and ((Get-Content -LiteralPath (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1') -Raw) -match 'function Get-StackVersion') -and ((Get-Content -LiteralPath (Join-Path $RepoRoot 'CHANGELOG.md') -Raw) -match '\[1\.0\.3\]')) {
-    Ok 'stack version 1.0.3 in VERSION + installer + changelog'
-} else {
-    Bad 'VERSION / Get-StackVersion / changelog 1.0.3 missing'
-}
+$verLine = if (Test-Path -LiteralPath $verFile) { (Get-Content -LiteralPath $verFile -TotalCount 1).Trim() } else { '' }
+$clog = Get-Content -LiteralPath (Join-Path $RepoRoot 'CHANGELOG.md') -Raw -ErrorAction SilentlyContinue
+$readmeVer = Get-Content -LiteralPath (Join-Path $RepoRoot 'README.md') -Raw -ErrorAction SilentlyContinue
 $instSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1') -Raw
+$docVer = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw -ErrorAction SilentlyContinue
+$verOk = $verLine -match '^\d+\.\d+\.\d+$'
+$instOk = $instSrc -match 'function Get-StackVersion' -and $instSrc -match 'stackVersion' -and $instSrc -match 'Install-GrokVibeStack  \{0'
+$docOk = $docVer -match '\$stackVer' -and $docVer -match 'stack:'
+$logOk = $clog -match [regex]::Escape("[$verLine]")
+$readOk = $readmeVer -match [regex]::Escape("**$verLine**")
+if ($verOk -and $instOk -and $docOk -and $logOk -and $readOk) {
+    Ok "stack version $verLine in VERSION + banner + manifest + doctor + changelog + README"
+} else {
+    Bad "VERSION / banner / stackVersion / doctor / changelog / README [$verLine] missing"
+}
 $unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
 $hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
 $vibeHookTpl = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\hooks\vibe-coding.json') -Raw
@@ -357,6 +377,28 @@ if ($vibeHookTpl -match 'run-vibe-stop-remind\.ps1' -and $hooksInstSrc -match 'r
     Ok 'stop-remind in hook template + install-vibe-hooks'
 } else {
     Bad 'hook template or install-vibe-hooks missing run-vibe-stop-remind.ps1'
+}
+if ($vibeHookTpl -match 'UserPromptSubmit' -and $vibeHookTpl -match 'run-vibe-prompt-context\.ps1' -and $hooksInstSrc -match 'run-vibe-prompt-context\.ps1' -and $onEditSrc -match 'on-edit-findings\.json') {
+    Ok 'on-edit findings -> UserPromptSubmit additionalContext'
+} else {
+    Bad 'missing UserPromptSubmit / on-edit-findings wiring'
+}
+if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {
+    Ok 'review: schema cache + intent/blast + token estimate + worktree fixer'
+} else {
+    Bad 'review missing schema/intent/tokens/worktree wiring'
+}
+if ($prePushSrc -match 'Get-VibePushReviewPlan' -and $prePushSrc -match 'TAG:' -and $prePushSrc -match 'Get-TagCommitDiff') {
+    Ok 'pre-push: version-tag strict + single-commit tag diff'
+} else {
+    Bad 'pre-push missing tag-strict plan'
+}
+$evalScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-evals.ps1'
+if (Test-Path -LiteralPath $evalScript) {
+    & $evalScript -RepoRoot $RepoRoot
+    if ($LASTEXITCODE -eq 0) { Ok 'known-bad evals passed' } else { Bad 'known-bad evals failed' }
+} else {
+    Bad 'missing run-vibe-evals.ps1'
 }
 if ($instSrc -match 'stackOwned' -and $instSrc -match 'Never record pre-existing' -and $unSrc -match 'outside GrokHome' -and $unSrc -match 'keep shared Git/Node/npm') {
     Ok 'PATH: record stack-owned only; uninstall never strips outside ~/.grok'
@@ -429,8 +471,8 @@ if ($hookInst -match '-Profile standard' -and $hookInst -match '-AutoProfile' -a
 }
 $prePushPs1 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1') -Raw
 # Scope Full may be '-Scope Full' or Start-Process ArgumentList '-Scope','Full'
-if ($prePushPs1 -match '-Profile fast' -and $prePushPs1 -match '-AutoProfile' -and ($prePushPs1 -match "-Scope['\s,]*Full" -or $prePushPs1 -match "'Full'")) {
-    Ok 'pre-push wires fast + AutoProfile + Scope Full/cache'
+if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoProfile" -and ($prePushPs1 -match "-Scope['\s,]*Full" -or $prePushPs1 -match "'Full'")) {
+    Ok 'pre-push wires plan profile + AutoProfile + Scope Full/cache'
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
 }

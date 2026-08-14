@@ -18,7 +18,7 @@ Always-on **rules** stay short. This skill is the full playbook.
 | Chat / edits | Light self-check; on-edit hooks; Serena for symbols |
 | Before "done" on large work | Optional `run-vibe-scans` or `vibe-review` |
 | `git commit` | Hook: scans + multi-reviewer (path-aware profile) |
-| `git push` | Hook: scans + fast AI (+ security if sensitive paths) |
+| `git push` | Hook: scans + fast AI (+ security if sensitive; **version tags → strict**, single-commit) |
 
 Do **not** re-run a full 3-reviewer panel in-session when pre-commit will run standard — that doubles token cost for little gain.
 
@@ -37,7 +37,7 @@ Do **not** re-run a full 3-reviewer panel in-session when pre-commit will run st
 |---------|-------|--------|---------|
 | **fast** | correctness (+ security if sensitive paths on push) | medium | push, docs-only commit |
 | **standard** | correctness + security + simplicity | high | pre-commit default |
-| **strict** | same as standard, more rounds | high | high-risk / release |
+| **strict** | same as standard, more rounds | high | high-risk / version-tag push / release |
 
 Path-aware: docs/md-only → fast; sensitive paths (`auth`, `hook`, `crypto`, …) keep/add security.
 
@@ -50,6 +50,7 @@ Path-aware: docs/md-only → fast; sensitive paths (`auth`, `hook`, `crypto`, �
 | `install-vibe-hooks.ps1` | Once per repo |
 | `doctor.ps1` | Health + latest report |
 | `Invoke-VibeStackSmoke.ps1` | Offline smoke (no AI) |
+| `run-vibe-evals.ps1` | Known-bad plants (must fail closed) |
 
 ## Hook install (per repo)
 
@@ -60,8 +61,8 @@ If `.git` exists and hooks missing `Vibe pre-`:
 ```
 
 - **pre-commit** — scans (staged-first) + AI (`-AutoProfile`, default base standard)
-- **pre-push** — scans (full / cache) + AI fast + path-conditional security
-- **on-edit** — global PostToolUse fast checks
+- **pre-push** — scans (full / cache) + AI fast (version tags → strict, parent..tip)
+- **on-edit** — global PostToolUse fast checks; findings injected on next `UserPromptSubmit`
 
 After install: if Grok was already open → `/hooks` then `r`, or restart.
 

@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-14
+
+### Added
+
+- On-edit findings persist and inject via `UserPromptSubmit` `additionalContext` (P2-21; PostToolUse stdout is ignored by Grok)
+- AI pass-cache key includes gate schema version (P2-14); legacy entries miss
+- CI twin: `vibe-stack-smoke.yml` runs smoke + known-bad evals + gitleaks; optional AI job when `XAI_API_KEY` is set
+- Version tags (`v1.2.3`) use profile=strict and a single-commit tag diff (no 20-commit history brief)
+- Reviewer brief: stated intent vs staged diff, blast-radius symbol hits (rg/sg)
+- Known-bad evals (`run-vibe-evals.ps1`): planted secret, tag plan, schema, symbol hints
+- Implementer fixer runs in an isolated git worktree (unstaged user work stays put)
+- Strict profile: full-file appendix when the diff was compressed; second-round full reads (P2-22)
+- Gate reports: token estimate + schema version next to wall-time (P2-25)
+
 ## [1.0.3] - 2026-08-14
 
 ### Added

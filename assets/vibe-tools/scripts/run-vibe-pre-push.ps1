@@ -13,40 +13,32 @@ $vibeScripts = Split-Path $MyInvocation.MyCommand.Path -Parent
 $runScans = Join-Path $vibeScripts 'run-vibe-scans.ps1'
 $aiReview = Join-Path $vibeScripts 'grok-ai-review.ps1'
 $progressPs1 = Join-Path $vibeScripts 'gate-progress.ps1'
+$pushPlanPs1 = Join-Path $vibeScripts 'gate-push-plan.ps1'
 if (Test-Path -LiteralPath $progressPs1) { . $progressPs1; Reset-GateLiveLog }
-
-Write-Host ""
-Write-Host "+================================================================+" -ForegroundColor Magenta
-Write-Host "|   VIBE PRE-PUSH HOOK  [profile=fast]                           |" -ForegroundColor Magenta
-Write-Host "|   Scanners + 1-reviewer (correctness) on push payload          |" -ForegroundColor Magenta
-Write-Host "+================================================================+" -ForegroundColor Magenta
-Write-Host ""
+if (-not (Test-Path -LiteralPath $pushPlanPs1)) {
+    Write-Host "PRE-PUSH BLOCKED: missing gate-push-plan.ps1" -ForegroundColor Red
+    exit 1
+}
+. $pushPlanPs1
 
 # Git feeds pre-push: <local ref> <local sha> <remote ref> <remote sha> per line on stdin
-$ranges = @()
 $stdin = [Console]::In.ReadToEnd()
-if ($stdin) {
-    foreach ($line in ($stdin -split "`n")) {
-        $line = $line.Trim()
-        if (-not $line) { continue }
-        $parts = $line -split '\s+'
-        if ($parts.Count -ge 4) {
-            $localSha = $parts[1]
-            $remoteSha = $parts[3]
-            if ($localSha -match '^0+$') {
-                Write-Host "Deleting remote ref $($parts[2]); skip content review for this line." -ForegroundColor DarkGray
-                continue
-            }
-            if ($remoteSha -match '^0+$') {
-                # New branch: walk up to 20 existing commits (never sha~20 — that
-                # fails on short/shallow history and the old fallback reviewed tip only).
-                $ranges += "NEW:$localSha"
-            } else {
-                $ranges += "$remoteSha..$localSha"
-            }
-        }
-    }
+$plan = Get-VibePushReviewPlan -StdinText $stdin
+$gateProfile = $plan.Profile
+if (-not $gateProfile) { $gateProfile = 'fast' }
+$useAuto = [bool]$plan.AutoProfile
+
+Write-Host ""
+Write-Host "+================================================================+" -ForegroundColor Magenta
+Write-Host ("|   VIBE PRE-PUSH HOOK  [profile={0,-6}]                        |" -f $gateProfile) -ForegroundColor Magenta
+Write-Host "|   Scanners + AI review on push payload                         |" -ForegroundColor Magenta
+Write-Host "+================================================================+" -ForegroundColor Magenta
+Write-Host ""
+if ($plan.Notes -and $plan.Notes.Count -gt 0) {
+    Write-Host ("Push plan: {0}" -f ($plan.Notes -join '; ')) -ForegroundColor DarkCyan
 }
+
+$ranges = @($plan.Ranges)
 
 function ConvertTo-SinglePatchText($raw) {
     # git.exe on Windows PowerShell 5.1 returns string[] for multi-line patches.
@@ -84,6 +76,13 @@ if ($ranges.Count -gt 0) {
             $tip = $r.Substring(4)
             [void]$labels.Add("new-branch:$tip (rev-list<=20)")
             $d = Get-NewBranchPushDiff $tip
+            if ($d) { $d }
+            continue
+        }
+        if ($r.StartsWith('TAG:')) {
+            $tip = $r.Substring(4)
+            [void]$labels.Add("tag-commit:$tip")
+            $d = Get-TagCommitDiff -Sha $tip
             if ($d) { $d }
             continue
         }
@@ -150,16 +149,14 @@ if (-not $skipScans) {
 }
 
 Write-Host ""
-Write-Host ">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile=fast, AutoProfile)" -ForegroundColor Cyan
+Write-Host (">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile={0}, AutoProfile={1})" -f $gateProfile, $useAuto) -ForegroundColor Cyan
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 2/2 grok AI review' }
-# fast + AutoProfile: docs stay cheap; sensitive paths add security reviewer
 # Reset so review check cannot see pre-scan / pre-review leftover codes.
 $global:LASTEXITCODE = 0
-if ($diff) {
-    & $aiReview -NoScans -Profile fast -AutoProfile -DiffOverride $diff
-} else {
-    & $aiReview -NoScans -Profile fast -AutoProfile
-}
+$reviewArgs = @('-NoScans', '-Profile', $gateProfile)
+if ($useAuto) { $reviewArgs += '-AutoProfile' }
+if ($diff) { $reviewArgs += @('-DiffOverride', $diff) }
+& $aiReview @reviewArgs
 
 # Only the post-review exit matters (not scan Start-Process or earlier natives).
 $reviewEc = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }

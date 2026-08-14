@@ -1,8 +1,9 @@
-name: vibe-stack-smoke
+name: vibe-gate
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -13,11 +14,59 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parse + profile + doctor smoke (no AI)
+      - name: Parse + profiles + known-bad evals (no AI)
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
           $script = Join-Path $env:GITHUB_WORKSPACE 'assets/vibe-tools/scripts/Invoke-VibeStackSmoke.ps1'
           if (-not (Test-Path $script)) { throw "Missing $script" }
           & $script -RepoRoot $env:GITHUB_WORKSPACE -WithHooksInstall
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  scans:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Static scans (soft if CLIs missing)
+        shell: pwsh
+        env:
+          VIBE_REQUIRE_SCANNERS: '0'
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'assets/vibe-tools/scripts/run-vibe-scans.ps1'
+          & $script -Scope Full
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  ai-review:
+    if: ${{ github.event_name == 'workflow_dispatch' && secrets.XAI_API_KEY != '' }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Optional AI gate
+        shell: pwsh
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          VIBE_GATE_NO_CACHE: '1'
+        run: |
+          Write-Host 'Optional AI job: requires grok + proxy on the runner; skipped unless installed.'
+          $ai = Join-Path $env:GITHUB_WORKSPACE 'assets/vibe-tools/scripts/grok-ai-review.ps1'
+          if (-not (Get-Command grok -ErrorAction SilentlyContinue)) {
+            Write-Host 'grok CLI not on runner; pass (install stack to enable).'
+            exit 0
+          }
+          & $ai -NoScans -Profile fast -NoFix
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

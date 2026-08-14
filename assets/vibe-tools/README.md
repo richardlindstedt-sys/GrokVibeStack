@@ -66,7 +66,7 @@ static scans
 | `-NoCache` / `-NoReport` | Skip pass cache or report files |
 
 **Reports:** `~\.grok\vibe-tools\reports\latest.md` (+ `latest.html`, `latest.json`).  
-**Cache:** identical diff hash + profile + model + repo that already PASSED skips AI (`cache/gate-pass-cache.json`).
+**Cache:** identical diff hash + profile + model + repo + **gate schema version** that already PASSED skips AI (`cache/gate-pass-cache.json`). Schema bump → miss.
 
 Grok should still use in-session subagents; the **git gate enforces** the panel loop on commit/push.
 
@@ -107,9 +107,10 @@ install-vibe-hooks.ps1 .
 
 | Gate | When | What runs | Blocks? |
 |------|------|-----------|---------|
-| **On edit** | Grok `PostToolUse` after `search_replace` / write | `run-vibe-on-edit.ps1` — secrets heuristics, gitleaks, ruff/biome/PSSA/shellcheck on touched file | No (reports in scrollback) |
-| **pre-commit** | `git commit` | Full scanners + **profile=standard** loop on **staged** diff | Yes |
-| **pre-push** | `git push` | Full scanners + **profile=fast** loop on **push range** | Yes |
+| **On edit** | Grok `PostToolUse` after `search_replace` / write | `run-vibe-on-edit.ps1` — secrets + linters; writes `on-edit-findings.json` | No |
+| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings as `additionalContext` | No |
+| **pre-commit** | `git commit` | Full scanners + **profile=standard** on **staged** diff (intent + blast-radius) | Yes |
+| **pre-push** | `git push` | Full scanners + **fast** (version tags → **strict**, single-commit) | Yes |
 
 Also deletes inert `*.sample` hooks from `.git/hooks/`.
 

@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.0.3** ([changelog](./CHANGELOG.md)) |
+| **Version** | **1.1.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -141,9 +141,10 @@ Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **
 
 | Gate | Trigger | Action | Blocks? |
 |------|---------|--------|---------|
-| On-edit | Grok file write/edit | Secrets + linters on touched file | No (report) |
+| On-edit | Grok file write/edit | Secrets + linters; findings saved for next prompt | No |
+| Prompt inject | Next user prompt | Pending on-edit findings as additionalContext | No |
 | **pre-commit** | `git commit` | Scanners + **profile=standard** loop on staged diff | **Yes** |
-| **pre-push** | `git push` | Scanners + **profile=fast** on push range | **Yes** |
+| **pre-push** | `git push` | Scanners + **fast** (version tags → **strict**, single-commit) | **Yes** |
 | Stop reminder | Turn end | Remind if review skipped | No |
 
 If you run the installer inside a git repo, that repo gets hooks automatically (unless `-SkipRepoHooks`).
@@ -160,14 +161,14 @@ If you run the installer inside a git repo, that repo gets hooks automatically (
 scans → reviewer panel (by profile) → arbiter → blockers? implementer fix → re-review
       → APPROVE* passes · BLOCK after max rounds fails closed
       → reports: ~/.grok/vibe-tools/reports/
-      → diff-hash pass cache (same diff+profile+model can skip AI)
+      → diff-hash pass cache (same diff+profile+model+schema can skip AI)
 ```
 
 | Profile | Roles | Rounds | Fix | Effort | Typical use |
 |---------|-------|--------|-----|--------|-------------|
 | **fast** | correctness (+ security if sensitive paths) | 1 | off | medium | pre-push, docs-only commit |
 | **standard** | correctness + security + simplicity | 2 | on | high | pre-commit, `vibe-review` |
-| **strict** | same as standard | 3 | on | high | high-risk / release |
+| **strict** | same as standard | 3 | on | high | high-risk / **version-tag push** / `vibe-review -Profile strict` |
 
 Hooks use `-AutoProfile` (docs-only → fast; sensitive paths keep/add security). Scans: staged-first on commit (`-Scope Auto`); full on push with short scan-pass cache.
 
@@ -183,7 +184,7 @@ $env:VIBE_REQUIRE_SCANNERS = '0'   # default is require trivy+gitleaks; 0 = soft
 - **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, leftover blockers → block commit/push  
 - **Critical scanners** (`trivy`, `gitleaks`) required by default; `VIBE_REQUIRE_SCANNERS=0` soft-warns only  
 - **Advisories** do not block; **blockers** do (panel `severity=blocker` forces BLOCK even if vote disagrees)  
-- Reports: `~\.grok\vibe-tools\reports\latest.md`  
+- Reports: `~\.grok\vibe-tools\reports\latest.md` (wall-time + token estimate + schema)  
 - Scanners in gates are **read-only** (Biome does not auto-write)  
 - **Serena MCP** installs by default (`ensure-serena.ps1`: PyPI `serena-agent`, verify `--version`, infer/repair `.serena/project.yml` language servers — empty list breaks symbol tools). **Remind hooks stay off**. Opt-in: `Enable-SerenaRemindHooks.ps1`  
 

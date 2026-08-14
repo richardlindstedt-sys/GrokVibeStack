@@ -14,7 +14,10 @@ This is a Windows PowerShell installer plus stack assets. Keep PRs focused.
 
    ```powershell
    .\assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1
+   .\assets\vibe-tools\scripts\run-vibe-evals.ps1
    ```
+
+   GitHub Actions (`.github/workflows/vibe-stack-smoke.yml`) reruns smoke + evals + gitleaks on push/PR.
 
 3. Commit from this repo so the vibe pre-commit hook runs (scans + AI review).
 
