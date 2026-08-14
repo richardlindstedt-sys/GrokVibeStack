@@ -324,6 +324,24 @@ if ((Test-Path $projYmlSrc) -and ((Get-Content $projYmlSrc -Raw) -match '(?m)^-\
 } else {
     Bad 'serena project.yml missing or language_servers empty'
 }
+$pinFile = Join-Path $RepoRoot 'assets\requirements\github-release-pins.json'
+if ($instSrc -notmatch 'releases/latest' -and $instSrc -match 'github-release-pins\.json' -and $instSrc -match 'function Test-FileSha256' -and (Test-Path -LiteralPath $pinFile)) {
+    $pinDoc = Get-Content -LiteralPath $pinFile -Raw | ConvertFrom-Json
+    $pinOk = $true
+    foreach ($need in @('scc.exe', 'tokei.exe')) {
+        $hit = @($pinDoc.pins) | Where-Object { $_.dest -eq $need } | Select-Object -First 1
+        if (-not $hit -or [string]$hit.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or -not $hit.tag -or -not $hit.asset -or -not $hit.repo) {
+            $pinOk = $false
+        }
+    }
+    if ($pinOk) {
+        Ok 'installer: GitHub binaries pinned + SHA256 (no /releases/latest)'
+    } else {
+        Bad 'github-release-pins.json missing dest/tag/asset/sha256'
+    }
+} else {
+    Bad 'installer still uses /releases/latest or missing pin/hash wiring'
+}
 if ($instSrc -match 'Write-HookFromTemplate' -and $instSrc -match "Write-HookFromTemplate 'vibe-coding.json'" -and $instSrc -notmatch "Write-Host '\[vibe\] Turn end" -and $instSrc -match 'Write-HookFromTemplate ''vibe-coding.json''\s*\r?\n\s*if \(\$DryRun\) \{ return \}') {
     Ok 'installer: hooks from templates (no stale Stop Write-Host); DryRun returns before serena delete'
 } else {

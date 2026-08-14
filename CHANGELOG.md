@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- GitHub binaries (`scc`, `tokei`): pin tag + SHA256 in `assets/requirements/github-release-pins.json`; installer downloads that release only and refuses a hash mismatch (no `/releases/latest`)
 - Gate live progress: flushed stdout/stderr + `~/.grok/vibe-tools/reports/live-gate.log`; 15s heartbeats while reviewer jobs run (`Write-Host` is silent under redirected git/Grok hooks)
 
 ### Fixed
