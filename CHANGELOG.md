@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Dependabot: bump freeze pins (`aiohttp` 3.14.3, `mcp` 1.28.1, `cryptography` 50.0.0, `GitPython` 3.1.58, `h2` 4.4.1). `ecdsa` has no patched release (Minerva); still a checkov transitive
 - Installer: parenthesize `Test-Path` / `Test-CommandExists` before `-or` (PS bound `-or` as a param → `WARN ensure-rtk: parameter name 'or'`)
 - Serena: empty `language_servers` made symbol tools fail (`No language servers available`). `ensure-serena.ps1` installs/verifies the binary, infers LS (PowerShell 7 for `.ps1`), repairs project.yml; installer fails closed if Serena is not runnable; config disables the MCP server when the exe is missing
 
