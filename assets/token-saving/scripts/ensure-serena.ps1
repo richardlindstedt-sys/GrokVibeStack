@@ -251,13 +251,13 @@ function Initialize-SerenaProject {
         }
         New-Item -ItemType Directory -Force -Path (Join-Path $Root '.serena') | Out-Null
         $name = Split-Path $Root -Leaf
-        $args = @('project', 'create', $Root, '--name', $name)
-        foreach ($ls in $langs) { $args += @('--ls', $ls) }
+        $serenaArgs = @('project', 'create', $Root, '--name', $name)
+        foreach ($ls in $langs) { $serenaArgs += @('--ls', $ls) }
         Write-Msg "serena project create --ls $($langs -join ',')"
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            & $SerenaExe @args 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
+            & $SerenaExe @serenaArgs 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
         } finally {
             $ErrorActionPreference = $prev
         }

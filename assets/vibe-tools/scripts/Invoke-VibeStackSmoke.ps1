@@ -339,7 +339,7 @@ if ($verOk -and $instOk -and $docOk -and $logOk -and $readOk) {
 $unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
 $hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
 $vibeHookTpl = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\hooks\vibe-coding.json') -Raw
-if ($instSrc -match 'ensure-serena\.ps1' -and $instSrc -match 'function Test-SerenaAlive' -and $instSrc -match 'function Resolve-SerenaExe' -and $instSrc -match 'if \(Test-SerenaAlive \$p\) \{ return \$p \}' -and (Test-Path (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'))) {
+if ($instSrc -match 'ensure-serena\.ps1' -and $instSrc -match 'function Test-SerenaAlive' -and $instSrc -match 'function Resolve-SerenaExe' -and $instSrc -match 'if \(Test-SerenaAlive \$p\) \{ return \$p \}' -and $instSrc -match '& \$ensure -RepoPath \$here' -and $instSrc -notmatch '\$repoArg = @\(' -and (Test-Path (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'))) {
     Ok 'installer: ensure-serena install + verify + project LS repair'
 } else {
     Bad 'installer missing ensure-serena.ps1 wiring'

@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Installer: call `ensure-serena.ps1 -RepoPath` as a named parameter. Splatting `@('-RepoPath', $here)` passed two positionals and failed with `A positional parameter cannot be found that accepts argument '<repo>'`
+
 ## [1.1.0] - 2026-08-14
 
 ### Added
