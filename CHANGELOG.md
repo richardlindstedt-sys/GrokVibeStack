@@ -18,6 +18,10 @@ All notable changes to this project are documented in this file.
 - Strict profile: full-file appendix when the diff was compressed; second-round full reads (P2-22)
 - Gate reports: token estimate + schema version next to wall-time (P2-25)
 
+### Fixed
+
+- Pre-push: pass the patch as `-DiffOverride` (named). Splatting a `string[]` git diff bound hunk lines to `ProxyPort` and skipped AI review
+
 ## [1.0.3] - 2026-08-14
 
 ### Added

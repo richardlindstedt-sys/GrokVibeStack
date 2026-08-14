@@ -393,6 +393,11 @@ if ($prePushSrc -match 'Get-VibePushReviewPlan' -and $prePushSrc -match 'TAG:' -
 } else {
     Bad 'pre-push missing tag-strict plan'
 }
+if ($prePushSrc -match '-DiffOverride \$diffText' -and $prePushSrc -match 'AutoProfile:\$useAuto' -and $prePushSrc -notmatch '@reviewArgs') {
+    Ok 'pre-push: named DiffOverride (no splat of patch array)'
+} else {
+    Bad 'pre-push still splats review args / patch array'
+}
 $evalScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-evals.ps1'
 if (Test-Path -LiteralPath $evalScript) {
     & $evalScript -RepoRoot $RepoRoot

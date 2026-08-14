@@ -153,10 +153,20 @@ Write-Host (">>> STEP 2/2 : GROK AI REVIEW OF PUSH (profile={0}, AutoProfile={1}
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 2/2 grok AI review' }
 # Reset so review check cannot see pre-scan / pre-review leftover codes.
 $global:LASTEXITCODE = 0
-$reviewArgs = @('-NoScans', '-Profile', $gateProfile)
-if ($useAuto) { $reviewArgs += '-AutoProfile' }
-if ($diff) { $reviewArgs += @('-DiffOverride', $diff) }
-& $aiReview @reviewArgs
+$diffText = ConvertTo-SinglePatchText $diff
+try {
+    # Named params only. Never splat a patch: PS 5.1 git diffs are string[] and
+    # each "-..." hunk line would bind as a new parameter (e.g. ProxyPort).
+    if ($diffText) {
+        & $aiReview -NoScans -Profile $gateProfile -AutoProfile:$useAuto -DiffOverride $diffText
+    } else {
+        & $aiReview -NoScans -Profile $gateProfile -AutoProfile:$useAuto
+    }
+} catch {
+    Write-Host ""
+    Write-Host ("PRE-PUSH BLOCKED: AI review failed to start: {0}" -f $_) -ForegroundColor Red
+    exit 1
+}
 
 # Only the post-review exit matters (not scan Start-Process or earlier natives).
 $reviewEc = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
