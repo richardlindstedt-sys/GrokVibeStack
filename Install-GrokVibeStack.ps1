@@ -832,13 +832,9 @@ function Install-Serena {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        # Named parameter, not string[] splat. @('-RepoPath', $here) passes two positionals
-        # (value '-RepoPath', then the path) and PowerShell errors on the leftover path.
-        if (Test-Path -LiteralPath (Join-Path $here '.git')) {
-            & $ensure -RepoPath $here
-        } else {
-            & $ensure
-        }
+        # Named parameter, not string[] splat. @('-RepoPath', $here) passed two positionals
+        # (value '-RepoPath', then the path) and PowerShell errored on the leftover path.
+        & $ensure -RepoPath $here
         $code = $LASTEXITCODE
         Refresh-ProcessPath
         $env:PATH = ($LocalBin + ';' + $GrokBin + ';' + $env:PATH)
