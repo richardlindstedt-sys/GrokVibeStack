@@ -205,6 +205,7 @@ function Apply-PathAwareProfile {
         ProfileName = $name
         Roles       = @($roles)
         Note        = ($note -join ', ')
+        Sensitive   = $anySensitive
     }
 }
 
@@ -226,8 +227,10 @@ if ($AutoProfile -or $env:VIBE_GATE_AUTO_PROFILE -eq '1') {
     }
     $pathNote = $adj.Note
     $script:PathAwareRoles = @($adj.Roles)
+    $script:PathAwareSensitive = [bool]$adj.Sensitive
 } else {
     $script:PathAwareRoles = $null
+    $script:PathAwareSensitive = $false
 }
 
 $script:ResolvedProfile = Resolve-GateProfile -Name $baseName
@@ -257,6 +260,14 @@ if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.No
 }
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers') -and $script:ResolvedProfile.SequentialDefault) {
     $SequentialReviewers = $true
+}
+# Multi-role (e.g. fast + security on hook/install) must not serialize; NOW stays silent.
+if (-not $PSBoundParameters.ContainsKey('SequentialReviewers') -and @($script:ResolvedProfile.Roles).Count -gt 1) {
+    $SequentialReviewers = $false
+}
+if ($script:PathAwareSensitive -and [string]$ReasoningEffort -eq 'medium') {
+    $ReasoningEffort = 'high'
+    Write-Host '[AutoProfile] sensitive paths -> high effort' -ForegroundColor DarkCyan
 }
 if ($env:VIBE_GATE_NO_CACHE -eq '1') { $NoCache = $true }
 
@@ -736,7 +747,9 @@ function New-ArbiterPrompt {
     [void]$sb.AppendLine('1) Merge duplicate findings.')
     [void]$sb.AppendLine('2) RESOLVE DISPUTES on severity: when reviewers disagree blocker vs advisory, decide with explicit rationale.')
     [void]$sb.AppendLine('   - Prefer BLOCKER when a plausible production break or security issue exists.')
+    [void]$sb.AppendLine('   - Never downgrade in-support data corruption, encoding/round-trip loss, or a fail-closed bypass to advisory.')
     [void]$sb.AppendLine('   - Prefer ADVISORY for style, optional refactors, or speculative issues without a clear failure mode.')
+    [void]$sb.AppendLine('   - Panels may have 1-3 reviewers (fast can be correctness+security). Do not require three votes.')
     [void]$sb.AppendLine('3) Produce a final gate verdict.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Return ONLY JSON:')
@@ -1001,7 +1014,19 @@ function Invoke-ReviewerPanel {
     $results = @{}
 
     if ($Sequential) {
+        $seqI = 0
         foreach ($role in $roles) {
+            $seqI++
+            $left = @($roles | Select-Object -Skip $seqI)
+            $now = if ($left.Count -gt 0) {
+                "Waiting on vibe-$role then $($left -join ', ')"
+            } else {
+                "Waiting on vibe-$role (last sequential)"
+            }
+            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("start sequential reviewer:{0} ({1}/{2})" -f $role, $seqI, $roles.Count) `
+                    -Now $now -Phase 'reviewers'
+            }
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers)

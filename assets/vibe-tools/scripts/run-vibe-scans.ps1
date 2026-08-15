@@ -301,16 +301,24 @@ function Run-PSScriptAnalyzer {
 }
 
 function Run-Pester {
+    param([string]$ScanRoot = $root)
     if (-not (Get-Command Invoke-Pester -ErrorAction SilentlyContinue)) {
         if (-not $Quiet) { Write-Host "[Pester] SKIPPED (not installed)" -ForegroundColor DarkGray }
         return
     }
-    $testFiles = Get-ChildItem -Recurse -Include *.Tests.ps1,*Spec.ps1 -Depth 5 -ErrorAction SilentlyContinue
-    if (-not $testFiles) { return }
+    if ([string]::IsNullOrWhiteSpace($ScanRoot) -or -not (Test-Path -LiteralPath $ScanRoot)) {
+        if (-not $Quiet) { Write-Host "[Pester] skipped (scan root missing)" -ForegroundColor DarkGray }
+        return
+    }
+    $testFiles = Get-ChildItem -Path $ScanRoot -Recurse -Include *.Tests.ps1,*Spec.ps1 -Depth 5 -ErrorAction SilentlyContinue
+    if (-not $testFiles) {
+        if (-not $Quiet) { Write-Host "[Pester] skipped (no tests in scan root)" -ForegroundColor DarkGray }
+        return
+    }
     if (-not $Quiet) { Write-Host "`n[Pester] running tests..." -ForegroundColor Cyan }
     try {
         $config = New-PesterConfiguration
-        $config.Run.Path = $root
+        $config.Run.Path = $ScanRoot
         $config.Run.PassThru = $true
         $config.Output.Verbosity = 'Normal'
         $config.Should.ErrorAction = 'Continue'
@@ -320,7 +328,13 @@ function Run-Pester {
             $script:failed++
         }
     } catch {
+        $msg = "$_"
+        if ($msg -match '(?i)no tests|did not find any tests') {
+            if (-not $Quiet) { Write-Host "[Pester] skipped (no tests)" -ForegroundColor DarkGray }
+            return
+        }
         if (-not $Quiet) { Write-Host "[Pester] Error running: $_" -ForegroundColor Yellow }
+        $script:failed++
     }
 }
 
@@ -419,9 +433,9 @@ try {
     # --- Lang / project scanners scoped to $scanRoot (staged tree or repo) ---
     Run-PSScriptAnalyzer -ScanRoot $scanRoot
 
-    # Pester only on full tree (tests need project context)
+    # Pester only on full tree (tests need project context; staged snapshot is incomplete)
     if (-not $useStaged) {
-        Run-Pester
+        Run-Pester -ScanRoot $scanRoot
     } elseif (-not $Quiet) {
         Write-Host "[Pester] skipped in staged-first mode (run full scope / push)" -ForegroundColor DarkGray
     }

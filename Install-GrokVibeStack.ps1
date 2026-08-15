@@ -543,7 +543,7 @@ function Merge-GrokConfig {
         Copy-Item -LiteralPath $cfgPath -Destination $bak -Force
         $script:Manifest.configBackup = $bak
         Write-Info "Config backup: $bak"
-        $raw = Get-Content -LiteralPath $cfgPath -Raw
+        $raw = Read-Utf8NoBomFile -Path $cfgPath
     } else {
         $raw = "[cli]`ninstaller = `"internal`"`n"
     }
@@ -552,8 +552,7 @@ function Merge-GrokConfig {
     $newRaw = Merge-VibeToml -Raw $raw -Snippet $snippet
     $check = Test-VibeToml -Raw $newRaw
     if (-not $check.Ok) {
-        Write-Fail ("config.toml merge invalid: {0}" -f ($check.Errors -join '; '))
-        return
+        throw ("config.toml merge invalid: {0}" -f ($check.Errors -join '; '))
     }
     Write-Utf8NoBomFile -Path $cfgPath -Content $newRaw
     if ($existed) {
@@ -968,7 +967,7 @@ function Test-StackHealth {
     if ((Test-Path -LiteralPath $cfgHealth) -and (Test-Path -LiteralPath $tomlHelper)) {
         try {
             . $tomlHelper
-            $cfgRaw = Get-Content -LiteralPath $cfgHealth -Raw
+            $cfgRaw = Read-Utf8NoBomFile -Path $cfgHealth
             $cfgCheck = Test-VibeToml -Raw $cfgRaw
             if ($cfgCheck.Ok) {
                 Write-Ok "check config.toml parse (Headroom override present, no duplicate tables)"

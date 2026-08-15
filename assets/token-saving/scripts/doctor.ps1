@@ -309,11 +309,12 @@ if (Test-Path $gitDir) {
 if (Test-Path -LiteralPath $cfg) {
     Write-Host ""
     Write-Host "--- config.toml ---" -ForegroundColor Cyan
-    $cfgTxt = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    $cfgTxt = $null
     $tomlHelper = Join-Path $grokHome 'token-saving\scripts\GrokToml.ps1'
     if (Test-Path -LiteralPath $tomlHelper) {
         try {
             . $tomlHelper
+            $cfgTxt = Read-Utf8NoBomFile -Path $cfg
             $cfgCheck = Test-VibeToml -Raw ([string]$cfgTxt)
             if ($cfgCheck.Ok) {
                 Write-Host '  parse: ok (Headroom grok-4.6 override, no duplicate tables)' -ForegroundColor Green
@@ -324,6 +325,9 @@ if (Test-Path -LiteralPath $cfg) {
         } catch {
             Write-Host "  WARN: config check failed: $_" -ForegroundColor Yellow
         }
+    }
+    if (-not $cfgTxt) {
+        $cfgTxt = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
     }
     if ($cfgTxt -match 'permission_mode\s*=\s*"always-approve"') {
         Write-Host '  WARN: permission_mode=always-approve (tools auto-run without prompts).' -ForegroundColor Yellow

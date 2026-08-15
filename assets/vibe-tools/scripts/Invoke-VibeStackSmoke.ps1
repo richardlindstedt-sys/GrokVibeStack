@@ -491,13 +491,25 @@ default = "grok-4.6"
     } else {
         Bad ("config merge strip-miss did not keep snippet tables={0} ok={1}" -f $untracked.Count, $missCheck.Ok)
     }
+    $utfTmp = Join-Path $env:TEMP ("vibe-utf8-smoke-{0}.toml" -f [guid]::NewGuid().ToString('n'))
+    try {
+        Write-Utf8NoBomFile -Path $utfTmp -Content "[user]`nname = `"café`"`n"
+        $back = Read-Utf8NoBomFile -Path $utfTmp
+        if ($back -match 'café') {
+            Ok 'config UTF-8 no-BOM write/read roundtrip (non-ASCII)'
+        } else {
+            Bad 'UTF-8 roundtrip lost non-ASCII'
+        }
+    } finally {
+        Remove-Item -LiteralPath $utfTmp -Force -ErrorAction SilentlyContinue
+    }
 } else {
     Bad 'missing GrokToml.ps1'
 }
-if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Test-VibeToml' -and $instSrc -match 'Merge-VibeToml' -and $instSrc -match 'Write-Utf8NoBomFile') {
-    Ok 'installer: merge uses GrokToml + validates + UTF8 no BOM'
+if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Test-VibeToml' -and $instSrc -match 'Merge-VibeToml' -and $instSrc -match 'Write-Utf8NoBomFile' -and $instSrc -match 'throw \("config.toml merge invalid') {
+    Ok 'installer: merge uses GrokToml + validates + UTF8 no BOM + throw on invalid'
 } else {
-    Bad 'installer merge no longer validates TOML / uses GrokToml'
+    Bad 'installer merge no longer validates TOML / uses GrokToml / throw'
 }
 if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile') {
     Ok 'start-grok: config preflight + auto-repair'
@@ -564,6 +576,26 @@ if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoPr
     Ok 'pre-push wires plan profile + AutoProfile + Scope Full/cache'
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
+}
+if ($prePushPs1 -match 'refusing a guessed' -and $prePushPs1 -notmatch 'origin/HEAD\.\.\.HEAD') {
+    Ok 'pre-push: empty stdin fail-closed (no guessed diff)'
+} else {
+    Bad 'pre-push still reviews a guessed origin/HEAD or HEAD~5 diff'
+}
+if ($scanSrc -match 'Error running' -and $scanSrc -match '\$script:failed\+\+') {
+    Ok 'scans: Pester catch increments failed'
+} else {
+    Bad 'Pester catch still swallows errors'
+}
+if ($rawReview -match 'Roles\)\.Count -gt 1' -and $rawReview -match 'start sequential reviewer' -and $rawReview -match 'Never downgrade in-support data corruption') {
+    Ok 'review: parallel multi-role + sequential NOW + arbiter no-downgrade corruption'
+} else {
+    Bad 'review missing multi-role parallel / sequential NOW / arbiter corruption rule'
+}
+if ($hookInst -match 'rev-parse --git-path hooks') {
+    Ok 'hooks install uses git-path hooks (worktree / core.hooksPath)'
+} else {
+    Bad 'hooks still join .git/hooks only'
 }
 
 # --- 4) Doctor (best-effort; should not throw) ---

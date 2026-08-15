@@ -172,7 +172,7 @@ function Get-VibeManagedSnippet {
     if (-not $SnippetPath -or -not (Test-Path -LiteralPath $SnippetPath)) {
         throw "Missing vibe config snippet: $SnippetPath"
     }
-    $snippet = Get-Content -LiteralPath $SnippetPath -Raw
+    $snippet = Read-Utf8NoBomFile -Path $SnippetPath
     if ($HeadroomCmd) {
         $snippet = $snippet.Replace('command = "HEADROOM_MCP_CMD"', "command = '$HeadroomCmd'")
     }
@@ -229,12 +229,21 @@ function Test-VibeToml {
     }
 }
 
+function Get-VibeUtf8NoBom {
+    return (New-Object System.Text.UTF8Encoding $false)
+}
+
+function Read-Utf8NoBomFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return [System.IO.File]::ReadAllText($Path, (Get-VibeUtf8NoBom))
+}
+
 function Write-Utf8NoBomFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Content
     )
-    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $utf8 = Get-VibeUtf8NoBom
     if (-not $Content.EndsWith("`n")) { $Content += "`n" }
     [System.IO.File]::WriteAllText($Path, $Content, $utf8)
 }
@@ -250,7 +259,7 @@ function Repair-GrokConfigFile {
     )
     $raw = ''
     if (Test-Path -LiteralPath $ConfigPath) {
-        $raw = Get-Content -LiteralPath $ConfigPath -Raw -ErrorAction Stop
+        $raw = Read-Utf8NoBomFile -Path $ConfigPath
     }
     $snippet = Get-VibeManagedSnippet -SnippetPath $SnippetPath -HeadroomCmd $HeadroomCmd -SerenaExe $SerenaExe -SerenaEnabled $SerenaEnabled
     $merged = Merge-VibeToml -Raw $raw -Snippet $snippet

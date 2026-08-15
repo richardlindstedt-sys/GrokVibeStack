@@ -101,13 +101,17 @@ if ($ranges.Count -gt 0) {
     }
 }
 
-if (-not $diff) {
-    $diff = git diff --no-color origin/HEAD...HEAD 2>$null
-    if (-not $diff) { $diff = git diff --no-color HEAD~5..HEAD 2>$null }
-    if (-not $diff) { $diff = git diff --no-color 2>$null }
-    if ($diff) {
-        Write-Host "Reviewing fallback diff (no usable push range)." -ForegroundColor Yellow
+$onlyDeletes = $plan.Notes.Count -gt 0 -and (@($plan.Notes | Where-Object { $_ -notmatch '^delete:' }).Count -eq 0)
+if ($ranges.Count -eq 0 -and -not $onlyDeletes) {
+    Write-Host ""
+    Write-Host "PRE-PUSH BLOCKED: no push refs on stdin (refusing a guessed origin/HEAD or HEAD~5 diff)." -ForegroundColor Red
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        Write-GateDone -Summary 'no push refs on stdin'
     }
+    exit 1
+}
+if (-not $diff) {
+    Write-Host "Push refs present; range diff empty (nothing to review)." -ForegroundColor DarkGray
 }
 
 Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
@@ -157,6 +161,15 @@ if (-not $skipScans) {
     }
     # Start-Process does not update $LASTEXITCODE; clear stale codes before review.
     $global:LASTEXITCODE = 0
+}
+
+if (-not $diff) {
+    Write-Host ""
+    Write-Host "PRE-PUSH OK - scans clean; no payload to review." -ForegroundColor Green
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        Write-GateDone -Passed -Summary 'no payload to review'
+    }
+    exit 0
 }
 
 Write-Host ""

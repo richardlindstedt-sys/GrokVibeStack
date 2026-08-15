@@ -291,7 +291,7 @@ function Show-Status {
     $cfgPath = Join-Path $GrokHome 'config.toml'
     $cfgLine = 'config.toml missing (plain grok; run start-grok to repair or re-install)'
     if ((Test-Path -LiteralPath $cfgPath) -and (Test-GrokTomlHelperLoaded)) {
-        $cfgCheck = Test-VibeToml -Raw (Get-Content -LiteralPath $cfgPath -Raw)
+        $cfgCheck = Test-VibeToml -Raw (Read-Utf8NoBomFile -Path $cfgPath)
         if ($cfgCheck.Ok) {
             $cfgLine = 'ok (quoted grok-4.6 -> Headroom :8787, no duplicate tables)'
         } else {
@@ -441,7 +441,7 @@ function Assert-GrokConfig {
     }
     $raw = ''
     if (Test-Path -LiteralPath $cfg) {
-        $raw = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+        $raw = Read-Utf8NoBomFile -Path $cfg
     }
     $check = if ($raw) { Test-VibeToml -Raw $raw } else {
         @{ Ok = $false; Errors = @('config.toml missing'); Duplicates = @(); HasHeadroomOverride = $false }

@@ -35,7 +35,16 @@ if (Test-Path $gitDir -PathType Leaf) {
     }
 }
 
-$hooksDir = Join-Path $gitDir 'hooks'
+$hooksDir = $null
+try {
+    $hooksDir = (git -C $repo rev-parse --git-path hooks 2>$null | Select-Object -First 1)
+} catch {}
+if ([string]::IsNullOrWhiteSpace($hooksDir)) {
+    $hooksDir = Join-Path $gitDir 'hooks'
+}
+if (-not [System.IO.Path]::IsPathRooted($hooksDir)) {
+    $hooksDir = Join-Path $repo $hooksDir
+}
 New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
 
 # Remove sample noise
@@ -114,8 +123,8 @@ $prePush = @'
 
 echo ""
 echo "+================================================================+"
-echo "|   VIBE PRE-PUSH HOOK  [profile=fast]                           |"
-echo "|   Scans + 1-reviewer (correctness) on push range               |"
+echo "|   VIBE PRE-PUSH HOOK  [profile=fast + AutoProfile]             |"
+echo "|   Scans + AI on push range (sensitive paths add security)      |"
 echo "+================================================================+"
 echo "LIVE: ~/.grok/vibe-tools/reports/gate-now.txt (chat polls this)"
 echo "      ~/.grok/vibe-tools/reports/gate-status.txt (append events)"
