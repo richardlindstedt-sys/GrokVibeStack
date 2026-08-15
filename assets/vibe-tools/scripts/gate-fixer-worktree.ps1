@@ -5,7 +5,7 @@
     Fixer edits HEAD + staged patch in a detached worktree so unstaged
     user work in the main tree is not mixed into the auto-fix. Changed
     files are copied back and the worktree is removed.
-    Fail-open: if worktree add fails, caller should fix in-place.
+    Fail-closed: if worktree add fails, caller must not edit the main tree.
 #>
 
 function New-FixerWorktree {

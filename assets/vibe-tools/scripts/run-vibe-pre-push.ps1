@@ -53,9 +53,12 @@ function ConvertTo-SinglePatchText($raw) {
 }
 
 function Get-NewBranchPushDiff([string]$Tip) {
-    $commits = @(git rev-list --max-count=20 $Tip 2>$null | Where-Object { $_ })
-    if ($commits.Count -eq 0) { return $null }
-    $oldest = $commits[-1]
+    # Unique commits vs remotes — never cap at 20 (first push of a long branch).
+    # No guessed origin/HEAD / origin/main / origin/master / checkout HEAD base.
+    if ([string]::IsNullOrWhiteSpace($Tip)) { return $null }
+    $unique = @(git rev-list $Tip --not --remotes 2>$null | Where-Object { $_ })
+    if ($unique.Count -eq 0) { return $null }
+    $oldest = $unique[-1]
     $parent = $null
     try { $parent = (git rev-parse --verify --quiet "$oldest^" 2>$null | Select-Object -First 1) } catch {}
     if ($parent -and "$parent" -notmatch '^0+$') {
@@ -77,7 +80,7 @@ if ($ranges.Count -gt 0) {
     $chunks = foreach ($r in $ranges) {
         if ($r.StartsWith('NEW:')) {
             $tip = $r.Substring(4)
-            [void]$labels.Add("new-branch:$tip (rev-list<=20)")
+            [void]$labels.Add("new-branch:$tip (unique-vs-remotes)")
             $d = Get-NewBranchPushDiff $tip
             if ($d) { $d }
             continue
@@ -101,14 +104,7 @@ if ($ranges.Count -gt 0) {
     }
 }
 
-$hasRefLines = $false
-if (-not [string]::IsNullOrWhiteSpace($stdin)) {
-    foreach ($line in ($stdin -split "`n")) {
-        $t = $line.Trim()
-        if (-not $t) { continue }
-        if ((@($t -split '\s+')).Count -ge 4) { $hasRefLines = $true; break }
-    }
-}
+$hasRefLines = [bool]$plan.HasRefLines
 # Empty stdin only. Zero $ranges is normal for delete-only / some create-ref notes.
 if (-not $hasRefLines) {
     Write-Host ""
@@ -126,48 +122,81 @@ Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 1/2 static scans' }
 if (-not $env:VIBE_REQUIRE_SCANNERS) { $env:VIBE_REQUIRE_SCANNERS = '1' }
 
-# Skip full rescans only when a prior Full pass hit (same treeHash + cwd, TTL ~2h).
-# Shared Test-ScanPassCache: Staged/Auto cache writes never authorize Full skip.
+# Scan/cache the push tip tree(s), not the current checkout (write-tree / HEAD).
 . (Join-Path $vibeScripts 'scan-pass-cache.ps1')
+$repoRoot = (Get-Location).Path
+$pushTips = @(Get-VibePushTipShas $ranges)
+$tipJobs = [System.Collections.Generic.List[string]]::new()
+$seenTrees = @{}
+foreach ($tip in $pushTips) {
+    $th = Get-TreeHashForScanCache -TreeIsh $tip
+    if (-not $th) {
+        Write-Host ""
+        Write-Host ("PRE-PUSH BLOCKED: cannot resolve tree for push tip {0}." -f $tip) -ForegroundColor Red
+        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+            Write-GateDone -Summary ("unresolved push tip {0}" -f $tip)
+        }
+        exit 1
+    }
+    if ($seenTrees.ContainsKey($th)) { continue }
+    $seenTrees[$th] = $true
+    [void]$tipJobs.Add($tip)
+}
 $skipScans = $false
 try {
-    $treeHash = Get-TreeHashForScanCache
-    $repoRoot = (Get-Location).Path
-    if (Test-ScanPassCache -TreeHash $treeHash -Cwd $repoRoot -RequiredScope 'Full') {
-        $skipScans = $true
-        $age = if ($null -ne $script:ScanPassCacheAgeSec) { $script:ScanPassCacheAgeSec } else { '?' }
-        $short = if ($treeHash -and $treeHash.Length -ge 12) { $treeHash.Substring(0, 12) } else { "$treeHash" }
-        Write-Host ("Skipping full scans (Full cache hit tree={0}... age={1}s)" -f $short, $age) -ForegroundColor DarkCyan
+    if ($tipJobs.Count -gt 0) {
+        $allHit = $true
+        $ages = [System.Collections.Generic.List[string]]::new()
+        foreach ($tip in $tipJobs) {
+            $treeHash = Get-TreeHashForScanCache -TreeIsh $tip
+            if (-not (Test-ScanPassCache -TreeHash $treeHash -Cwd $repoRoot -RequiredScope 'Full')) {
+                $allHit = $false
+                break
+            }
+            $age = if ($null -ne $script:ScanPassCacheAgeSec) { $script:ScanPassCacheAgeSec } else { '?' }
+            $short = if ($treeHash -and $treeHash.Length -ge 12) { $treeHash.Substring(0, 12) } else { "$treeHash" }
+            [void]$ages.Add("{0}... age={1}s" -f $short, $age)
+        }
+        if ($allHit) {
+            $skipScans = $true
+            Write-Host ("Skipping full scans (Full cache hit tip tree {0})" -f ($ages -join '; ')) -ForegroundColor DarkCyan
+        }
     }
 } catch {}
 
 if (-not $skipScans) {
-    # Prefer -File so process exit is the script's exit 0/1 (not leftover native codes).
-    $scanProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runScans, '-Scope', 'Full'
-    ) -Wait -PassThru -NoNewWindow
-    if ($null -eq $scanProc -or $null -eq $scanProc.ExitCode) {
-        Write-Host ""
-        Write-Host "PRE-PUSH BLOCKED: scanner process did not start or returned no exit code." -ForegroundColor Red
-        Write-Host "Fix the environment, or emergency: git push --no-verify" -ForegroundColor Yellow
-        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
-            Write-GateDone -Summary 'scanner process did not start'
+    $scanTargets = if ($tipJobs.Count -gt 0) { @($tipJobs) } else { @('') }
+    foreach ($tip in $scanTargets) {
+        $scanArgs = [System.Collections.Generic.List[string]]::new()
+        [void]$scanArgs.AddRange([string[]]@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runScans, '-Scope', 'Full'))
+        if ($tip) {
+            [void]$scanArgs.Add('-TreeIsh')
+            [void]$scanArgs.Add($tip)
+            Write-Host ("Scanning push tip {0}" -f $tip) -ForegroundColor DarkCyan
         }
-        exit 1
-    }
-    $scanEc = [int]$scanProc.ExitCode
-    if ($scanEc -ne 0) {
-        Write-Host ""
-        Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
-        Write-Host "Fix issues above, or emergency: git push --no-verify" -ForegroundColor Yellow
-        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
-            if ("$script:GateNow" -notmatch 'GATE DONE') {
-                Write-GateDone -Summary ("scans exit {0}" -f $scanEc)
+        $scanProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @($scanArgs.ToArray()) -Wait -PassThru -NoNewWindow
+        if ($null -eq $scanProc -or $null -eq $scanProc.ExitCode) {
+            Write-Host ""
+            Write-Host "PRE-PUSH BLOCKED: scanner process did not start or returned no exit code." -ForegroundColor Red
+            Write-Host "Fix the environment, or emergency: git push --no-verify" -ForegroundColor Yellow
+            if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+                Write-GateDone -Summary 'scanner process did not start'
             }
+            exit 1
         }
-        exit 1
+        $scanEc = [int]$scanProc.ExitCode
+        if ($scanEc -ne 0) {
+            Write-Host ""
+            Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
+            Write-Host "Fix issues above, or emergency: git push --no-verify" -ForegroundColor Yellow
+            if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+                if ("$script:GateNow" -notmatch 'GATE DONE') {
+                    Write-GateDone -Summary ("scans exit {0}" -f $scanEc)
+                }
+            }
+            exit 1
+        }
     }
-    # Start-Process does not update $LASTEXITCODE; clear stale codes before review.
     $global:LASTEXITCODE = 0
 }
 

@@ -287,10 +287,15 @@ if ($prePushSrc -match 'scanner process did not start or returned no exit code' 
 } else {
     Bad 'pre-push still maps null scan ExitCode to 0'
 }
-if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -match 'rev-list --max-count=20' -and $prePushSrc -notmatch '\$localSha~20' -and $prePushSrc -match 'ConvertTo-SinglePatchText') {
-    Ok 'pre-push: new branch walks rev-list; patches flattened to one string'
+if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-list --max-count=20' -and $prePushSrc -match '--not --remotes' -and $prePushSrc -notmatch "'origin/HEAD'" -and $prePushSrc -notmatch "'origin/main'" -and $prePushSrc -notmatch "'origin/master'" -and $prePushSrc -notmatch 'refs/remotes/origin/HEAD' -and $prePushSrc -notmatch '\$localSha~20' -and $prePushSrc -match 'ConvertTo-SinglePatchText') {
+    Ok 'pre-push: new branch is unique-vs-remotes (no 20-commit cap, no guessed origin/*); patches flattened'
 } else {
-    Bad 'pre-push still uses sha~20 / tip-only fallback or nests git string[]'
+    Bad 'pre-push still caps new-branch history, guesses origin/*, or nests git string[]'
+}
+if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh') {
+    Ok 'pre-push: scans push tip tree (not current checkout)'
+} else {
+    Bad 'pre-push still scans current checkout / write-tree'
 }
 if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item -LiteralPath \$src') {
     Ok 'scans: staged tree never copies worktree'
@@ -571,13 +576,14 @@ if ($hookInst -match '-Profile standard' -and $hookInst -match '-AutoProfile' -a
     Bad 'pre-commit missing AutoProfile/Scope Auto'
 }
 $prePushPs1 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1') -Raw
+$planSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-push-plan.ps1') -Raw
 # Scope Full may be '-Scope Full' or Start-Process ArgumentList '-Scope','Full'
 if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoProfile" -and ($prePushPs1 -match "-Scope['\s,]*Full" -or $prePushPs1 -match "'Full'")) {
     Ok 'pre-push wires plan profile + AutoProfile + Scope Full/cache'
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
 }
-if ($prePushPs1 -match 'refusing a guessed' -and $prePushPs1 -notmatch 'origin/HEAD\.\.\.HEAD' -and $prePushPs1 -match '\$hasRefLines' -and $prePushPs1 -notmatch '\$ranges\.Count -eq 0 -and -not \$onlyDeletes') {
+if ($prePushPs1 -match 'refusing a guessed' -and $prePushPs1 -notmatch 'origin/HEAD\.\.\.HEAD' -and $prePushPs1 -match '\$plan\.HasRefLines' -and $prePushPs1 -match '\$hasRefLines' -and $prePushPs1 -notmatch '\$ranges\.Count -eq 0 -and -not \$onlyDeletes' -and $planSrc -match 'HasRefLines') {
     Ok 'pre-push: empty stdin fail-closed (no guessed diff); empty ranges not treated as no-stdin'
 } else {
     Bad 'pre-push still reviews a guessed diff or treats empty $ranges as empty stdin'
@@ -596,6 +602,34 @@ if ($hookInst -match 'rev-parse --git-path hooks') {
     Ok 'hooks install uses git-path hooks (worktree / core.hooksPath)'
 } else {
     Bad 'hooks still join .git/hooks only'
+}
+$docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
+$unSrcHooks = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
+if ($docSrc -match 'rev-parse --git-path hooks' -and $unSrcHooks -match 'rev-parse --git-path hooks') {
+    Ok 'doctor + uninstall resolve hooks via git-path'
+} else {
+    Bad 'doctor/uninstall still hardcode .git\\hooks'
+}
+if ($progSrc -match 'PID:' -and $progSrc -match 'CWD:' -and $progSrc -match 'adoptPid' -and $progSrc -match 'all\[\$start' -and $progSrc -match 'gate-watch-' -and $progSrc -match '-File' -and $progSrc -notmatch 'Bypass'', ''-Command''') {
+    Ok 'gate: adopt requires live PID+CWD; status tail slices then last 60; popup -File'
+} else {
+    Bad 'gate adopt/tail/popup still stale'
+}
+$startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
+if ($startSrc -match 'Test-ProxyProcessOk' -and $startSrc -match 'TCP owner is not Headroom PID' -and $startSrc -match 'recordedPid is a hint only' -and $startSrc -notmatch 'recordedPid -and \$op -ne \$recordedPid' -and $startSrc -notmatch "ProcessName -match 'headroom\|python'") {
+    Ok 'proxy stop/start: Headroom argv + TCP owner PID; stale pid file does not veto live owner'
+} else {
+    Bad 'proxy still force-kills by name/stale PID or rejects live owner on pid mismatch'
+}
+if ($scanSrc -match 'Get-VibeSameVolumeTempDir' -and $scanSrc -match 'vibe-scan-tmp') {
+    Ok 'scans: staged/tip trees stay on repo volume'
+} else {
+    Bad 'scans still materialize staged tree on TEMP (cross-drive)'
+}
+if ($rawReview -match 'refusing in-place edit' -and $rawReview -notmatch 'editing main tree') {
+    Ok 'fixer: worktree fail is fail-closed'
+} else {
+    Bad 'fixer still yolo-edits the main tree'
 }
 
 # --- 4) Doctor (best-effort; should not throw) ---

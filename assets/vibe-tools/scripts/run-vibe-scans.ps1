@@ -13,7 +13,9 @@ param(
     [switch]$Quiet,
     # Auto = staged-first when index non-empty; Staged = require staged; Full = whole tree
     [ValidateSet('Auto', 'Staged', 'Full')]
-    [string]$Scope = 'Auto'
+    [string]$Scope = 'Auto',
+    # Pre-push: scan this commit/tree instead of the current checkout.
+    [string]$TreeIsh = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -70,6 +72,48 @@ function Get-StagedNameList {
     return $names
 }
 
+function Get-VibeSameVolumeTempDir {
+    # Keep scan temps on the repo volume so git --prefix / tools never emit D:\C:\...
+    $gitCommon = $null
+    try { $gitCommon = (git rev-parse --git-common-dir 2>$null | Select-Object -First 1) } catch {}
+    if ([string]::IsNullOrWhiteSpace($gitCommon)) {
+        $gitCommon = Join-Path $root '.git'
+    }
+    if (-not [System.IO.Path]::IsPathRooted($gitCommon)) {
+        $gitCommon = Join-Path $root $gitCommon
+    }
+    $dir = Join-Path $gitCommon 'vibe-scan-tmp'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    return $dir
+}
+
+function New-CommitScanTree {
+    param([string]$TreeIsh)
+    if ([string]::IsNullOrWhiteSpace($TreeIsh)) { return $null }
+    $sha = $null
+    try { $sha = (git rev-parse --verify --quiet $TreeIsh 2>$null | Select-Object -First 1) } catch {}
+    if (-not $sha) { return $null }
+    $tmpRoot = Get-VibeSameVolumeTempDir
+    $tmp = Join-Path $tmpRoot ("vibe-tip-" + [guid]::NewGuid().ToString('n').Substring(0, 10))
+    $zip = Join-Path $tmpRoot ("vibe-tip-" + [guid]::NewGuid().ToString('n').Substring(0, 8) + '.zip')
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    try {
+        git archive --format=zip -o $zip $sha 2>$null | Out-Null
+        if (-not (Test-Path -LiteralPath $zip)) { throw 'git archive produced no zip' }
+        Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+        return $tmp
+    } catch {
+        if (Test-Path -LiteralPath $tmp) {
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        return $null
+    } finally {
+        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function New-StagedScanTree {
     <#
       Materialize staged blob contents into a temp tree (binary-safe via checkout-index).
@@ -79,9 +123,11 @@ function New-StagedScanTree {
     param([string[]]$Names)
     $script:StagedMaterializeFailed = $false
     if (-not $Names -or $Names.Count -eq 0) { return $null }
-    $tmp = Join-Path $env:TEMP ("vibe-staged-" + [guid]::NewGuid().ToString('n').Substring(0, 10))
-    # trailing separator required by git checkout-index --prefix
-    $prefix = $tmp.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    # Same volume as the repo. TEMP on another drive + git --prefix => D:\C:\... ENOENT.
+    $tmpRoot = Get-VibeSameVolumeTempDir
+    $tmp = Join-Path $tmpRoot ("vibe-staged-" + [guid]::NewGuid().ToString('n').Substring(0, 10))
+    # trailing separator required by git checkout-index --prefix (forward slashes for git)
+    $prefix = ($tmp.TrimEnd('\', '/') -replace '\\', '/') + '/'
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     $n = 0
     $expected = 0
@@ -345,9 +391,30 @@ if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
         -Now ("Static scans starting (scope $Scope)") -Phase 'scans'
 }
 
+$scanRoot = $root
+$tipTree = $null
+if (-not [string]::IsNullOrWhiteSpace($TreeIsh)) {
+    $Scope = 'Full'
+    $tipTree = New-CommitScanTree -TreeIsh $TreeIsh
+    if (-not $tipTree) {
+        Write-Host ("[TreeIsh] FAILED to materialize {0} — refusing to scan the current checkout" -f $TreeIsh) -ForegroundColor Yellow
+        $script:failed++
+        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+            Write-GateDone -Summary ("scan tip materialize failed: {0}" -f $TreeIsh)
+        }
+        exit 1
+    }
+    $scanRoot = $tipTree
+    if (-not $Quiet) {
+        Write-Host ("Scanning push tip {0} at {1}" -f $TreeIsh, $tipTree) -ForegroundColor DarkCyan
+    }
+}
+
 $stagedNames = @(Get-StagedNameList)
 $useStaged = $false
-if ($Scope -eq 'Full') {
+if ($tipTree) {
+    $useStaged = $false
+} elseif ($Scope -eq 'Full') {
     $useStaged = $false
 } elseif ($Scope -eq 'Staged') {
     $useStaged = $true
@@ -362,7 +429,6 @@ if ($Scope -eq 'Full') {
 
 $stagedTree = $null
 $script:StagedMaterializeFailed = $false
-$scanRoot = $root
 if ($useStaged) {
     $stagedTree = New-StagedScanTree -Names $stagedNames
     if ($script:StagedMaterializeFailed) {
@@ -377,6 +443,7 @@ if ($useStaged) {
         }
     }
 }
+if ($tipTree) { $stagedTree = $tipTree }
 
 try {
     # Trivy
@@ -678,7 +745,7 @@ if ($failed -gt 0) {
 }
 
 # Only Full-tree passes write cache (Staged/Auto must not authorize push Full skip).
-$th = Get-TreeHashForScanCache
+$th = Get-TreeHashForScanCache -TreeIsh $TreeIsh
 if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
 if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {

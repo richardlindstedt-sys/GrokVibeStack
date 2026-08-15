@@ -81,10 +81,17 @@ if ($plan.Profile -eq 'strict' -and -not $plan.AutoProfile -and $plan.Ranges[0] 
     Bad ("eval: version tag plan wrong: profile={0} auto={1} range={2}" -f $plan.Profile, $plan.AutoProfile, ($plan.Ranges -join ','))
 }
 $plan2 = Get-VibePushReviewPlan -StdinText "refs/heads/main abcdef0123456789 refs/heads/main 1111111111111111"
-if ($plan2.Profile -eq 'fast' -and $plan2.Ranges[0] -match '\.\.') {
+if ($plan2.Profile -eq 'fast' -and $plan2.Ranges[0] -match '\.\.' -and $plan2.HasRefLines) {
     Ok 'eval: branch push stays fast + a..b'
 } else {
     Bad 'eval: branch push plan wrong'
+}
+$emptyPlan = Get-VibePushReviewPlan -StdinText ''
+$delPlan = Get-VibePushReviewPlan -StdinText "refs/heads/gone 0000000000000000 refs/heads/gone abcdef0123456789"
+if (-not $emptyPlan.HasRefLines -and $delPlan.HasRefLines -and @($delPlan.Ranges).Count -eq 0) {
+    Ok 'eval: empty stdin vs delete-only (HasRefLines; no range)'
+} else {
+    Bad 'eval: empty stdin / delete-only plan mixup'
 }
 if ((Test-VibeVersionTagRef 'refs/tags/v1.0.3') -and (Test-VibeVersionTagRef 'refs/tags/2.0.0') -and -not (Test-VibeVersionTagRef 'refs/tags/nightly')) {
     Ok 'eval: version-tag ref matcher'

@@ -1273,16 +1273,18 @@ function Invoke-Fixer {
     }
     $wt = $null
     $before = $null
-    if (Get-Command New-FixerWorktree -ErrorAction SilentlyContinue) {
-        $wt = New-FixerWorktree
-        if ($wt) {
-            $before = Get-WorktreeFileFingerprints -Root $wt.Root
-            Write-Host ('  fixer worktree: {0}' -f $wt.Root) -ForegroundColor DarkCyan
-        } else {
-            Write-Host '  fixer worktree unavailable; editing main tree' -ForegroundColor DarkYellow
-        }
+    if (-not (Get-Command New-FixerWorktree -ErrorAction SilentlyContinue)) {
+        Write-Host '  fixer worktree helper missing; refusing in-place edit' -ForegroundColor Red
+        return @{ Ok = $false; Seconds = 0; ExitCode = 1; Text = 'fixer worktree helper missing' }
     }
-    $wd = if ($wt) { $wt.Root } else { '' }
+    $wt = New-FixerWorktree
+    if (-not $wt) {
+        Write-Host '  fixer worktree unavailable; refusing in-place edit' -ForegroundColor Red
+        return @{ Ok = $false; Seconds = 0; ExitCode = 1; Text = 'fixer worktree unavailable' }
+    }
+    $before = Get-WorktreeFileFingerprints -Root $wt.Root
+    Write-Host ('  fixer worktree: {0}' -f $wt.Root) -ForegroundColor DarkCyan
+    $wd = $wt.Root
     try {
         $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'implementer-fix' -Effort $Effort -MaxTurns $MaxTurns -AllowWrites -OutLog $lf -WorkingDirectory $wd
         if ($wt) {

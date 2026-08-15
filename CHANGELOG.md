@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-15
+
+### Fixed
+
+- Doctor and uninstall resolve git hooks via `git rev-parse --git-path hooks` (worktree / `core.hooksPath`)
+- Pre-push scans and scan-pass cache use the push-tip tree (`-TreeIsh`), not the current checkout / `git write-tree`
+- Pre-push empty review ranges are not missing stdin: block only when git sends no ref lines (`HasRefLines`); delete-only / create-ref still proceed
+- New-branch AI diff is unique-vs-remotes (`rev-list --not --remotes`); no 20-commit cap; no guessed origin/HEAD/main/master
+- `start-grok` / uninstall never `Stop-Process -Force` a reused PID: require Headroom argv; adopt a live TCP owner and rewrite a stale PID file; confirm TCP owner is the Start-Process PID before fingerprint
+- `Start-GateRun` adopts a live `RUN:` only when PID is alive and `CWD` matches; else reset
+- Staged / tip scan trees stay on the repo volume (no `D:\C:\...` markdownlint ENOENT)
+- Fixer worktree failure fails the gate (no in-place yolo on the main tree)
+- Gate popup uses `-File` + validated run id (no `-Command` path interpolation)
+- `Import-GateStatusTail` slices from last `==== gate start` then takes 60 lines (PS 5.1 `-Skip`+`-Last` no longer drops the current run)
+
 ## [1.3.1] - 2026-08-15
 
 ### Fixed

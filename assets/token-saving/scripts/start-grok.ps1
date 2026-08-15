@@ -79,6 +79,13 @@ function Get-ProxyPid {
     if (-not [int]::TryParse($raw, [ref]$procId)) { return $null }
     $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
     if ($null -eq $proc) { return $null }
+    # PID reuse after reboot: only trust a live Headroom cmdline.
+    if (Get-Command Test-ProxyProcessOk -ErrorAction SilentlyContinue) {
+        if (-not (Test-ProxyProcessOk $procId)) {
+            Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+    }
     return $procId
 }
 
@@ -196,8 +203,8 @@ function Clear-StaleProxyFingerprint {
 }
 
 function Test-ProxyMatchesStack {
-    # Port listening + live owner cmdline has expected stack flags.
-    # Fingerprint file alone is never enough (stale after crash/kill).
+    # Port listening is not enough: TCP owner must be our Start-Process PID (or a
+    # verified Headroom argv) and the fingerprint file must match this stack.
     if (-not (Test-PortListening $Port)) {
         Clear-StaleProxyFingerprint
         return $false
@@ -212,29 +219,42 @@ function Test-ProxyMatchesStack {
         return $false
     }
 
-    $candidatePids = [System.Collections.Generic.List[int]]::new()
-    $proxyPid = Get-ProxyPid
-    if ($proxyPid) { [void]$candidatePids.Add([int]$proxyPid) }
+    $recordedPid = $null
+    if (Test-Path $ProxyPidFile) {
+        $raw = (Get-Content $ProxyPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+        $tmp = 0
+        if ([int]::TryParse($raw, [ref]$tmp)) { $recordedPid = $tmp }
+    }
 
+    $ownerPids = [System.Collections.Generic.List[int]]::new()
     try {
         $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
         foreach ($c in $conns) {
             if ($c.OwningProcess) {
                 $op = [int]$c.OwningProcess
-                if (-not $candidatePids.Contains($op)) { [void]$candidatePids.Add($op) }
+                if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
             }
         }
     } catch {}
 
-    foreach ($pidCand in $candidatePids) {
-        if (Test-ProxyProcessOk $pidCand) {
-            # Refresh pid file to the verified owner
-            Set-Content -Path $ProxyPidFile -Value $pidCand -Encoding ascii -NoNewline
-            return $true
-        }
+    if ($ownerPids.Count -eq 0) { return $false }
+
+    # recordedPid is a hint only. A leftover/reused PID file must not reject
+    # a live Headroom listener — adopt the verified owner and rewrite the file.
+    $ordered = [System.Collections.Generic.List[int]]::new()
+    if ($null -ne $recordedPid -and $ownerPids.Contains([int]$recordedPid)) {
+        [void]$ordered.Add([int]$recordedPid)
+    }
+    foreach ($op in $ownerPids) {
+        if (-not $ordered.Contains($op)) { [void]$ordered.Add($op) }
+    }
+    foreach ($op in $ordered) {
+        if (-not (Test-ProxyProcessOk $op)) { continue }
+        Set-Content -Path $ProxyPidFile -Value $op -Encoding ascii -NoNewline
+        return $true
     }
 
-    # fp present but no live matching process — drop stale marker
+    # Listeners exist but none are our Headroom PID + argv.
     Clear-StaleProxyFingerprint
     return $false
 }
@@ -251,12 +271,12 @@ function Stop-HeadroomProxy {
     try {
         $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
         foreach ($c in $conns) {
-            if ($c.OwningProcess) {
-                $p = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
-                if ($p -and ($p.ProcessName -match 'headroom|python')) {
-                    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-                    $stopped = $true
-                }
+            if (-not $c.OwningProcess) { continue }
+            $op = [int]$c.OwningProcess
+            # Require Headroom argv — never kill a random python on this port.
+            if (Test-ProxyProcessOk $op) {
+                Stop-Process -Id $op -Force -ErrorAction SilentlyContinue
+                $stopped = $true
             }
         }
     } catch {}
@@ -413,6 +433,26 @@ function Start-HeadroomProxyIfNeeded {
             throw "Headroom proxy exited early (code $($proc.ExitCode)).`n--- stderr ---`n$($err -join "`n")`n--- stdout ---`n$($out -join "`n")"
         }
         if (Test-PortListening $Port) {
+            $ownerOk = $false
+            try {
+                $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+                foreach ($c in $conns) {
+                    if ($c.OwningProcess -and [int]$c.OwningProcess -eq [int]$proc.Id) {
+                        $ownerOk = $true
+                        break
+                    }
+                }
+            } catch {}
+            if (-not $ownerOk) {
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
+                throw "Port $Port is listening but TCP owner is not Headroom PID $($proc.Id)."
+            }
+            if (-not (Test-ProxyProcessOk $proc.Id)) {
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
+                throw "Port $Port owner PID $($proc.Id) is not a Headroom proxy cmdline."
+            }
             Save-ProxyFingerprint
             Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port"
             return

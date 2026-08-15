@@ -15,7 +15,13 @@ if (-not $script:ScanPassTtlSec -or $script:ScanPassTtlSec -le 0) {
 }
 
 function Get-TreeHashForScanCache {
+    param([string]$TreeIsh = '')
     $h = $null
+    if (-not [string]::IsNullOrWhiteSpace($TreeIsh)) {
+        try { $h = (git rev-parse --verify --quiet "$TreeIsh^{tree}" 2>$null | Select-Object -First 1) } catch {}
+        if ($h) { return "$h".Trim() }
+        return $null
+    }
     try { $h = (git write-tree 2>$null | Select-Object -First 1) } catch {}
     if (-not $h) {
         try { $h = (git rev-parse 'HEAD^{tree}' 2>$null | Select-Object -First 1) } catch {}

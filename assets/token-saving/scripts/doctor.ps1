@@ -270,18 +270,19 @@ if (Test-Path -LiteralPath $latestJson) {
 Write-Host ""
 Write-Host "--- Repo git hooks (cwd) ---" -ForegroundColor Cyan
 $cwd = (Get-Location).Path
-$gitDir = Join-Path $cwd '.git'
-if (Test-Path $gitDir) {
-    if (Test-Path $gitDir -PathType Leaf) {
-        $gitFile = Get-Content $gitDir -Raw
-        if ($gitFile -match 'gitdir:\s*(.+)') {
-            $gd = $Matches[1].Trim()
-            if (-not [System.IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $cwd $gd }
-            $gitDir = $gd
-        }
+$insideGit = $false
+try { $insideGit = ((git -C $cwd rev-parse --is-inside-work-tree 2>$null | Select-Object -First 1) -eq 'true') } catch {}
+if ($insideGit) {
+    $hooksDirRepo = $null
+    try { $hooksDirRepo = (git -C $cwd rev-parse --git-path hooks 2>$null | Select-Object -First 1) } catch {}
+    if ([string]::IsNullOrWhiteSpace($hooksDirRepo)) {
+        $hooksDirRepo = Join-Path $cwd '.git\hooks'
     }
-    $preCommit = Join-Path $gitDir 'hooks\pre-commit'
-    $prePush = Join-Path $gitDir 'hooks\pre-push'
+    if (-not [System.IO.Path]::IsPathRooted($hooksDirRepo)) {
+        $hooksDirRepo = Join-Path $cwd $hooksDirRepo
+    }
+    $preCommit = Join-Path $hooksDirRepo 'pre-commit'
+    $prePush = Join-Path $hooksDirRepo 'pre-push'
     $pcOk = Test-Path $preCommit
     $ppOk = Test-Path $prePush
     Write-Host "  repo: $cwd"

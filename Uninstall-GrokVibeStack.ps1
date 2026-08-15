@@ -160,13 +160,10 @@ function Stop-HeadroomProxy {
     } elseif (Test-Path -LiteralPath $stopShim) {
         try { & $stopShim 2>$null | Out-Null } catch {}
     }
+    # Never Stop-Process by raw PID file — Windows may have reused it.
+    # start-grok -StopProxy already verified image/cmdline; just drop a leftover marker.
     $pidFile = Join-Path $GrokHome 'token-saving\state\headroom-proxy.pid'
     if (Test-Path -LiteralPath $pidFile) {
-        $raw = (Get-Content $pidFile -Raw).Trim()
-        $procId = 0
-        if ([int]::TryParse($raw, [ref]$procId)) {
-            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-        }
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
     }
     Write-Do "Headroom proxy stop attempted"
@@ -202,7 +199,16 @@ function Remove-ManagedConfigBlock {
 
 function Remove-RepoHooks([string]$RepoPath) {
     if (-not $RepoPath -or -not (Test-Path -LiteralPath $RepoPath)) { return }
-    $hooks = Join-Path $RepoPath '.git\hooks'
+    $hooks = $null
+    try {
+        $hooks = (git -C $RepoPath rev-parse --git-path hooks 2>$null | Select-Object -First 1)
+    } catch {}
+    if ([string]::IsNullOrWhiteSpace($hooks)) {
+        $hooks = Join-Path $RepoPath '.git\hooks'
+    }
+    if (-not [System.IO.Path]::IsPathRooted($hooks)) {
+        $hooks = Join-Path $RepoPath $hooks
+    }
     if (-not (Test-Path -LiteralPath $hooks)) { return }
     foreach ($h in @('pre-commit', 'pre-push')) {
         $p = Join-Path $hooks $h

@@ -27,6 +27,8 @@ function Get-VibePushReviewPlan {
         AutoProfile  bool (off for version tags so docs-only cannot downgrade)
         Ranges       list of "a..b" or "NEW:sha" or "TAG:sha"
         Notes        human labels
+        HasRefLines  true when git sent at least one 4-field ref line.
+                     Empty Ranges is not empty stdin (delete-only / create-ref).
     #>
     param([string]$StdinText)
 
@@ -34,6 +36,7 @@ function Get-VibePushReviewPlan {
     $auto = $true
     $ranges = [System.Collections.Generic.List[string]]::new()
     $notes = [System.Collections.Generic.List[string]]::new()
+    $hasRefLines = $false
 
     if ([string]::IsNullOrWhiteSpace($StdinText)) {
         return @{
@@ -41,6 +44,7 @@ function Get-VibePushReviewPlan {
             AutoProfile = $auto
             Ranges      = @()
             Notes       = @('no-stdin')
+            HasRefLines = $false
         }
     }
 
@@ -49,6 +53,7 @@ function Get-VibePushReviewPlan {
         if (-not $line) { continue }
         $parts = $line -split '\s+'
         if ($parts.Count -lt 4) { continue }
+        $hasRefLines = $true
         $localRef = $parts[0]
         $localSha = $parts[1]
         $remoteSha = $parts[3]
@@ -84,7 +89,27 @@ function Get-VibePushReviewPlan {
         AutoProfile = $auto
         Ranges      = @($ranges)
         Notes       = @($notes)
+        HasRefLines = $hasRefLines
     }
+}
+
+function Get-VibePushTipShas {
+    # Local SHAs being pushed (not the current checkout).
+    param($Ranges)
+    $tips = [System.Collections.Generic.List[string]]::new()
+    foreach ($r in @($Ranges)) {
+        if ([string]::IsNullOrWhiteSpace($r)) { continue }
+        if ($r.StartsWith('NEW:') -or $r.StartsWith('TAG:')) {
+            $sha = $r.Substring(4).Trim()
+            if ($sha) { [void]$tips.Add($sha) }
+            continue
+        }
+        if ($r -match '\.\.([^\.]+)$') {
+            $sha = $Matches[1].Trim()
+            if ($sha) { [void]$tips.Add($sha) }
+        }
+    }
+    return @($tips | Select-Object -Unique)
 }
 
 function Get-TagCommitDiff {

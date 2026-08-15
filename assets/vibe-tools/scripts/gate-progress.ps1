@@ -77,7 +77,11 @@ function Import-GateStatusTail {
     for ($i = $all.Count - 1; $i -ge 0; $i--) {
         if ($all[$i] -match '^==== gate start') { $start = $i; break }
     }
-    foreach ($ln in @($all | Select-Object -Skip $start -Last 60)) {
+    # Slice first. Select-Object -Skip + -Last applies -Last to the whole file in PS 5.1.
+    $slice = @($all[$start..($all.Count - 1)])
+    $take = [Math]::Min(60, $slice.Count)
+    $tail = if ($take -le 0) { @() } else { @($slice[($slice.Count - $take)..($slice.Count - 1)]) }
+    foreach ($ln in $tail) {
         if ([string]$ln -match 'GATE DONE') { continue }
         [void]$script:GateEvents.Add([string]$ln)
     }
@@ -87,6 +91,10 @@ function Write-GateStatusFile {
     # Snapshot (RUN/NOW/ELAPSED) is rewritten; gate-status.txt is append-only.
     if (-not $script:GateRunId) { $script:GateRunId = New-GateRunId }
     if (-not $script:GateSw) { $script:GateSw = [System.Diagnostics.Stopwatch]::StartNew() }
+    if (-not $script:GatePid) { $script:GatePid = $PID }
+    if (-not $script:GateCwd) {
+        try { $script:GateCwd = (Get-Location).Path } catch { $script:GateCwd = '' }
+    }
     $sec = [int]$script:GateSw.Elapsed.TotalSeconds
     $elapsed = if ($sec -ge 60) { '{0}m {1}s' -f [int][math]::Floor($sec / 60), ($sec % 60) } else { '{0}s' -f $sec }
     $body = @(
@@ -94,6 +102,8 @@ function Write-GateStatusFile {
         "NOW:     $($script:GateNow)"
         "ELAPSED: $elapsed"
         "PHASE:   $($script:GatePhase)"
+        "PID:     $($script:GatePid)"
+        "CWD:     $($script:GateCwd)"
         "LOG:     $($script:GateLiveLog)"
         "EVENTS:  $($script:GateStatusFile)"
         ''
@@ -122,29 +132,41 @@ function Start-GateWatchPopup {
     if (-not [Environment]::UserInteractive) { return }
     if ($script:GateWatchStarted) { return }
     $script:GateWatchStarted = $true
-    $status = $script:GateStatusFile
-    $nowFile = $script:GateNowFile
-    $runId = $script:GateRunId
+    $runId = [string]$script:GateRunId
+    if ($runId -notmatch '^\d+-\d{17}$') {
+        Write-Warning 'Start-GateWatchPopup: refusing invalid run id'
+        return
+    }
+    $nowFile = [string]$script:GateNowFile
+    $status = [string]$script:GateStatusFile
+    $dir = Split-Path $script:GateNowFile -Parent
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    $watchPs1 = Join-Path $dir ("gate-watch-{0}.ps1" -f $runId)
     $watcher = @"
 `$Host.UI.RawUI.WindowTitle = 'Vibe gate'
+`$nowFile = $($nowFile | ConvertTo-Json -Compress)
+`$status = $($status | ConvertTo-Json -Compress)
+`$runId = $($runId | ConvertTo-Json -Compress)
 while (`$true) {
     Clear-Host
     Write-Host 'VIBE GATE  (safe to close this window)' -ForegroundColor Cyan
-    Write-Host 'snapshot: $nowFile' -ForegroundColor DarkGray
-    Write-Host 'events:   $status  (Get-Content -Wait)' -ForegroundColor DarkGray
+    Write-Host ("snapshot: {0}" -f `$nowFile) -ForegroundColor DarkGray
+    Write-Host ("events:   {0}  (Get-Content -Wait)" -f `$status) -ForegroundColor DarkGray
     Write-Host ''
-    if (Test-Path -LiteralPath '$nowFile') {
-        Get-Content -LiteralPath '$nowFile' -ErrorAction SilentlyContinue
-    } elseif (Test-Path -LiteralPath '$status') {
-        Get-Content -LiteralPath '$status' -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath `$nowFile) {
+        Get-Content -LiteralPath `$nowFile -ErrorAction SilentlyContinue
+    } elseif (Test-Path -LiteralPath `$status) {
+        Get-Content -LiteralPath `$status -ErrorAction SilentlyContinue
     } else {
         Write-Host '(waiting for first status write...)' -ForegroundColor DarkGray
     }
     `$snap = ''
-    if (Test-Path -LiteralPath '$nowFile') {
-        `$snap = [string](Get-Content -LiteralPath '$nowFile' -Raw -ErrorAction SilentlyContinue)
+    if (Test-Path -LiteralPath `$nowFile) {
+        `$snap = [string](Get-Content -LiteralPath `$nowFile -Raw -ErrorAction SilentlyContinue)
     }
-    `$runOk = (-not '$runId') -or (`$snap -match [regex]::Escape('$runId'))
+    `$runOk = (-not `$runId) -or (`$snap -match [regex]::Escape(`$runId))
     if (`$runOk -and `$snap -match 'GATE DONE') {
         Write-Host ''
         Write-Host 'Gate finished. Window closes in 12s...' -ForegroundColor DarkGray
@@ -155,8 +177,9 @@ while (`$true) {
 }
 "@
     try {
+        Set-Content -LiteralPath $watchPs1 -Value $watcher -Encoding utf8
         Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $watcher
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchPs1
         ) -WindowStyle Normal | Out-Null
         Write-GateProgress 'opened optional desktop window (VIBE_GATE_POPUP=1)'
     } catch {
@@ -171,6 +194,8 @@ function Reset-GateLiveLog {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
     $script:GateRunId = New-GateRunId
+    $script:GatePid = $PID
+    try { $script:GateCwd = (Get-Location).Path } catch { $script:GateCwd = '' }
     $script:GateEvents = [System.Collections.Generic.List[string]]::new()
     $script:GateNow = 'starting'
     $script:GatePhase = 'init'
@@ -201,14 +226,40 @@ function Reset-GateLiveLog {
 }
 
 function Start-GateRun {
-    # Adopt a live RUN from gate-now.txt, or start a new one (replaces stale GATE DONE).
+    # Adopt a live RUN only when its PID is still alive and CWD matches this repo.
     if ($script:GateRunId) { return }
     if (Test-Path -LiteralPath $script:GateNowFile) {
-        $head = @(Get-Content -LiteralPath $script:GateNowFile -TotalCount 8 -ErrorAction SilentlyContinue)
+        $head = @(Get-Content -LiteralPath $script:GateNowFile -TotalCount 16 -ErrorAction SilentlyContinue)
         $runLine = $head | Where-Object { $_ -match '^RUN:\s+(\S+)' } | Select-Object -First 1
         $nowLine = $head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1
-        if ($runLine -and $runLine -match '^RUN:\s+(\S+)' -and $nowLine -notmatch 'GATE DONE') {
-            $script:GateRunId = $Matches[1]
+        $pidLine = $head | Where-Object { $_ -match '^PID:\s+(\d+)' } | Select-Object -First 1
+        $cwdLine = $head | Where-Object { $_ -match '^CWD:\s+(.+)$' } | Select-Object -First 1
+        $runId = $null
+        if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
+        $adoptPid = 0
+        if ($pidLine -and $pidLine -match '^PID:\s+(\d+)') {
+            $adoptPid = [int]$Matches[1]
+        } elseif ($runId -and $runId -match '^(\d+)-\d{17}$') {
+            $adoptPid = [int]$Matches[1]
+        }
+        $adoptCwd = $null
+        if ($cwdLine -and $cwdLine -match '^CWD:\s+(.+)$') { $adoptCwd = $Matches[1].Trim() }
+        $alive = $false
+        if ($adoptPid -gt 0) {
+            $alive = $null -ne (Get-Process -Id $adoptPid -ErrorAction SilentlyContinue)
+        }
+        $cwdOk = $false
+        if ($adoptCwd) {
+            try {
+                $here = [System.IO.Path]::GetFullPath((Get-Location).Path).TrimEnd('\', '/').ToLowerInvariant()
+                $there = [System.IO.Path]::GetFullPath($adoptCwd).TrimEnd('\', '/').ToLowerInvariant()
+                $cwdOk = ($here -eq $there)
+            } catch { $cwdOk = $false }
+        }
+        if ($runId -and $nowLine -notmatch 'GATE DONE' -and $alive -and $cwdOk) {
+            $script:GateRunId = $runId
+            $script:GatePid = $adoptPid
+            $script:GateCwd = $adoptCwd
             Import-GateStatusTail
             return
         }
