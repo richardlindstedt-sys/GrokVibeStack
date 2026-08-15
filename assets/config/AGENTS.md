@@ -26,6 +26,6 @@
 
 - Chat: light self-check after edits. On-edit hooks handle fast secrets/linters.
 - Full multi-reviewer + full scanner suite = **commit/push hooks** or explicit `vibe-review` — not every turn.
-- **Gate in chat:** background `git commit`/`git push`. Poll `~/.grok/vibe-tools/reports/gate-now.txt`. First line is `RUN:`. Ignore `GATE DONE` until you have seen that new RUN (or a newer start). Then report NOW. Finished only when the **NOW:** line contains `GATE DONE`. No desktop popup unless `VIBE_GATE_POPUP=1`.
+- **Gate in chat:** background commit/push. Poll `gate-now.txt` every ~15s. Speak every poll (`RUN`+`NOW`+`ELAPSED`). Never wait minutes silent on bash. Latch new `RUN:`; ignore stale `GATE DONE` until that RUN. Done when **NOW:** has `GATE DONE` on it. No popup unless `VIBE_GATE_POPUP=1`.
 - Serena MCP on by default (symbol nav). Serena **remind hooks** stay off unless opted in.
 - Launchers: `start-grok` · `vibe-review` · tools under `~/.grok/vibe-tools/`

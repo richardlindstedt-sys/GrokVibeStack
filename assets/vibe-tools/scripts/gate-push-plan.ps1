@@ -62,6 +62,7 @@ function Get-VibePushReviewPlan {
             [void]$notes.Add("delete:$($parts[2])")
             continue
         }
+        if ($localSha -notmatch '^[0-9a-fA-F]{7,64}$') { continue }
 
         if (Test-VibeTagRef $localRef) {
             if (Test-VibeVersionTagRef $localRef) {
@@ -94,19 +95,19 @@ function Get-VibePushReviewPlan {
 }
 
 function Get-VibePushTipShas {
-    # Local SHAs being pushed (not the current checkout).
+    # Local SHAs being pushed (not the current checkout). Hex only.
     param($Ranges)
     $tips = [System.Collections.Generic.List[string]]::new()
     foreach ($r in @($Ranges)) {
         if ([string]::IsNullOrWhiteSpace($r)) { continue }
         if ($r.StartsWith('NEW:') -or $r.StartsWith('TAG:')) {
             $sha = $r.Substring(4).Trim()
-            if ($sha) { [void]$tips.Add($sha) }
+            if ($sha -match '^[0-9a-fA-F]{7,64}$') { [void]$tips.Add($sha) }
             continue
         }
         if ($r -match '\.\.([^\.]+)$') {
             $sha = $Matches[1].Trim()
-            if ($sha) { [void]$tips.Add($sha) }
+            if ($sha -match '^[0-9a-fA-F]{7,64}$') { [void]$tips.Add($sha) }
         }
     }
     return @($tips | Select-Object -Unique)
@@ -129,12 +130,16 @@ function Get-TagCommitDiff {
             return $s
         }
     }
+    $Sha = "$Sha".Trim()
+    if ($Sha -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
     $commit = $null
     try { $commit = (git rev-parse --verify --quiet "$Sha^{commit}" 2>$null | Select-Object -First 1) } catch {}
-    if (-not $commit) { $commit = $Sha }
+    $commit = "$commit".Trim()
+    if ($commit -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { return $null }
     $parent = $null
     try { $parent = (git rev-parse --verify --quiet "$commit^" 2>$null | Select-Object -First 1) } catch {}
-    if ($parent -and "$parent" -notmatch '^0+$') {
+    $parent = "$parent".Trim()
+    if ($parent -and $parent -match '^[0-9a-f]{40}([0-9a-f]{24})?$' -and $parent -notmatch '^0+$') {
         return & $Flatten (git diff --no-color "$parent..$commit" 2>$null)
     }
     $root = & $Flatten (git diff-tree -p --root --no-color $commit 2>$null)

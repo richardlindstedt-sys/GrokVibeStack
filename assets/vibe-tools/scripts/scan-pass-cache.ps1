@@ -17,6 +17,7 @@ if (-not $script:ScanPassTtlSec -or $script:ScanPassTtlSec -le 0) {
 function Get-TreeHashForScanCache {
     param([string]$TreeIsh = '')
     $h = $null
+    $TreeIsh = "$TreeIsh".Trim()
     if (-not [string]::IsNullOrWhiteSpace($TreeIsh)) {
         if ($TreeIsh -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
         try { $h = (git rev-parse --verify --quiet --end-of-options "$TreeIsh^{tree}" 2>$null | Select-Object -First 1) } catch {}

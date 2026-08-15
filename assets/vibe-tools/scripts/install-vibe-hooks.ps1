@@ -100,6 +100,8 @@ echo "    LIVE:    ~/.grok/vibe-tools/reports/gate-now.txt (chat polls this)"
 echo "             ~/.grok/vibe-tools/reports/gate-status.txt (append events)"
 echo ""
 
+# Same RUN as the scan step (scan PID is already dead).
+export VIBE_GATE_INHERIT=1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/grok-ai-review.ps1" -NoScans -Profile standard -AutoProfile
 REVIEW_EXIT=$?
 

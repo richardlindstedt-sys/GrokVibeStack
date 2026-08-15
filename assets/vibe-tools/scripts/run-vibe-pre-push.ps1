@@ -55,17 +55,27 @@ function ConvertTo-SinglePatchText($raw) {
 function Get-NewBranchPushDiff([string]$Tip) {
     # Unique commits vs remotes — never cap at 20 (first push of a long branch).
     # No guessed origin/HEAD / origin/main / origin/master / checkout HEAD base.
+    $Tip = "$Tip".Trim()
     if ([string]::IsNullOrWhiteSpace($Tip)) { return $null }
     if ($Tip -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
-    $unique = @(git rev-list --not --remotes --end-of-options $Tip 2>$null | Where-Object { $_ })
+    $unique = @(
+        git rev-list --not --remotes --end-of-options $Tip 2>$null |
+            ForEach-Object { "$_".Trim() } |
+            Where-Object { $_ -match '^[0-9a-fA-F]{7,64}$' }
+    )
     if ($unique.Count -eq 0) {
-        $unique = @(git rev-list $Tip --not --remotes 2>$null | Where-Object { $_ })
+        $unique = @(
+            git rev-list $Tip --not --remotes 2>$null |
+                ForEach-Object { "$_".Trim() } |
+                Where-Object { $_ -match '^[0-9a-fA-F]{7,64}$' }
+        )
     }
     if ($unique.Count -eq 0) { return $null }
     $oldest = $unique[-1]
     $parent = $null
     try { $parent = (git rev-parse --verify --quiet "$oldest^" 2>$null | Select-Object -First 1) } catch {}
-    if ($parent -and "$parent" -notmatch '^0+$') {
+    $parent = "$parent".Trim()
+    if ($parent -and $parent -match '^[0-9a-f]{40}([0-9a-f]{24})?$' -and $parent -notmatch '^0+$') {
         $d = ConvertTo-SinglePatchText (git diff --no-color "$parent..$Tip" 2>$null)
         if ($d) { return $d }
     }
@@ -83,14 +93,14 @@ if ($ranges.Count -gt 0) {
     $labels = [System.Collections.Generic.List[string]]::new()
     $chunks = foreach ($r in $ranges) {
         if ($r.StartsWith('NEW:')) {
-            $tip = $r.Substring(4)
+            $tip = $r.Substring(4).Trim()
             [void]$labels.Add("new-branch:$tip (unique-vs-remotes)")
             $d = Get-NewBranchPushDiff $tip
             if ($d) { $d }
             continue
         }
         if ($r.StartsWith('TAG:')) {
-            $tip = $r.Substring(4)
+            $tip = $r.Substring(4).Trim()
             [void]$labels.Add("tag-commit:$tip")
             $d = Get-TagCommitDiff -Sha $tip
             if ($d) { $d }
@@ -178,7 +188,10 @@ if (-not $skipScans) {
             [void]$scanArgs.Add($tip)
             Write-Host ("Scanning push tip {0}" -f $tip) -ForegroundColor DarkCyan
         }
+        $prevChild = $env:VIBE_GATE_CHILD
+        $env:VIBE_GATE_CHILD = '1'
         $scanProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @($scanArgs.ToArray()) -Wait -PassThru -NoNewWindow
+        if ($null -eq $prevChild) { Remove-Item Env:VIBE_GATE_CHILD -ErrorAction SilentlyContinue } else { $env:VIBE_GATE_CHILD = $prevChild }
         if ($null -eq $scanProc -or $null -eq $scanProc.ExitCode) {
             Write-Host ""
             Write-Host "PRE-PUSH BLOCKED: scanner process did not start or returned no exit code." -ForegroundColor Red

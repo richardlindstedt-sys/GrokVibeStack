@@ -292,7 +292,7 @@ if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-l
 } else {
     Bad 'pre-push still caps new-branch history, guesses origin/*, or nests git string[]'
 }
-if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -match '\.vibe-wt-' -and $scanSrc -match '\.Trim\(\)' -and $scanSrc -notmatch 'Expand-Archive') {
+if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -match '\.vibe-wt-' -and $scanSrc -match '\.Trim\(\)' -and $scanSrc -match 'absolute-git-dir' -and $prePushSrc -match 'ForEach-Object \{ "\$_"\.Trim\(\) \}' -and $scanSrc -notmatch 'Expand-Archive') {
     Ok 'pre-push: scans push tip via worktree (no Expand-Archive)'
 } else {
     Bad 'pre-push still scans checkout or Expand-Archive zip'
@@ -386,8 +386,12 @@ if ($vibeHookTpl -match 'run-vibe-stop-remind\.ps1' -and $hooksInstSrc -match 'r
 }
 if ($vibeHookTpl -match 'UserPromptSubmit' -and $vibeHookTpl -match 'run-vibe-prompt-context\.ps1' -and $hooksInstSrc -match 'run-vibe-prompt-context\.ps1' -and $onEditSrc -match 'on-edit-findings\.json') {
     Ok 'on-edit findings -> UserPromptSubmit additionalContext'
+}
+$promptCtx = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-prompt-context.ps1') -Raw
+if ($promptCtx -match 'GATE LIVE' -and $promptCtx -match 'gate-now\.txt' -and $progSrc -match 'VibeGateNowWrite' -and $progSrc -match 'VIBE_GATE_CHILD' -and $prePushSrc -match 'VIBE_GATE_CHILD' -and $hooksInstSrc -match 'VIBE_GATE_INHERIT') {
+    Ok 'gate chat stream: mutex + child/inherit RUN + prompt inject'
 } else {
-    Bad 'missing UserPromptSubmit / on-edit-findings wiring'
+    Bad 'gate chat stream still torn / no prompt inject'
 }
 if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {
     Ok 'review: schema cache + intent/blast + token estimate + worktree fixer'
@@ -582,6 +586,11 @@ if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoPr
     Ok 'pre-push wires plan profile + AutoProfile + Scope Full/cache'
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
+}
+if ($planSrc -match 'function Get-VibePushTipShas' -and $planSrc -match '\[0-9a-fA-F\]\{7,64\}' -and $prePushPs1 -match 'Where-Object \{ \$_ -match ''\^\[0-9a-fA-F\]\{7,64\}\$'' \}') {
+    Ok 'push tips: hex allowlist on NEW/TAG/range + rev-list'
+} else {
+    Bad 'push tips still accept non-hex on rev-list or Get-VibePushTipShas'
 }
 if ($prePushPs1 -match 'refusing a guessed' -and $prePushPs1 -notmatch 'origin/HEAD\.\.\.HEAD' -and $prePushPs1 -match '\$plan\.HasRefLines' -and $prePushPs1 -match '\$hasRefLines' -and $prePushPs1 -notmatch '\$ranges\.Count -eq 0 -and -not \$onlyDeletes' -and $planSrc -match 'HasRefLines') {
     Ok 'pre-push: empty stdin fail-closed (no guessed diff); empty ranges not treated as no-stdin'

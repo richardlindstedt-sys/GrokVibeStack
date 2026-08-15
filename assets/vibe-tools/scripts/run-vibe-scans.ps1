@@ -91,6 +91,7 @@ function Get-VibeSameVolumeTempDir {
 
 function New-CommitScanTree {
     param([string]$TreeIsh)
+    $TreeIsh = "$TreeIsh".Trim()
     if ([string]::IsNullOrWhiteSpace($TreeIsh)) { return $null }
     if ($TreeIsh -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
     $sha = $null
@@ -99,12 +100,25 @@ function New-CommitScanTree {
         try { $sha = (git rev-parse --verify --quiet "$TreeIsh^{commit}" 2>$null | Select-Object -First 1) } catch {}
     }
     $sha = "$sha".Trim()
-    # 40-hex SHA-1 or 64-hex SHA-256. Trim CR from Windows git stdout.
+    # 40-hex SHA-1 or 64-hex SHA-256. Trim CR from Windows git stdout before the hex check.
     if ($sha -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { return $null }
     # Worktree cannot live inside the git dir. Same volume as the repo, sibling folder.
     $parent = Split-Path $root -Parent
     if ([string]::IsNullOrWhiteSpace($parent)) { $parent = $root }
     $tmp = Join-Path $parent ('.vibe-wt-' + [guid]::NewGuid().ToString('n').Substring(0, 10))
+    $gitAbs = $null
+    try { $gitAbs = (git rev-parse --absolute-git-dir 2>$null | Select-Object -First 1) } catch {}
+    $gitAbs = "$gitAbs".Trim()
+    if ($gitAbs) {
+        try {
+            $tmpFull = [System.IO.Path]::GetFullPath($tmp)
+            $gitFull = [System.IO.Path]::GetFullPath($gitAbs)
+            $gitPrefix = $gitFull.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+            if ($tmpFull.StartsWith($gitPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $null
+            }
+        } catch { return $null }
+    }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {

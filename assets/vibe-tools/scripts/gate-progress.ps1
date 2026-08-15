@@ -47,19 +47,35 @@ function Write-GateFileRetry {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
+    $clean = foreach ($ln in @($Lines)) {
+        ("$ln" -replace '[\r\n]+', ' ').TrimEnd()
+    }
+    $mutex = $null
+    $owned = $false
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, 'Local\VibeGateNowWrite')
+        $owned = $mutex.WaitOne(2000)
+    } catch { $owned = $false }
     $last = $null
-    for ($i = 1; $i -le $Tries; $i++) {
-        try {
-            if ($Append) {
-                [System.IO.File]::AppendAllLines($Path, [string[]]$Lines, $utf8)
-            } else {
-                [System.IO.File]::WriteAllLines($Path, [string[]]$Lines, $utf8)
+    try {
+        for ($i = 1; $i -le $Tries; $i++) {
+            try {
+                if ($Append) {
+                    [System.IO.File]::AppendAllLines($Path, [string[]]$clean, $utf8)
+                } else {
+                    [System.IO.File]::WriteAllLines($Path, [string[]]$clean, $utf8)
+                }
+                return
+            } catch {
+                $last = $_
+                Start-Sleep -Milliseconds (40 * $i)
             }
-            return
-        } catch {
-            $last = $_
-            Start-Sleep -Milliseconds (40 * $i)
         }
+    } finally {
+        if ($owned -and $mutex) {
+            try { $mutex.ReleaseMutex() } catch {}
+        }
+        if ($mutex) { $mutex.Dispose() }
     }
     $msg = 'GATE STATUS WRITE FAILED ({0}): {1}' -f $Path, $last
     try { [Console]::Error.WriteLine($msg) } catch {}
@@ -227,7 +243,9 @@ function Reset-GateLiveLog {
 
 function Start-GateRun {
     # Adopt a live RUN only when its PID is still alive and CWD matches this repo.
+    # Child scan processes must never reset the parent's RUN (that tears gate-now.txt).
     if ($script:GateRunId) { return }
+    $child = ($env:VIBE_GATE_CHILD -eq '1')
     if (Test-Path -LiteralPath $script:GateNowFile) {
         $head = @(Get-Content -LiteralPath $script:GateNowFile -TotalCount 16 -ErrorAction SilentlyContinue)
         $runLine = $head | Where-Object { $_ -match '^RUN:\s+(\S+)' } | Select-Object -First 1
@@ -256,14 +274,16 @@ function Start-GateRun {
                 $cwdOk = ($here -eq $there)
             } catch { $cwdOk = $false }
         }
-        if ($runId -and $nowLine -notmatch 'GATE DONE' -and $alive -and $cwdOk) {
+        $inherit = ($env:VIBE_GATE_INHERIT -eq '1')
+        if ($runId -and $nowLine -notmatch 'GATE DONE' -and $cwdOk -and ($child -or $alive -or $inherit)) {
             $script:GateRunId = $runId
-            $script:GatePid = $adoptPid
-            $script:GateCwd = $adoptCwd
+            if ($adoptPid -gt 0) { $script:GatePid = $adoptPid }
+            if ($adoptCwd) { $script:GateCwd = $adoptCwd }
             Import-GateStatusTail
             return
         }
     }
+    if ($child) { return }
     Reset-GateLiveLog
 }
 
