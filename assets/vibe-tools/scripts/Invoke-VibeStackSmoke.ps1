@@ -297,10 +297,10 @@ if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item 
     Bad 'staged scan still Copy-Item worktree fallback'
 }
 $progSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-progress.ps1') -Raw
-if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gate\.log' -and $progSrc -match 'function Wait-VibeJobs' -and $rawReview -match 'Wait-VibeJobs' -and $prePushSrc -match 'gate-progress\.ps1') {
-    Ok 'gate progress: live-gate.log + job heartbeats wired'
+if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gate\.log' -and $progSrc -match 'gate-status\.txt' -and $progSrc -match 'AppendAllLines' -and $progSrc -match 'gate-now\.txt' -and $progSrc -match 'function Write-GateDone' -and $progSrc -match 'Start-GateWatchPopup' -and $progSrc -match 'function Wait-VibeJobs' -and $progSrc -match 'function Start-GateRun' -and $progSrc -match 'RUN:' -and $progSrc -notmatch 'WriteAllLines\(\$script:GateStatusFile' -and $rawReview -match 'Wait-VibeJobs' -and $rawReview -match 'Write-GateDone' -and $rawReview -match 'Write-GateFail' -and $rawReview -match 'Start-GateRun' -and $scanSrc -match 'Write-GateDone' -and $scanSrc -match 'Start-GateRun' -and $prePushSrc -match 'gate-progress\.ps1') {
+    Ok 'gate progress: RUN token + append-only status + recap + opt-in popup + heartbeats'
 } else {
-    Bad 'gate-progress.ps1 missing or not wired into review/pre-push'
+    Bad 'gate-progress.ps1 missing RUN token / append-only status / recap / popup or not wired'
 }
 $rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {

@@ -24,4 +24,6 @@ Ship solid code. Prefer quality at the **commit gate**; keep chat light.
 | `git push` | pre-push: scans + fast AI (security role if sensitive paths) |
 | Explicit | `vibe-review` / `grok-ai-review.ps1 -Profile standard\|strict\|fast` |
 
+**Watch the gate in chat.** Background `git commit` / `git push`. Poll `~/.grok/vibe-tools/reports/gate-now.txt` every ~15s. First line is `RUN:`. Ignore `GATE DONE` until you have seen that new RUN (stale leftover from the last gate). Then report NOW. Finished only when the **NOW:** line contains `GATE DONE` (not EVENTS). Do not open a desktop window unless they set `VIBE_GATE_POPUP=1`.
+
 Deep workflow, scanner list, hook install: skill **vibe-coding** (`/vibe-coding` or skill load).

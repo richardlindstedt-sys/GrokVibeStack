@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-15
+
+### Added
+
+- Gate live story in chat: agent polls `gate-now.txt` while commit/push runs. First line is `RUN:` so pollers ignore stale `GATE DONE`. Append-only `gate-status.txt` for `-Wait` (reset appends a banner, does not truncate). Reviewer votes, scan start/end, fixer recap, `GATE DONE` on pass and fail. Desktop window opt-in only (`VIBE_GATE_POPUP=1`)
+
 ## [1.2.0] - 2026-08-15
 
 ### Added

@@ -28,7 +28,10 @@ $script:ScanExcludeRegex = '(\\node_modules\\|\\\.git\\|\\\.serena\\|\\venv\\|\\
 # Shared Full-only scan-pass cache (Save/Test/Get-TreeHash)
 . (Join-Path $PSScriptRoot 'scan-pass-cache.ps1')
 $progressPs1 = Join-Path $PSScriptRoot 'gate-progress.ps1'
-if (Test-Path -LiteralPath $progressPs1) { . $progressPs1 }
+if (Test-Path -LiteralPath $progressPs1) {
+    . $progressPs1
+    if (Get-Command Start-GateRun -ErrorAction SilentlyContinue) { Start-GateRun }
+}
 
 # Ensure vibe scanner bins + common tooling are visible even if shell PATH is stale.
 foreach ($p in @(
@@ -227,6 +230,9 @@ function Run {
         return
     }
     if (-not $Quiet) { Write-Host "`n[$name] $cmd $cmdArgs" -ForegroundColor Cyan }
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("scan: {0}..." -f $name) -Now ("Scanning: $name") -Phase 'scans'
+    }
     & $cmd @cmdArgs 2>&1 | ForEach-Object {
         if (-not $Quiet) { $_ }
     }
@@ -234,10 +240,18 @@ function Run {
         if ($Advisory) {
             $script:advisory++
             if (-not $Quiet) { Write-Host "[$name] exited $LASTEXITCODE (advisory)" -ForegroundColor DarkYellow }
+            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("scan: {0} advisory exit {1}" -f $name, $LASTEXITCODE)
+            }
         } else {
             $script:failed++
             if (-not $Quiet) { Write-Host "[$name] exited $LASTEXITCODE" -ForegroundColor Yellow }
+            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("scan: {0} FAILED exit {1}" -f $name, $LASTEXITCODE)
+            }
         }
+    } elseif (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("scan: {0} ok" -f $name)
     }
 }
 
@@ -313,7 +327,8 @@ function Run-Pester {
 Write-Host "=== Vibe Static Scans ===" -ForegroundColor Cyan
 Write-Host "Scanning: $($Paths -join ', ')  scope=$Scope"
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-    Write-GateProgress ("scans start scope={0} paths={1}" -f $Scope, ($Paths -join ','))
+    Write-GateProgress ("scans start scope={0} paths={1}" -f $Scope, ($Paths -join ',')) `
+        -Now ("Static scans starting (scope $Scope)") -Phase 'scans'
 }
 
 $stagedNames = @(Get-StagedNameList)
@@ -640,6 +655,11 @@ if ($advisory -gt 0 -and -not $Quiet) {
 }
 if ($failed -gt 0) {
     Write-Host "Scans completed with $failed critical non-zero result(s) (check output above)." -ForegroundColor Yellow
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        Write-GateDone -Summary ("scans BLOCKED: {0} critical" -f $failed)
+    } elseif (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("scans BLOCKED: {0} critical" -f $failed) -Now ("Scans blocked ($failed critical)")
+    }
     exit 1
 }
 
@@ -647,5 +667,9 @@ if ($failed -gt 0) {
 $th = Get-TreeHashForScanCache
 if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
 if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
+if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+    Write-GateProgress ("scans passed ({0} advisory)" -f $advisory) `
+        -Now ("Scans passed ({0} advisory, 0 critical)" -f $advisory)
+}
 # Explicit 0: advisory tools leave $LASTEXITCODE non-zero; callers check it after &.
 exit 0

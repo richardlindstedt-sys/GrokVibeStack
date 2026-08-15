@@ -17,6 +17,9 @@ $pushPlanPs1 = Join-Path $vibeScripts 'gate-push-plan.ps1'
 if (Test-Path -LiteralPath $progressPs1) { . $progressPs1; Reset-GateLiveLog }
 if (-not (Test-Path -LiteralPath $pushPlanPs1)) {
     Write-Host "PRE-PUSH BLOCKED: missing gate-push-plan.ps1" -ForegroundColor Red
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        Write-GateDone -Summary 'missing gate-push-plan.ps1'
+    }
     exit 1
 }
 . $pushPlanPs1
@@ -135,6 +138,9 @@ if (-not $skipScans) {
         Write-Host ""
         Write-Host "PRE-PUSH BLOCKED: scanner process did not start or returned no exit code." -ForegroundColor Red
         Write-Host "Fix the environment, or emergency: git push --no-verify" -ForegroundColor Yellow
+        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+            Write-GateDone -Summary 'scanner process did not start'
+        }
         exit 1
     }
     $scanEc = [int]$scanProc.ExitCode
@@ -142,6 +148,11 @@ if (-not $skipScans) {
         Write-Host ""
         Write-Host "PRE-PUSH BLOCKED: critical static findings." -ForegroundColor Red
         Write-Host "Fix issues above, or emergency: git push --no-verify" -ForegroundColor Yellow
+        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+            if ("$script:GateNow" -notmatch 'GATE DONE') {
+                Write-GateDone -Summary ("scans exit {0}" -f $scanEc)
+            }
+        }
         exit 1
     }
     # Start-Process does not update $LASTEXITCODE; clear stale codes before review.
@@ -165,6 +176,11 @@ try {
 } catch {
     Write-Host ""
     Write-Host ("PRE-PUSH BLOCKED: AI review failed to start: {0}" -f $_) -ForegroundColor Red
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        if ("$script:GateNow" -notmatch 'GATE DONE') {
+            Write-GateDone -Summary ("review failed to start: {0}" -f $_)
+        }
+    }
     exit 1
 }
 
@@ -174,6 +190,11 @@ if ($reviewEc -ne 0) {
     Write-Host ""
     Write-Host "PRE-PUSH BLOCKED: Grok returned BLOCK (or review failed)." -ForegroundColor Red
     Write-Host "Fix issues, or emergency: git push --no-verify" -ForegroundColor Yellow
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        if ("$script:GateNow" -notmatch 'GATE DONE') {
+            Write-GateDone -Summary ("review exit {0}" -f $reviewEc)
+        }
+    }
     exit 1
 }
 

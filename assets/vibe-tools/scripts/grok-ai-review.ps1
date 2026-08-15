@@ -291,13 +291,21 @@ function Write-GateFail([string]$msg) {
     Write-Host ""
     Write-Host "[GATE FAIL] $msg" -ForegroundColor Red
     Write-Host "Commit/push blocked. Emergency only: git commit|push --no-verify" -ForegroundColor DarkGray
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("FAIL: {0}" -f $msg) -Now ("Blocked: $msg") -Phase 'fail'
+    }
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        if ("$script:GateNow" -notmatch 'GATE DONE') {
+            Write-GateDone -Summary $msg
+        }
+    }
 }
 
 function Write-Phase([string]$msg) {
     Write-Host ""
     Write-Host $msg -ForegroundColor Yellow
     if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-        Write-GateProgress $msg
+        Write-GateProgress $msg -Now $msg -Phase $msg
     }
 }
 
@@ -1081,6 +1089,14 @@ function Invoke-ReviewerPanel {
         $voteStr = "$($obj.vote)"
         $fc = @($obj.findings).Count
         Write-Host ("    vote={0} findings={1}" -f $voteStr, $fc) -ForegroundColor Gray
+        $titles = @($obj.findings | ForEach-Object {
+            if ($_.title) { [string]$_.title } elseif ($_.id) { [string]$_.id } else { $null }
+        } | Where-Object { $_ } | Select-Object -First 4)
+        $titleBit = if ($titles.Count -gt 0) { ' - ' + ($titles -join '; ') } else { '' }
+        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+            Write-GateProgress ("{0}: {1} ({2} finding(s)){3}" -f $role, $voteStr, $fc, $titleBit) `
+                -Now ("{0} finished: {1} ({2} finding(s))" -f $role, $voteStr, $fc)
+        }
     }
 
     if ($fail.Count -gt 0) {
@@ -1225,6 +1241,11 @@ function Invoke-Fixer {
     Save-Text $pf (New-FixerPrompt -DiffText $DiffText -BlockersJson $bjson -Round $Round)
     Save-Text (Join-Path $RoundDir 'blockers.json') $bjson
 
+    $titles = @($Blockers | ForEach-Object { if ($_.title) { $_.title } else { $_.id } } | Where-Object { $_ })
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("fixer starting ({0} blocker(s)): {1}" -f @($Blockers).Count, ($titles -join '; ')) `
+            -Now ("Auto-fixing {0} blocker(s)..." -f @($Blockers).Count) -Phase 'fixer'
+    }
     $wt = $null
     $before = $null
     if (Get-Command New-FixerWorktree -ErrorAction SilentlyContinue) {
@@ -1242,6 +1263,9 @@ function Invoke-Fixer {
         if ($wt) {
             $copied = @(Copy-FixerWorktreeBack -Worktree $wt -BeforeHashes $before)
             Write-Host ('  fixer copied {0} file(s) back from worktree' -f $copied.Count) -ForegroundColor DarkCyan
+            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("fixer copied {0} file(s) back" -f $copied.Count)
+            }
         }
         return $r
     } finally {
@@ -1331,6 +1355,16 @@ function Write-ArbiterSummary($arb) {
     $as = @()
     if ($arb.Result -and $arb.Result.advisories) { $as = @($arb.Result.advisories) }
     Write-Host "Blockers: $($bs.Count)  Advisories: $($as.Count)" -ForegroundColor Cyan
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        $arbNow = 'Arbiter: {0} - {1} blocker(s), {2} advisory(ies)' -f $arb.Verdict, $bs.Count, $as.Count
+        Write-GateProgress ('arbiter {0}: {1} blocker(s), {2} advisory(ies)' -f $arb.Verdict, $bs.Count, $as.Count) -Now $arbNow -Phase 'arbiter'
+        foreach ($b in $bs) {
+            Write-GateProgress ("  BLOCKER $($b.id) $($b.title)")
+        }
+        foreach ($a in @($as | Select-Object -First 6)) {
+            Write-GateProgress ("  advisory $($a.id) $($a.title)")
+        }
+    }
     foreach ($b in $bs) {
         $loc = @($b.file, $b.line) -ne $null -join ':'
         Write-Host "  [BLOCKER] $($b.id) $loc - $($b.title)" -ForegroundColor Red
@@ -1357,6 +1391,15 @@ function Exit-Gate {
     }
     $script:GateRun.passed = ($Code -eq 0)
     if (-not $script:GateRun.verdict -and $Code -eq 0) { $script:GateRun.verdict = 'APPROVE' }
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        if ("$script:GateNow" -notmatch 'GATE DONE') {
+            if ($Code -eq 0) {
+                Write-GateDone -Passed -Summary $(if ($script:GateRun.verdict) { $script:GateRun.verdict } else { 'ok' })
+            } else {
+                Write-GateDone -Summary $(if ($Reason) { $Reason } else { 'blocked' })
+            }
+        }
+    }
     $rd = Write-GateReport -Run $script:GateRun -ExitCode $Code
     if ($Code -eq 0 -and $script:GateRun.diffHash -and -not $script:GateRun.cacheHit) {
         Save-GatePassCache -DiffHash $script:GateRun.diffHash -ProfileName $script:ResolvedProfile.Name `
@@ -1367,10 +1410,16 @@ function Exit-Gate {
 
 $script:overallSw = [System.Diagnostics.Stopwatch]::StartNew()
 
-if (Get-Command Reset-GateLiveLog -ErrorAction SilentlyContinue) { Reset-GateLiveLog }
+if ($NoScans) {
+    if (Get-Command Start-GateRun -ErrorAction SilentlyContinue) { Start-GateRun }
+} elseif (Get-Command Reset-GateLiveLog -ErrorAction SilentlyContinue) {
+    Reset-GateLiveLog
+}
 Write-Host "=== VIBE MULTI-REVIEWER QUALITY LOOP ===" -ForegroundColor Cyan
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-    Write-GateProgress ("profile={0} roles={1}" -f $script:ResolvedProfile.Name, ($script:ResolvedProfile.Roles -join ','))
+    Write-GateProgress ("profile={0} roles={1}" -f $script:ResolvedProfile.Name, ($script:ResolvedProfile.Roles -join ',')) `
+        -Now ("AI review starting (profile {0})" -f $script:ResolvedProfile.Name) -Phase 'review'
+    Write-GateProgress 'Watch live: Get-Content ~/.grok/vibe-tools/reports/gate-status.txt -Wait'
 }
 Write-Host ("Profile: {0} - {1}" -f $script:ResolvedProfile.Name, $script:ResolvedProfile.Description) -ForegroundColor DarkCyan
 Write-Host ("Roles: {0}" -f ($script:ResolvedProfile.Roles -join ', ')) -ForegroundColor DarkCyan
@@ -1387,7 +1436,7 @@ if (-not $NoScans) {
         Exit-Gate -Code 1 -Reason "static scans exit $LASTEXITCODE"
     }
 } else {
-    Write-Phase "Phase 0: Static scans SKIPPED (-NoScans)"
+    Write-Phase "Phase 0: static scans already ran in hook step 1 (not re-running)"
 }
 
 Write-Phase "Phase 1: Preflight"
@@ -1434,6 +1483,9 @@ if ($cached) {
     Write-Host (" GATE CACHE HIT - {0} (same diff+profile already passed)" -f $cached.verdict) -ForegroundColor Green
     Write-Host (" prior report: {0}" -f $cached.reportDir) -ForegroundColor DarkGray
     Write-Host "============================================================" -ForegroundColor Green
+    if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+        Write-GateDone -Passed -Summary ("cache hit ({0})" -f $cached.verdict)
+    }
     Exit-Gate -Code 0
 }
 
@@ -1522,6 +1574,12 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
             Write-Host "Advisories remain (non-blocking). Consider follow-ups." -ForegroundColor Yellow
         }
         Write-Host "Artifacts: $WorkDir" -ForegroundColor DarkGray
+        $nAdv = @($arb.Result.advisories).Count
+        $nBlk = @($arb.Blockers).Count
+        $fixNote = if ($round -gt 1) { 'after auto-fix + re-review' } else { 'no auto-fix needed' }
+        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
+            Write-GateDone -Passed -Summary ("{0} in {1}s; {2} blocker(s), {3} advisory(ies); {4}" -f $arb.Verdict, $elapsed, $nBlk, $nAdv, $fixNote)
+        }
         Exit-Gate -Code 0
     }
 
@@ -1561,6 +1619,10 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     try { $priorStaged = @(git diff --cached --name-only --diff-filter=ACMRD 2>$null | Where-Object { $_ }) } catch {}
     $fix = Invoke-Fixer -GrokExe $grokExe -ModelName $useModel -DiffText $diff -Blockers $blockers -RoundDir $roundDir -Round $round -Effort $ReasoningEffort -MaxTurns $FixerMaxTurns
     Write-Host ("  fixer finished ok={0} {1}s exit={2}" -f $fix.Ok, $fix.Seconds, $fix.ExitCode) -ForegroundColor DarkCyan
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        $fixNow = if ($fix.Ok) { 'Fixer finished. Restaging + next review round...' } else { 'Fixer failed' }
+        Write-GateProgress ('fixer finished ok={0} {1}s - restaging then re-review' -f $fix.Ok, $fix.Seconds) -Now $fixNow
+    }
     $roundRec.fixerOk = [bool]$fix.Ok
     $roundRec.fixerSeconds = $fix.Seconds
     if ($fix.Text) {
@@ -1579,6 +1641,10 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     # refresh hash baseline after fix for next round cache (optional)
     $nextRound = $round + 1
     Write-Host ("  Continuing to round {0}..." -f $nextRound) -ForegroundColor Cyan
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress ("re-review round {0} after fixer" -f $nextRound) `
+            -Now ("Round {0}: re-review after auto-fix" -f $nextRound) -Phase 're-review'
+    }
 }
 
 Write-GateFail "Loop ended without pass."

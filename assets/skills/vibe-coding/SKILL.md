@@ -63,6 +63,7 @@ If `.git` exists and hooks missing `Vibe pre-`:
 - **pre-commit** — scans (staged-first) + AI (`-AutoProfile`, default base standard)
 - **pre-push** — scans (full / cache) + AI fast (version tags → strict, parent..tip)
 - **on-edit** — global PostToolUse fast checks; findings injected on next `UserPromptSubmit`
+- **watch** — poll `~/.grok/vibe-tools/reports/gate-now.txt`. Latch the new `RUN:` line; ignore `GATE DONE` until that RUN appears, then report until `GATE DONE` on it. Popup only if `VIBE_GATE_POPUP=1`.
 
 After install: if Grok was already open → `/hooks` then `r`, or restart.
 
