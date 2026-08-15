@@ -4,10 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-08-15
+
 ### Fixed
 
-- Gate chat stream: mutex around `gate-now.txt` writes (parent+child no longer tear timestamp lines); scan child cannot reset the parent RUN; pre-commit AI inherits the scan RUN after the scan PID exits; UserPromptSubmit injects a live `RUN`/`NOW`/`ELAPSED` snapshot so a user ping is not a black box
-- Push-tip scan worktree stays beside the repo (never under `.git`); trim CR from `rev-parse` before hex checks; new-branch `rev-list` keeps hex tips only
+- Gate chat stream (already on `abf625c`; this release versions it): mutex around `gate-now.txt` writes (parent+child no longer tear timestamp lines); scan child cannot reset the parent RUN; pre-commit AI inherits the scan RUN after the scan PID exits; UserPromptSubmit injects a live `RUN`/`NOW`/`ELAPSED` snapshot so a user ping is not a black box
+- Push-tip worktree and SHA hygiene (already on `ee6ef0b`; this release versions it): worktree stays beside the repo (never under `.git`); trim CR from `rev-parse` before hex checks; new-branch `rev-list` keeps hex tips only
 
 ## [1.3.2] - 2026-08-15
 
