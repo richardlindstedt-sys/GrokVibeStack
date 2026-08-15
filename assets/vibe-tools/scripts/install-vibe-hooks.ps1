@@ -219,14 +219,19 @@ if ($hookText -notmatch 'run-vibe-prompt-context\.ps1') {
     Write-Error "refusing to write vibe-coding.json without run-vibe-prompt-context.ps1"
     exit 1
 }
+if ($hookText -notmatch 'run-vibe-gate-chat\.ps1') {
+    Write-Error "refusing to write vibe-coding.json without run-vibe-gate-chat.ps1"
+    exit 1
+}
 $null = $hookText | ConvertFrom-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($vibeHookJson, $hookText, $utf8NoBom)
 Write-Host ""
 Write-Host "Installed Grok session hook: $vibeHookJson" -ForegroundColor Green
+Write-Host "  PreToolUse (poll)   -> clamp live-gate waits to 15s (run-vibe-gate-chat.ps1)" -ForegroundColor Yellow
 Write-Host "  PostToolUse (edits) -> run-vibe-on-edit.ps1 (secrets + linters + session flag)" -ForegroundColor Yellow
-Write-Host "  UserPromptSubmit    -> inject pending on-edit findings (additionalContext)" -ForegroundColor Yellow
-Write-Host "  Stop                -> remind only if edited this session (or VIBE_STOP_REMIND=1)" -ForegroundColor Yellow
+Write-Host "  UserPromptSubmit    -> inject pending on-edit findings + GATE LIVE" -ForegroundColor Yellow
+Write-Host "  Stop                -> keep turn alive while gate live; remind if edited" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "==============================================================" -ForegroundColor Yellow
 Write-Host " If Grok is already open: reload hooks once (/hooks then r)" -ForegroundColor Yellow

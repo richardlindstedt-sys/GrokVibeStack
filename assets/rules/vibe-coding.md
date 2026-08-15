@@ -24,6 +24,6 @@ Ship solid code. Prefer quality at the **commit gate**; keep chat light.
 | `git push` | pre-push: scans + fast AI (security role if sensitive paths) |
 | Explicit | `vibe-review` / `grok-ai-review.ps1 -Profile standard\|strict\|fast` |
 
-**Watch the gate in chat — never go silent.** Background `git commit` / `git push`. Do **not** wait 2–5 minutes on the bash task. Poll `gate-now.txt` every ~15s (timeout 0 or 15s). Each poll: one chat line with `RUN` + `NOW` + `ELAPSED`. Latch the new `RUN:`. Ignore stale `GATE DONE` until that RUN appears. Done only when **NOW:** contains `GATE DONE` for that RUN. UserPromptSubmit also injects a live snapshot when the user talks. No desktop popup unless `VIBE_GATE_POPUP=1`.
+**Watch the gate in chat — never go silent.** Background `git commit` / `git push`. Then start `monitor` on `watch-gate-now.ps1 -Monitor` (prints RUN/NOW/ELAPSED; wakes chat). Do **not** wait 2–5 minutes on bash. Poll `gate-now.txt` every ~15s (`timeout_ms` 0 or 15000 — live-gate PreToolUse clamps longer waits). Each poll: one chat line `RUN` + `NOW` + `ELAPSED`. Latch the new `RUN:`. Ignore stale `GATE DONE` until that RUN appears. Done only when **NOW:** contains `GATE DONE` for that RUN. Stop hook blocks a silent end while the gate is live. UserPromptSubmit injects a snapshot when the user talks. No desktop popup unless `VIBE_GATE_POPUP=1`.
 
 Deep workflow, scanner list, hook install: skill **vibe-coding** (`/vibe-coding` or skill load).

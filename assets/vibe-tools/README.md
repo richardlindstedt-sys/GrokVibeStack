@@ -108,7 +108,9 @@ install-vibe-hooks.ps1 .
 | Gate | When | What runs | Blocks? |
 |------|------|-----------|---------|
 | **On edit** | Grok `PostToolUse` after `search_replace` / write | `run-vibe-on-edit.ps1` — secrets + linters; writes `on-edit-findings.json` | No |
-| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings as `additionalContext` | No |
+| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings + GATE LIVE | No |
+| **Poll clamp** | `PreToolUse` `get_command_or_subagent_output` | Live gate: `timeout_ms` → 15000 | Rewrite |
+| **Stop keep-alive** | `Stop` | Block silent end while gate live | Keeps turn |
 | **pre-commit** | `git commit` | Full scanners + **profile=standard** on **staged** diff (intent + blast-radius) | Yes |
 | **pre-push** | `git push` | Full scanners + **fast** (version tags → **strict**, single-commit) | Yes |
 

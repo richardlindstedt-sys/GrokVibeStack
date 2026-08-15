@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.3.3** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **1.3.4** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -145,7 +145,8 @@ Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **
 | Prompt inject | Next user prompt | Pending on-edit findings as additionalContext | No |
 | **pre-commit** | `git commit` | Scanners + **profile=standard** loop on staged diff | **Yes** |
 | **pre-push** | `git push` | Scanners + **fast** (version tags → **strict**, single-commit) | **Yes** |
-| Stop reminder | Turn end | Remind if review skipped | No |
+| Stop / gate-live | Turn end | Block silent end while `gate-now` is live; remind if edited | Keeps turn |
+| Poll clamp | `get_command_or_subagent_output` | Live gate: rewrite `timeout_ms` to 15000 | Rewrite |
 
 If you run the installer inside a git repo, that repo gets hooks automatically (unless `-SkipRepoHooks`).
 

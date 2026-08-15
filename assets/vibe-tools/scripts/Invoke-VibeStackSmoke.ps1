@@ -393,6 +393,14 @@ if ($promptCtx -match 'GATE LIVE' -and $promptCtx -match 'gate-now\.txt' -and $p
 } else {
     Bad 'gate chat stream still torn / no prompt inject'
 }
+$gateChat = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-gate-chat.ps1') -Raw -ErrorAction SilentlyContinue
+$watchNow = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1') -Raw -ErrorAction SilentlyContinue
+$stopSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1') -Raw -ErrorAction SilentlyContinue
+if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -match 'Heartbeat' -and $watchNow -match 'VibeGateNowWrite' -and $progSrc -match 'Start-GateElapsedHeartbeat' -and $stopSrc -match 'lastAssistantMessage' -and $stopSrc -match "decision = 'block'" -and $vibeHookTpl -match 'run-vibe-gate-chat\.ps1' -and $hooksInstSrc -match 'run-vibe-gate-chat\.ps1') {
+    Ok 'gate no-silence: 15s poll clamp + Stop keep-alive + ELAPSED heartbeat'
+} else {
+    Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
+}
 if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {
     Ok 'review: schema cache + intent/blast + token estimate + worktree fixer'
 } else {

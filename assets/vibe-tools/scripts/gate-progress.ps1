@@ -135,6 +135,59 @@ function Add-GateStatusLine([string]$Line) {
     Write-GateFileRetry -Path $script:GateStatusFile -Lines @($Line) -Append
 }
 
+function Start-GateElapsedHeartbeat {
+    # Separate process: parent is often blocked inside grok.exe (fixer).
+    if ($env:VIBE_GATE_CHILD -eq '1') { return }
+    $dir = Split-Path $script:GateNowFile -Parent
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    $pidFile = Join-Path $dir 'gate-beat.pid'
+    if (Test-Path -LiteralPath $pidFile) {
+        $old = 0
+        try { $old = [int]((Get-Content -LiteralPath $pidFile -TotalCount 1).Trim()) } catch { $old = 0 }
+        if ($old -gt 0) {
+            $proc = Get-Process -Id $old -ErrorAction SilentlyContinue
+            if ($proc) {
+                $cmd = ''
+                try { $cmd = [string]$proc.Path + ' ' + [string]$proc.ProcessName } catch {}
+                return
+            }
+        }
+    }
+    $watch = Join-Path $PSScriptRoot 'watch-gate-now.ps1'
+    if (-not (Test-Path -LiteralPath $watch)) { return }
+    try {
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watch, '-Heartbeat'
+        ) -WindowStyle Hidden -PassThru
+        if ($p) {
+            Set-Content -LiteralPath $pidFile -Value ([string]$p.Id) -Encoding ascii
+            $script:GateBeatPid = $p.Id
+        }
+    } catch {}
+}
+
+function Stop-GateElapsedHeartbeat {
+    $dir = Split-Path $script:GateNowFile -Parent
+    $pidFile = Join-Path $dir 'gate-beat.pid'
+    $old = 0
+    if (Test-Path -LiteralPath $pidFile) {
+        try { $old = [int]((Get-Content -LiteralPath $pidFile -TotalCount 1).Trim()) } catch { $old = 0 }
+    }
+    if ($script:GateBeatPid -and $script:GateBeatPid -gt 0) { $old = [int]$script:GateBeatPid }
+    if ($old -gt 0) {
+        $proc = Get-Process -Id $old -ErrorAction SilentlyContinue
+        if ($proc -and $proc.ProcessName -match 'powershell') {
+            try { Stop-Process -Id $old -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    if (Test-Path -LiteralPath $pidFile) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    }
+    $script:GateBeatPid = $null
+}
+
 function Write-GateNow([string]$Now, [string]$Phase) {
     if ($Now) { $script:GateNow = $Now }
     if ($Phase) { $script:GatePhase = $Phase }
@@ -239,6 +292,7 @@ function Reset-GateLiveLog {
     Write-GateProgress 'live status -> ~/.grok/vibe-tools/reports/gate-status.txt (append; Get-Content -Wait)'
     Write-GateProgress 'live log    -> ~/.grok/vibe-tools/reports/live-gate.log'
     Start-GateWatchPopup
+    Start-GateElapsedHeartbeat
 }
 
 function Start-GateRun {
@@ -280,6 +334,7 @@ function Start-GateRun {
             if ($adoptPid -gt 0) { $script:GatePid = $adoptPid }
             if ($adoptCwd) { $script:GateCwd = $adoptCwd }
             Import-GateStatusTail
+            if (-not $child) { Start-GateElapsedHeartbeat }
             return
         }
     }
@@ -329,6 +384,7 @@ function Write-GateDone {
     $script:GateNow = $msg
     $script:GatePhase = if ($Passed) { 'done-pass' } else { 'done-block' }
     Write-GateProgress $msg
+    Stop-GateElapsedHeartbeat
 }
 
 function Wait-VibeJobs {

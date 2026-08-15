@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-08-15
+
+### Fixed
+
+- Gate chat no longer stays silent for minutes: PreToolUse clamps live-gate `get_command_or_subagent_output` waits to 15s; Stop hook blocks a silent end (or keeps the turn) until `GATE DONE`; ELAPSED heartbeat rewrites `gate-now.txt` every 15s while the fixer/reviewer is blocked inside `grok.exe`; `watch-gate-now.ps1 -Monitor` prints ticks for the Grok monitor tool
+
 ## [1.3.3] - 2026-08-15
 
 ### Fixed
