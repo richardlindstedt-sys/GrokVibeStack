@@ -292,7 +292,7 @@ if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-l
 } else {
     Bad 'pre-push still caps new-branch history, guesses origin/*, or nests git string[]'
 }
-if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -notmatch 'Expand-Archive') {
+if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -match '\.vibe-wt-' -and $scanSrc -match '\.Trim\(\)' -and $scanSrc -notmatch 'Expand-Archive') {
     Ok 'pre-push: scans push tip via worktree (no Expand-Archive)'
 } else {
     Bad 'pre-push still scans checkout or Expand-Archive zip'

@@ -92,16 +92,19 @@ function Get-VibeSameVolumeTempDir {
 function New-CommitScanTree {
     param([string]$TreeIsh)
     if ([string]::IsNullOrWhiteSpace($TreeIsh)) { return $null }
-    # Push tips are hex SHAs from git stdin. Reject option/path injection.
     if ($TreeIsh -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
     $sha = $null
     try { $sha = (git rev-parse --verify --quiet --end-of-options "$TreeIsh^{commit}" 2>$null | Select-Object -First 1) } catch {}
     if (-not $sha) {
         try { $sha = (git rev-parse --verify --quiet "$TreeIsh^{commit}" 2>$null | Select-Object -First 1) } catch {}
     }
-    if ("$sha" -notmatch '^[0-9a-f]{40}$') { return $null }
-    $tmpRoot = Get-VibeSameVolumeTempDir
-    $tmp = Join-Path $tmpRoot ("vibe-tip-" + [guid]::NewGuid().ToString('n').Substring(0, 10))
+    $sha = "$sha".Trim()
+    # 40-hex SHA-1 or 64-hex SHA-256. Trim CR from Windows git stdout.
+    if ($sha -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { return $null }
+    # Worktree cannot live inside the git dir. Same volume as the repo, sibling folder.
+    $parent = Split-Path $root -Parent
+    if ([string]::IsNullOrWhiteSpace($parent)) { $parent = $root }
+    $tmp = Join-Path $parent ('.vibe-wt-' + [guid]::NewGuid().ToString('n').Substring(0, 10))
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {

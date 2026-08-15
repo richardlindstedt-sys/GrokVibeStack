@@ -23,7 +23,8 @@ function Get-TreeHashForScanCache {
         if (-not $h) {
             try { $h = (git rev-parse --verify --quiet "$TreeIsh^{tree}" 2>$null | Select-Object -First 1) } catch {}
         }
-        if ($h) { return "$h".Trim() }
+        $h = "$h".Trim()
+        if ($h -match '^[0-9a-f]{40}([0-9a-f]{24})?$') { return $h }
         return $null
     }
     try { $h = (git write-tree 2>$null | Select-Object -First 1) } catch {}

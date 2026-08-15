@@ -18,7 +18,7 @@ All notable changes to this project are documented in this file.
 - Fixer worktree failure fails the gate (no in-place yolo on the main tree)
 - Gate popup uses `-File` + validated run id (no `-Command` path interpolation)
 - `Import-GateStatusTail` slices from last `==== gate start` then takes 60 lines (PS 5.1 `-Skip`+`-Last` no longer drops the current run)
-- Push-tip scan tree uses `git worktree add --detach` (no `Expand-Archive` of `git archive`; hex SHA only)
+- Push-tip scan tree uses `git worktree add --detach` outside the git dir (trimmed SHA-1/SHA-256; no `Expand-Archive`)
 
 ## [1.3.1] - 2026-08-15
 

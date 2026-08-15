@@ -56,7 +56,11 @@ function Get-NewBranchPushDiff([string]$Tip) {
     # Unique commits vs remotes — never cap at 20 (first push of a long branch).
     # No guessed origin/HEAD / origin/main / origin/master / checkout HEAD base.
     if ([string]::IsNullOrWhiteSpace($Tip)) { return $null }
-    $unique = @(git rev-list $Tip --not --remotes 2>$null | Where-Object { $_ })
+    if ($Tip -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
+    $unique = @(git rev-list --not --remotes --end-of-options $Tip 2>$null | Where-Object { $_ })
+    if ($unique.Count -eq 0) {
+        $unique = @(git rev-list $Tip --not --remotes 2>$null | Where-Object { $_ })
+    }
     if ($unique.Count -eq 0) { return $null }
     $oldest = $unique[-1]
     $parent = $null
