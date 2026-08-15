@@ -504,22 +504,16 @@ function New-VenvAndPip {
     }
 }
 
-function Remove-TomlSections {
-    param([string]$Raw, [string[]]$SectionNames)
-    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([string[]]$SectionNames), ([StringComparer]::OrdinalIgnoreCase)
-    $lines = $Raw -split "`r?`n", -1
-    $out = New-Object System.Collections.Generic.List[string]
-    $skip = $false
-    foreach ($line in $lines) {
-        if ($line -match '^\s*\[([^\]]+)\]\s*$') {
-            $skip = $set.Contains($Matches[1].Trim())
-        }
-        if (-not $skip) { [void]$out.Add($line) }
-    }
-    return ($out -join "`n")
-}
-
 function Merge-GrokConfig {
+    $tomlHelper = $null
+    foreach ($p in @(
+            (Join-Path $TokenRoot 'scripts\GrokToml.ps1'),
+            (Join-Path $Assets 'token-saving\scripts\GrokToml.ps1')
+        )) {
+        if (Test-Path -LiteralPath $p) { $tomlHelper = $p; break }
+    }
+    if (-not $tomlHelper) { throw "GrokToml.ps1 not found (deploy token-saving/scripts first)" }
+    . $tomlHelper
     $cfgPath = Join-Path $GrokHome 'config.toml'
     $snippetPath = Join-Path $Assets 'config\config-snippet.toml'
     if (-not (Test-Path -LiteralPath $snippetPath)) {
@@ -539,56 +533,35 @@ function Merge-GrokConfig {
         if (-not $serenaExe) { $serenaExe = Join-Path $LocalBin 'serena.exe' }
     }
 
-    $snippet = Get-Content -LiteralPath $snippetPath -Raw
-    $snippet = $snippet.Replace('command = "HEADROOM_MCP_CMD"', "command = '$hr'")
-    $snippet = $snippet.Replace('command = "SERENA_EXE"', "command = '$serenaExe'")
-    if (-not $serenaOn) {
-        $snippet = [regex]::Replace(
-            $snippet,
-            '(?s)(\[mcp_servers\.serena\].*?enabled = )true',
-            '${1}false',
-            1
-        )
-    }
-    $snippet = $snippet.TrimEnd() + "`n"
-
-    $begin = '# --- grok-vibe-stack managed block (begin) ---'
-    $end = '# --- grok-vibe-stack managed block (end) ---'
-    $owned = @(
-        'session', 'features', 'mcp',
-        'mcp_servers.headroom', 'mcp_servers.serena',
-        'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
-        'model."grok-4.6-direct"', 'model.grok-4.6-direct', 'models'
-    )
-
     if ($DryRun) { Write-Info "DRY merge config.toml"; return }
 
-    if (-not (Test-Path -LiteralPath $cfgPath)) {
-        Ensure-Dir $GrokHome
-        $seed = "[cli]`ninstaller = `"internal`"`n`n" + $snippet
-        [System.IO.File]::WriteAllText($cfgPath, $seed)
-        Write-Ok "Created config.toml"
-        [void]$script:Manifest.stackFiles.Add($cfgPath)
+    Ensure-Dir $GrokHome
+    $existed = Test-Path -LiteralPath $cfgPath
+    $raw = ''
+    if ($existed) {
+        $bak = "$cfgPath.vibe-bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Copy-Item -LiteralPath $cfgPath -Destination $bak -Force
+        $script:Manifest.configBackup = $bak
+        Write-Info "Config backup: $bak"
+        $raw = Get-Content -LiteralPath $cfgPath -Raw
+    } else {
+        $raw = "[cli]`ninstaller = `"internal`"`n"
+    }
+
+    $snippet = Get-VibeManagedSnippet -SnippetPath $snippetPath -HeadroomCmd $hr -SerenaExe $serenaExe -SerenaEnabled $serenaOn
+    $newRaw = Merge-VibeToml -Raw $raw -Snippet $snippet
+    $check = Test-VibeToml -Raw $newRaw
+    if (-not $check.Ok) {
+        Write-Fail ("config.toml merge invalid: {0}" -f ($check.Errors -join '; '))
         return
     }
-
-    $bak = "$cfgPath.vibe-bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    Copy-Item -LiteralPath $cfgPath -Destination $bak -Force
-    $script:Manifest.configBackup = $bak
-    Write-Info "Config backup: $bak"
-
-    $raw = Get-Content -LiteralPath $cfgPath -Raw
-    # Drop any prior managed block, then strip owned sections left outside it
-    # (orphans from older installs / UI edits cause duplicate-key TOML parse failures).
-    if ($raw.Contains($begin)) {
-        $pattern = '(?s)' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-        $raw = [regex]::Replace($raw, $pattern, '').TrimEnd()
+    Write-Utf8NoBomFile -Path $cfgPath -Content $newRaw
+    if ($existed) {
+        Write-Ok "Merged vibe stack into config.toml"
+    } else {
+        Write-Ok "Created config.toml"
+        [void]$script:Manifest.stackFiles.Add($cfgPath)
     }
-    $stripped = Remove-TomlSections -Raw $raw -SectionNames $owned
-    $newRaw = $stripped.TrimEnd() + "`n`n" + $snippet
-    if (-not $newRaw.EndsWith("`n")) { $newRaw += "`n" }
-    [System.IO.File]::WriteAllText($cfgPath, $newRaw)
-    Write-Ok "Merged vibe stack into config.toml"
 }
 
 function Write-Utf8NoBomFile([string]$Path, [string]$Content) {
@@ -964,6 +937,8 @@ function Test-StackHealth {
         @{ Name = 'token-saving hook'; Path = (Join-Path $GrokHome 'hooks\token-saving.json') },
         @{ Name = 'vibe-coding hook'; Path = (Join-Path $GrokHome 'hooks\vibe-coding.json') },
         @{ Name = 'config.toml'; Path = (Join-Path $GrokHome 'config.toml') },
+        @{ Name = 'GrokToml.ps1'; Path = (Join-Path $TokenRoot 'scripts\GrokToml.ps1') },
+        @{ Name = 'config-snippet.toml'; Path = (Join-Path $TokenRoot 'config-snippet.toml') },
         @{ Name = 'manifest'; Path = $ManifestPath }
     )
     $bad = 0
@@ -987,6 +962,24 @@ function Test-StackHealth {
     } else {
         Write-Fail "check serena missing or not runnable"
         $bad++
+    }
+    $cfgHealth = Join-Path $GrokHome 'config.toml'
+    $tomlHelper = Join-Path $TokenRoot 'scripts\GrokToml.ps1'
+    if ((Test-Path -LiteralPath $cfgHealth) -and (Test-Path -LiteralPath $tomlHelper)) {
+        try {
+            . $tomlHelper
+            $cfgRaw = Get-Content -LiteralPath $cfgHealth -Raw
+            $cfgCheck = Test-VibeToml -Raw $cfgRaw
+            if ($cfgCheck.Ok) {
+                Write-Ok "check config.toml parse (Headroom override present, no duplicate tables)"
+            } else {
+                Write-Fail ("check config.toml: {0}" -f ($cfgCheck.Errors -join '; '))
+                $bad++
+            }
+        } catch {
+            Write-Fail "check config.toml: $_"
+            $bad++
+        }
     }
     return ($bad -eq 0)
 }
@@ -1044,6 +1037,7 @@ if (-not $DryRun) {
     }
     Copy-Item (Join-Path $Assets 'config\AGENTS.md') (Join-Path $GrokHome 'AGENTS.md') -Force
     Copy-Item (Join-Path $Assets 'config\RTK.md') (Join-Path $GrokHome 'RTK.md') -Force
+    Copy-Item (Join-Path $Assets 'config\config-snippet.toml') (Join-Path $TokenRoot 'config-snippet.toml') -Force
     # portable mcp launcher
     $mcpCmd = @"
 @echo off

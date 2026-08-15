@@ -45,6 +45,8 @@ $ProxyFpFile   = Join-Path $StateDir 'headroom-proxy.fingerprint'
 $ProxyLog      = Join-Path $LogDir 'headroom-proxy.log'
 $ProxyErrLog   = Join-Path $LogDir 'headroom-proxy.err.log'
 $CavemanFlag   = Join-Path $GrokHome '.caveman-active'
+$GrokTomlPs1   = Join-Path $TokenRoot 'scripts\GrokToml.ps1'
+if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
 $XaiUpstream   = if ($env:OPENAI_TARGET_API_URL) { $env:OPENAI_TARGET_API_URL } else { 'https://api.x.ai/v1' }
 # Bump when stack CLI flags change so stale proxies restart
 $ProxyStackFingerprint = 'v1|mode=token|ratio=0.35|lossless|code-aware|intercept|read-maturation|no-ccr'
@@ -286,6 +288,19 @@ function Show-Status {
     Write-Host "proxy fp:     $fpRaw"
     Write-Host "proxy expect: $(Get-ExpectedProxyFingerprint)"
     Write-Host "proxy log:    $ProxyLog"
+    $cfgPath = Join-Path $GrokHome 'config.toml'
+    $cfgLine = 'config.toml missing (plain grok; run start-grok to repair or re-install)'
+    if ((Test-Path -LiteralPath $cfgPath) -and (Test-GrokTomlHelperLoaded)) {
+        $cfgCheck = Test-VibeToml -Raw (Get-Content -LiteralPath $cfgPath -Raw)
+        if ($cfgCheck.Ok) {
+            $cfgLine = 'ok (quoted grok-4.6 -> Headroom :8787, no duplicate tables)'
+        } else {
+            $cfgLine = ('INVALID: {0}' -f ($cfgCheck.Errors -join '; '))
+        }
+    } elseif (Test-Path -LiteralPath $cfgPath) {
+        $cfgLine = 'present (GrokToml.ps1 missing; cannot validate)'
+    }
+    Write-Host "config.toml:  $cfgLine"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
     Write-Host "model:        grok-4.6 (Headroom override) -> http://127.0.0.1:$Port/v1"
     Write-Host "proxy flags:  MAX savings profile (token + lossless + code-aware + intercept + ratio 0.35)"
@@ -414,6 +429,37 @@ function Resolve-GrokExe {
     throw "grok.exe not found. Expected $GrokExe or grok on PATH."
 }
 
+function Test-GrokTomlHelperLoaded {
+    return [bool](Get-Command Test-VibeToml -ErrorAction SilentlyContinue)
+}
+
+function Assert-GrokConfig {
+    $cfg = Join-Path $GrokHome 'config.toml'
+    if (-not (Test-GrokTomlHelperLoaded)) {
+        Write-Warn "GrokToml.ps1 missing — cannot preflight config.toml"
+        return
+    }
+    $raw = ''
+    if (Test-Path -LiteralPath $cfg) {
+        $raw = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    }
+    $check = if ($raw) { Test-VibeToml -Raw $raw } else {
+        @{ Ok = $false; Errors = @('config.toml missing'); Duplicates = @(); HasHeadroomOverride = $false }
+    }
+    if ($check.Ok) { return }
+
+    Write-Warn ("config.toml needs repair: {0}" -f ($check.Errors -join '; '))
+    $snippet = Get-VibeConfigSnippetPath -TokenRoot $TokenRoot
+    if (-not $snippet) {
+        throw "config.toml is invalid and no config-snippet.toml is installed. Re-run Install-GrokVibeStack.ps1 (do not run plain grok)."
+    }
+    $hr = Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'
+    $serena = Join-Path $env:USERPROFILE '.local\bin\serena.exe'
+    $serenaOn = Test-Path -LiteralPath $serena
+    $null = Repair-GrokConfigFile -ConfigPath $cfg -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn -BackupSuffix ("startgrok-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    Write-Ok "Repaired ~/.grok/config.toml (Headroom override restored). Backup next to the file."
+}
+
 # --- main ---
 Ensure-Dirs
 Ensure-Path
@@ -429,6 +475,8 @@ Write-Info "Caveman level: $cavemanLevel (rules + skills auto-load)"
 Write-Info "RTK:           $(if ($rtkVer) { $rtkVer } else { 'not found — shell compression limited' })"
 Write-Info "Token rules:   ~/.grok/rules/token-efficiency.md + rtk.md"
 Write-Info "Headroom MCP:  on by default in config (optional off: [mcp_servers.headroom] enabled = false)"
+
+Assert-GrokConfig
 
 if (-not $NoProxy) {
     Start-HeadroomProxyIfNeeded

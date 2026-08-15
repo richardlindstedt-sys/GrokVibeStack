@@ -310,6 +310,21 @@ if (Test-Path -LiteralPath $cfg) {
     Write-Host ""
     Write-Host "--- config.toml ---" -ForegroundColor Cyan
     $cfgTxt = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    $tomlHelper = Join-Path $grokHome 'token-saving\scripts\GrokToml.ps1'
+    if (Test-Path -LiteralPath $tomlHelper) {
+        try {
+            . $tomlHelper
+            $cfgCheck = Test-VibeToml -Raw ([string]$cfgTxt)
+            if ($cfgCheck.Ok) {
+                Write-Host '  parse: ok (Headroom grok-4.6 override, no duplicate tables)' -ForegroundColor Green
+            } else {
+                Write-Host ('  ERROR: {0}' -f ($cfgCheck.Errors -join '; ')) -ForegroundColor Red
+                Write-Host '        start-grok auto-repairs this; or re-run Install-GrokVibeStack.ps1' -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "  WARN: config check failed: $_" -ForegroundColor Yellow
+        }
+    }
     if ($cfgTxt -match 'permission_mode\s*=\s*"always-approve"') {
         Write-Host '  WARN: permission_mode=always-approve (tools auto-run without prompts).' -ForegroundColor Yellow
         Write-Host '        Not set by vibe stack. Change via /settings if undesired.' -ForegroundColor Yellow

@@ -86,6 +86,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\GrokToml.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\vibe-review.ps1')
@@ -443,6 +444,65 @@ if ($snip -match 'Optional off' -and $snip -match 'enabled = true') {
     Ok 'config: Headroom MCP default on, optional off documented'
 } else {
     Bad 'config-snippet missing Headroom MCP optional-off docs'
+}
+$tomlHelper = Join-Path $RepoRoot 'assets\token-saving\scripts\GrokToml.ps1'
+if (Test-Path -LiteralPath $tomlHelper) {
+    . $tomlHelper
+    $pre = @"
+[cli]
+installer = "internal"
+
+[session]
+auto_compact_threshold_percent = 55
+
+[features]
+two_pass_compaction = true
+
+[mcp]
+max_output_bytes = 20000
+
+[mcp_servers.headroom]
+command = 'old'
+enabled = true
+
+[model."grok-4.6"]
+base_url = "http://127.0.0.1:8787/v1"
+
+[models]
+default = "grok-4.6"
+"@
+    $snippetText = Get-VibeManagedSnippet -SnippetPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true
+    $merged = Merge-VibeToml -Raw $pre -Snippet $snippetText
+    $mergedCheck = Test-VibeToml -Raw $merged
+    if ($mergedCheck.Ok -and ($merged -match 'command = ''C:\\hr\.cmd''') -and ($merged -notmatch "command = 'old'")) {
+        Ok 'config merge: reinstall over existing owned tables stays valid'
+    } else {
+        Bad ("config merge invalid after reinstall-shaped input: {0}" -f ($mergedCheck.Errors -join '; '))
+    }
+    # Strip-miss: table not in Get-VibeOwnedTomlSections. Merge must keep last
+    # (snippet), not first (stale). Assert snippet command, not only Test-VibeToml.Ok.
+    $preMiss = $pre + "`n`n[mcp_servers.untracked]`ncommand = 'stale-stub'`n"
+    $snipMiss = $snippetText.TrimEnd() + "`n`n[mcp_servers.untracked]`ncommand = 'C:\hr.cmd'`n"
+    $mergedMiss = Merge-VibeToml -Raw $preMiss -Snippet $snipMiss
+    $missCheck = Test-VibeToml -Raw $mergedMiss
+    $untracked = @([regex]::Matches($mergedMiss, '(?m)^\s*\[mcp_servers\.untracked\]\s*$'))
+    if ($missCheck.Ok -and $untracked.Count -eq 1 -and ($mergedMiss -match '(?s)\[mcp_servers\.untracked\].*?command = ''C:\\hr\.cmd''') -and ($mergedMiss -notmatch 'stale-stub')) {
+        Ok 'config merge: snippet wins when strip misses a table'
+    } else {
+        Bad ("config merge strip-miss did not keep snippet tables={0} ok={1}" -f $untracked.Count, $missCheck.Ok)
+    }
+} else {
+    Bad 'missing GrokToml.ps1'
+}
+if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Test-VibeToml' -and $instSrc -match 'Merge-VibeToml' -and $instSrc -match 'Write-Utf8NoBomFile') {
+    Ok 'installer: merge uses GrokToml + validates + UTF8 no BOM'
+} else {
+    Bad 'installer merge no longer validates TOML / uses GrokToml'
+}
+if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile') {
+    Ok 'start-grok: config preflight + auto-repair'
+} else {
+    Bad 'start-grok missing config preflight/repair'
 }
 if ($rawReview -match 'Test-VanillaHatchEndpoint' -and $rawReview -match 'vanilla hatch') {
     Ok 'review: hatch official endpoint before proxy-down fallback'

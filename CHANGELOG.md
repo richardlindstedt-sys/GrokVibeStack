@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-15
+
+### Fixed
+
+- Installer merge no longer leaves duplicate TOML tables when Grok has rewritten `config.toml` (it drops managed-block comments). Merge is fail-closed: validate after write, UTF-8 no BOM
+- `start-grok` preflights `config.toml` and repairs a stub / duplicate-table file so Headroom `grok-4.6` comes back (plain `grok` after a rename no longer stays unwired)
+- Doctor reports duplicate tables / missing Headroom override
+
 ## [1.3.0] - 2026-08-15
 
 ### Added
