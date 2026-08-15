@@ -292,10 +292,10 @@ if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-l
 } else {
     Bad 'pre-push still caps new-branch history, guesses origin/*, or nests git string[]'
 }
-if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh') {
-    Ok 'pre-push: scans push tip tree (not current checkout)'
+if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -notmatch 'Expand-Archive') {
+    Ok 'pre-push: scans push tip via worktree (no Expand-Archive)'
 } else {
-    Bad 'pre-push still scans current checkout / write-tree'
+    Bad 'pre-push still scans checkout or Expand-Archive zip'
 }
 if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item -LiteralPath \$src') {
     Ok 'scans: staged tree never copies worktree'

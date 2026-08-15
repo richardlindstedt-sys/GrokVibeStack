@@ -18,7 +18,11 @@ function Get-TreeHashForScanCache {
     param([string]$TreeIsh = '')
     $h = $null
     if (-not [string]::IsNullOrWhiteSpace($TreeIsh)) {
-        try { $h = (git rev-parse --verify --quiet "$TreeIsh^{tree}" 2>$null | Select-Object -First 1) } catch {}
+        if ($TreeIsh -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
+        try { $h = (git rev-parse --verify --quiet --end-of-options "$TreeIsh^{tree}" 2>$null | Select-Object -First 1) } catch {}
+        if (-not $h) {
+            try { $h = (git rev-parse --verify --quiet "$TreeIsh^{tree}" 2>$null | Select-Object -First 1) } catch {}
+        }
         if ($h) { return "$h".Trim() }
         return $null
     }

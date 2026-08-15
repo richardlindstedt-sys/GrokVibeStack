@@ -92,25 +92,35 @@ function Get-VibeSameVolumeTempDir {
 function New-CommitScanTree {
     param([string]$TreeIsh)
     if ([string]::IsNullOrWhiteSpace($TreeIsh)) { return $null }
+    # Push tips are hex SHAs from git stdin. Reject option/path injection.
+    if ($TreeIsh -notmatch '^[0-9a-fA-F]{7,64}$') { return $null }
     $sha = $null
-    try { $sha = (git rev-parse --verify --quiet $TreeIsh 2>$null | Select-Object -First 1) } catch {}
-    if (-not $sha) { return $null }
+    try { $sha = (git rev-parse --verify --quiet --end-of-options "$TreeIsh^{commit}" 2>$null | Select-Object -First 1) } catch {}
+    if (-not $sha) {
+        try { $sha = (git rev-parse --verify --quiet "$TreeIsh^{commit}" 2>$null | Select-Object -First 1) } catch {}
+    }
+    if ("$sha" -notmatch '^[0-9a-f]{40}$') { return $null }
     $tmpRoot = Get-VibeSameVolumeTempDir
     $tmp = Join-Path $tmpRoot ("vibe-tip-" + [guid]::NewGuid().ToString('n').Substring(0, 10))
-    $zip = Join-Path $tmpRoot ("vibe-tip-" + [guid]::NewGuid().ToString('n').Substring(0, 8) + '.zip')
-    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        git archive --format=zip -o $zip $sha 2>$null | Out-Null
-        if (-not (Test-Path -LiteralPath $zip)) { throw 'git archive produced no zip' }
-        Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+        git worktree add --detach -- $tmp $sha 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $tmp '.git'))) {
+            if (Test-Path -LiteralPath $tmp) {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            return $null
+        }
         return $tmp
     } catch {
         if (Test-Path -LiteralPath $tmp) {
+            try { git worktree remove --force -- $tmp 2>$null | Out-Null } catch {}
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
         return $null
     } finally {
-        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $prev
     }
 }
 
@@ -710,7 +720,11 @@ rules:
         }
     }
 } finally {
-    if ($stagedTree -and (Test-Path -LiteralPath $stagedTree)) {
+    if ($tipTree -and (Test-Path -LiteralPath $tipTree)) {
+        try { git worktree remove --force -- $tipTree 2>$null | Out-Null } catch {}
+        Remove-Item -LiteralPath $tipTree -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($stagedTree -and $stagedTree -ne $tipTree -and (Test-Path -LiteralPath $stagedTree)) {
         Remove-Item -LiteralPath $stagedTree -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

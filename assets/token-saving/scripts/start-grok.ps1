@@ -434,16 +434,20 @@ function Start-HeadroomProxyIfNeeded {
         }
         if (Test-PortListening $Port) {
             $ownerOk = $false
+            $queryOk = $false
             try {
-                $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+                $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
                 foreach ($c in $conns) {
-                    if ($c.OwningProcess -and [int]$c.OwningProcess -eq [int]$proc.Id) {
+                    if (-not $c.OwningProcess) { continue }
+                    $queryOk = $true
+                    if ([int]$c.OwningProcess -eq [int]$proc.Id) {
                         $ownerOk = $true
                         break
                     }
                 }
-            } catch {}
-            if (-not $ownerOk) {
+            } catch { $queryOk = $false }
+            # Empty Listen / no OwningProcess / cmdlet-missing / race is not a mismatch.
+            if ($queryOk -and -not $ownerOk) {
                 try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
                 Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
                 throw "Port $Port is listening but TCP owner is not Headroom PID $($proc.Id)."
