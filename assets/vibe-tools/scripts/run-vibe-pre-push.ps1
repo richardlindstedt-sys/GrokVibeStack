@@ -101,8 +101,16 @@ if ($ranges.Count -gt 0) {
     }
 }
 
-$onlyDeletes = $plan.Notes.Count -gt 0 -and (@($plan.Notes | Where-Object { $_ -notmatch '^delete:' }).Count -eq 0)
-if ($ranges.Count -eq 0 -and -not $onlyDeletes) {
+$hasRefLines = $false
+if (-not [string]::IsNullOrWhiteSpace($stdin)) {
+    foreach ($line in ($stdin -split "`n")) {
+        $t = $line.Trim()
+        if (-not $t) { continue }
+        if ((@($t -split '\s+')).Count -ge 4) { $hasRefLines = $true; break }
+    }
+}
+# Empty stdin only. Zero $ranges is normal for delete-only / some create-ref notes.
+if (-not $hasRefLines) {
     Write-Host ""
     Write-Host "PRE-PUSH BLOCKED: no push refs on stdin (refusing a guessed origin/HEAD or HEAD~5 diff)." -ForegroundColor Red
     if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {

@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file.
 - Doctor reports duplicate tables / missing Headroom override
 - Config reads use UTF-8 no BOM (PS 5.1 `Get-Content` was ANSI; rewrite after merge/repair could mojibake non-ASCII)
 - Installer throws on invalid merge instead of continuing
-- Pre-push refuses a guessed diff when git stdin is empty; Pester crash fails the scan gate
+- Pre-push refuses a guessed diff when git stdin has no ref lines (empty `$ranges` is not empty stdin; delete-only / create-ref still proceed); Pester crash fails the scan gate
 - Fast + extra roles run in parallel (NOW heartbeats); sensitive paths raise effort; arbiter cannot downgrade in-support data corruption
 
 ## [1.3.0] - 2026-08-15

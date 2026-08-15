@@ -577,10 +577,10 @@ if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoPr
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
 }
-if ($prePushPs1 -match 'refusing a guessed' -and $prePushPs1 -notmatch 'origin/HEAD\.\.\.HEAD') {
-    Ok 'pre-push: empty stdin fail-closed (no guessed diff)'
+if ($prePushPs1 -match 'refusing a guessed' -and $prePushPs1 -notmatch 'origin/HEAD\.\.\.HEAD' -and $prePushPs1 -match '\$hasRefLines' -and $prePushPs1 -notmatch '\$ranges\.Count -eq 0 -and -not \$onlyDeletes') {
+    Ok 'pre-push: empty stdin fail-closed (no guessed diff); empty ranges not treated as no-stdin'
 } else {
-    Bad 'pre-push still reviews a guessed origin/HEAD or HEAD~5 diff'
+    Bad 'pre-push still reviews a guessed diff or treats empty $ranges as empty stdin'
 }
 if ($scanSrc -match 'Error running' -and $scanSrc -match '\$script:failed\+\+') {
     Ok 'scans: Pester catch increments failed'
