@@ -428,7 +428,7 @@ if ($StopProxy) { Stop-HeadroomProxy; exit 0 }
 Write-Info "Caveman level: $cavemanLevel (rules + skills auto-load)"
 Write-Info "RTK:           $(if ($rtkVer) { $rtkVer } else { 'not found — shell compression limited' })"
 Write-Info "Token rules:   ~/.grok/rules/token-efficiency.md + rtk.md"
-Write-Info "Headroom MCP:  enabled in config (Grok spawns on session start)"
+Write-Info "Headroom MCP:  on by default in config (optional off: [mcp_servers.headroom] enabled = false)"
 
 if (-not $NoProxy) {
     Start-HeadroomProxyIfNeeded

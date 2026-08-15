@@ -20,7 +20,21 @@ rtk grep pattern
 rtk ls path
 ```
 
-Chains: prefix each segment — `rtk git add . && rtk git status`
+Chains: prefix **each** segment. Splitters: `&&` `||` `;` newline, and bare `&` as a statement separator.
+
+```bash
+rtk git add . && rtk git status
+rtk git status
+rtk git diff
+```
+
+**Not split** (one `rtk` covers the whole segment):
+
+- `|` pipelines (`rtk git log | more`)
+- redirects `2>&1`, `>&`, `&>`
+- leading call operator (`& rtk git status`)
+
+**Residual (not parsed):** backtick line-continuation, heredocs, nested/unbalanced quotes. Bypass: `RTK_BYPASS=1` or `rtk proxy <cmd>`.
 
 ## Skip rtk when
 

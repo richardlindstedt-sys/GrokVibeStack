@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-15
+
+### Added
+
+- Doctor reports live Headroom proxy cmdline + fingerprint vs this stack (P2-17)
+- RTK enforce splits on newlines and bare `&` statement separators (P2-23). Residual: `|` pipelines, `2>&1`/`&>` redirects, leading `&` call operator, backticks/heredocs
+- Docs: Headroom MCP is on by default; optional off via `[mcp_servers.headroom] enabled = false` (P2-24)
+
+### Removed
+
+- Dead installer manifest flag `maxSavingsProfile` (never read) (P2-18)
+
 ## [1.1.1] - 2026-08-14
 
 ### Fixed

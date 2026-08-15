@@ -29,6 +29,36 @@ function Get-StatusColor([bool]$ok) {
     if ($ok) { 'Green' } else { 'Yellow' }
 }
 
+function Get-ProcessCommandLine([int]$procId) {
+    try {
+        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+        if ($wmi -and $wmi.CommandLine) { return [string]$wmi.CommandLine }
+    } catch {}
+    return $null
+}
+
+function Test-ProxyCommandLineMatchesStack([string]$cmdLine, [int]$port) {
+    # Keep needles in sync with start-grok.ps1 Test-ProxyCommandLineMatchesStack
+    if ([string]::IsNullOrWhiteSpace($cmdLine)) { return $false }
+    if ($cmdLine -notmatch '(?i)headroom') { return $false }
+    if ($cmdLine -notmatch '(?i)(\s|^)proxy(\s|$)') { return $false }
+    if ($cmdLine -notmatch '(?i)--mode(\s+|=)token(\s|$)') { return $false }
+    $needles = @(
+        '--lossless',
+        '--code-aware',
+        '--intercept-tool-results',
+        '--target-ratio',
+        '0.35',
+        '--no-ccr-proactive-expansion',
+        '--read-maturation'
+    )
+    foreach ($n in $needles) {
+        if ($cmdLine -notlike "*$n*") { return $false }
+    }
+    if ($cmdLine -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $port)) { return $false }
+    return $true
+}
+
 Write-Host "=== Token-saving / vibe doctor ===" -ForegroundColor Cyan
 $stackVer = $null
 foreach ($vf in @((Join-Path $grokHome 'VERSION'), (Join-Path $PSScriptRoot '..\..\..\VERSION'))) {
@@ -92,12 +122,75 @@ Write-Host "HEADROOM_CONTEXT_TOOL: $(if ($env:HEADROOM_CONTEXT_TOOL) { $env:HEAD
 # --- Proxy ---
 Write-Host ""
 Write-Host "--- Proxy (Headroom :8787) ---" -ForegroundColor Cyan
-$proxyUp = Test-Port 8787
+$proxyPort = 8787
+$proxyUp = Test-Port $proxyPort
+$proxyPidFile = Join-Path $grokHome 'token-saving\state\headroom-proxy.pid'
+$proxyFpFile = Join-Path $grokHome 'token-saving\state\headroom-proxy.fingerprint'
+$expectedFp = 'v1|mode=token|ratio=0.35|lossless|code-aware|intercept|read-maturation|no-ccr|port=8787'
+$fpOnDisk = $null
+if (Test-Path -LiteralPath $proxyFpFile) {
+    $fpOnDisk = (Get-Content -LiteralPath $proxyFpFile -Raw -ErrorAction SilentlyContinue).Trim()
+}
+$fpOk = ($fpOnDisk -eq $expectedFp)
+$liveCmd = $null
+$livePid = $null
+$cmdOk = $false
 if ($proxyUp) {
-    Write-Host "  status: LISTENING" -ForegroundColor Green
-    Write-Host "  tip:    start-grok keeps proxy + PATH; stop with stop-grok-proxy" -ForegroundColor DarkGray
+    $ownerPids = [System.Collections.Generic.List[int]]::new()
+    if (Test-Path -LiteralPath $proxyPidFile) {
+        $rawPid = (Get-Content -LiteralPath $proxyPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+        $parsedPid = 0
+        if ([int]::TryParse($rawPid, [ref]$parsedPid) -and $parsedPid -gt 0) {
+            [void]$ownerPids.Add($parsedPid)
+        }
+    }
+    try {
+        $conns = Get-NetTCPConnection -LocalPort $proxyPort -State Listen -ErrorAction SilentlyContinue
+        foreach ($c in $conns) {
+            if ($c.OwningProcess) {
+                $op = [int]$c.OwningProcess
+                if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
+            }
+        }
+    } catch {}
+    foreach ($pidCand in $ownerPids) {
+        $cl = Get-ProcessCommandLine $pidCand
+        if (Test-ProxyCommandLineMatchesStack $cl $proxyPort) {
+            $livePid = $pidCand
+            $liveCmd = $cl
+            $cmdOk = $true
+            break
+        }
+        if (-not $liveCmd -and $cl) {
+            $livePid = $pidCand
+            $liveCmd = $cl
+        }
+    }
+}
+$stackOk = $proxyUp -and $cmdOk -and $fpOk
+if ($proxyUp) {
+    if ($stackOk) {
+        Write-Host "  status: LISTENING (stack match)" -ForegroundColor Green
+    } else {
+        Write-Host "  status: LISTENING (wrong or unverified stack)" -ForegroundColor Yellow
+    }
+    if ($livePid) { Write-Host ("  pid:    {0}" -f $livePid) }
+    if ($liveCmd) {
+        $shown = if ($liveCmd.Length -gt 180) { $liveCmd.Substring(0, 177) + '...' } else { $liveCmd }
+        Write-Host ("  cmdline:{0}{1}" -f " ", $shown)
+    } else {
+        Write-Host "  cmdline: (unavailable)" -ForegroundColor DarkGray
+    }
+    Write-Host ("  live argv: {0}" -f $(if ($cmdOk) { 'MATCH' } else { 'MISMATCH' })) -ForegroundColor (Get-StatusColor $cmdOk)
+    Write-Host ("  fingerprint file: {0}" -f $(if ($fpOk) { 'ok' } elseif ($fpOnDisk) { 'stale/other' } else { 'missing' })) -ForegroundColor (Get-StatusColor $fpOk)
+    if (-not $stackOk) {
+        Write-Host "  fix:    start-grok   (restarts mismatched proxy)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  tip:    start-grok keeps proxy + PATH; stop with stop-grok-proxy" -ForegroundColor DarkGray
+    }
 } else {
     Write-Host "  status: DOWN" -ForegroundColor Yellow
+    Write-Host ("  fingerprint file: {0}" -f $(if ($fpOk) { 'ok (stale while down)' } elseif ($fpOnDisk) { 'stale/other' } else { 'missing' })) -ForegroundColor DarkGray
     Write-Host "  fix:    start-grok   (or start-headroom-proxy.ps1)" -ForegroundColor Yellow
     Write-Host "  note:   default grok-4.6 is overridden to Headroom; needs proxy up" -ForegroundColor DarkGray
 }
@@ -235,6 +328,11 @@ if (Test-Path -LiteralPath $cfg) {
     if ($effort.Success) {
         Write-Host ("  default_reasoning_effort: {0}" -f $effort.Groups[1].Value)
     }
+    $hrMcp = [regex]::Match([string]$cfgTxt, '(?s)\[mcp_servers\.headroom\].*?enabled\s*=\s*(true|false)')
+    if ($hrMcp.Success) {
+        $on = $hrMcp.Groups[1].Value -eq 'true'
+        Write-Host ("  Headroom MCP: {0} (default on; set enabled = false to opt out)" -f $(if ($on) { 'enabled' } else { 'disabled' }))
+    }
 }
 
 Write-Host ""
@@ -269,7 +367,7 @@ Write-Host ""
 Write-Host 'Skills: caveman + token-save under ~/.grok/skills'
 Write-Host 'Rules:  caveman.md + token-efficiency.md + rtk.md under ~/.grok/rules'
 Write-Host 'RTK.md: ~/.grok/RTK.md'
-Write-Host 'MCP:    mcp_servers.headroom in ~/.grok/config.toml'
+Write-Host 'MCP:    mcp_servers.headroom enabled=true by default; optional off in ~/.grok/config.toml'
 Write-Host 'Launch: start-grok (or start-grok -Status)'
 Write-Host 'Hooks:  new sessions auto-load; reload only if Grok was open during install (/hooks r)'
 Write-Host 'Smoke:  Invoke-VibeStackSmoke.ps1 (no AI spend)'

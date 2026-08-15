@@ -114,8 +114,6 @@ $script:Manifest = [ordered]@{
         'vibe-review.ps1', 'install-vibe-hooks.ps1', 'rtk.exe', 'scc.exe', 'tokei.exe'
     )
     hookFiles            = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')
-    # Always max quality gates + max token savings on fresh machines
-    maxSavingsProfile    = $true
     qualityGates         = @('pre-commit', 'pre-push', 'on-edit', 'rtk-enforce', 'ai-review-high')
     ruleFiles            = @('caveman.md', 'rtk.md', 'token-efficiency.md', 'vibe-coding.md')
     skillDirs            = @('caveman', 'token-save', 'vibe-coding')

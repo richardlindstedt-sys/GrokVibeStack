@@ -4,7 +4,7 @@
   PreToolUse gate: force rtk prefix on noisy shell commands (max token savings).
 .DESCRIPTION
   Denies run_terminal_command / Bash when any shell segment looks noisy and is not
-  already wrapped with rtk. Chains (&& || ;) are checked per segment so
+  already wrapped with rtk. Chains (&& || ; newline, bare &) are checked per segment so
   `rtk git status && git log -p` is denied. Fail-open on parse errors.
 #>
 $ErrorActionPreference = 'SilentlyContinue'
@@ -89,6 +89,8 @@ function Test-HasRtkPrefix([string]$seg) {
     # Allow leading env assignments (FOO=1) and common wrappers, then require rtk
     # before the noisy tool. Still rejects rtk only mid-pipeline after the tool.
     $s = $seg.Trim()
+    # Leading call operator is not a splitter: "& rtk git status"
+    if ($s -match '^&\s+\S') { $s = $s.Substring(1).TrimStart() }
     # Strip leading VAR=value / VAR='...' / VAR="..." (and export VAR=...)
     $guard = 0
     while ($guard -lt 32) {
@@ -123,7 +125,9 @@ function Test-HasRtkPrefix([string]$seg) {
 }
 
 function Split-ShellSegments([string]$command) {
-    # Split on && || ; outside single/double quotes (no full shell parse)
+    # Split on && || ; newline, and bare & (statement sep) outside quotes.
+    # Residual: | pipelines, 2>&1 / >& / &> redirects, leading call-operator &,
+    # backtick continuation, heredocs — not a full shell parse.
     $segments = [System.Collections.Generic.List[string]]::new()
     $sb = New-Object System.Text.StringBuilder
     $inSingle = $false
@@ -133,6 +137,7 @@ function Split-ShellSegments([string]$command) {
     while ($i -lt $len) {
         $ch = $command[$i]
         $next = if ($i + 1 -lt $len) { $command[$i + 1] } else { [char]0 }
+        $prev = if ($i -gt 0) { $command[$i - 1] } else { [char]0 }
 
         if ($ch -eq [char]39 -and -not $inDouble) { # '
             $inSingle = -not $inSingle
@@ -146,6 +151,13 @@ function Split-ShellSegments([string]$command) {
         }
 
         if (-not $inSingle -and -not $inDouble) {
+            if ($ch -eq [char]13 -or $ch -eq [char]10) {
+                $seg = $sb.ToString().Trim()
+                if ($seg) { [void]$segments.Add($seg) }
+                [void]$sb.Clear()
+                if ($ch -eq [char]13 -and $next -eq [char]10) { $i += 2 } else { $i++ }
+                continue
+            }
             if ($ch -eq ';' ) {
                 $seg = $sb.ToString().Trim()
                 if ($seg) { [void]$segments.Add($seg) }
@@ -163,6 +175,17 @@ function Split-ShellSegments([string]$command) {
                 if ($seg) { [void]$segments.Add($seg) }
                 [void]$sb.Clear()
                 $i += 2; continue
+            }
+            if ($ch -eq '&') {
+                $isRedirect = ($prev -eq '>') -or ($next -eq '>')
+                $soFar = $sb.ToString()
+                $isCallOp = [string]::IsNullOrWhiteSpace($soFar)
+                if (-not $isRedirect -and -not $isCallOp) {
+                    $seg = $soFar.Trim()
+                    if ($seg) { [void]$segments.Add($seg) }
+                    [void]$sb.Clear()
+                    $i++; continue
+                }
             }
         }
 

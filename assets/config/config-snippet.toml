@@ -11,6 +11,8 @@ two_pass_compaction = true
 # Cap fat tool dumps entering context (was 40000)
 max_output_bytes = 20000
 
+# Headroom MCP (headroom__* tools) is ON by default. Optional off:
+# set enabled = false (tool defs cost tokens every turn). Proxy + RTK stay on.
 [mcp_servers.headroom]
 command = "HEADROOM_MCP_CMD"
 args = []

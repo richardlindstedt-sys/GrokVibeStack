@@ -411,10 +411,15 @@ if ($instSrc -match 'stackOwned' -and $instSrc -match 'Never record pre-existing
     Bad 'PATH AlwaysRecord / uninstall shared-dir strip still unsafe'
 }
 $rtkSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
-if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment') {
-    Ok 'rtk: per-segment enforce present'
+if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment' -and $rtkSrc -match 'newline' -and $rtkSrc -match 'isCallOp') {
+    Ok 'rtk: per-segment enforce (&& || ; newline bare &)'
 } else {
-    Bad 'rtk missing per-segment enforce'
+    Bad 'rtk missing per-segment / newline / bare-and split'
+}
+if ($instSrc -notmatch 'maxSavingsProfile') {
+    Ok 'installer: dead maxSavingsProfile removed'
+} else {
+    Bad 'installer still has unused maxSavingsProfile'
 }
 $startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
 if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackFingerprint' -and $startSrc -match 'Save-ProxyFingerprint' -and $startSrc -match 'require the flag pair') {
@@ -422,11 +427,22 @@ if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackF
 } else {
     Bad 'start-grok missing proxy fingerprint checks'
 }
+$docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
+if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv') {
+    Ok 'doctor: live proxy cmdline / fingerprint'
+} else {
+    Bad 'doctor missing live proxy cmdline/fingerprint'
+}
 $snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
 if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6') {
     Ok 'config: quoted grok-4.6 / grok-4.6-direct tables'
 } else {
     Bad 'config-snippet missing quoted model tables (unquoted dotted ids are ignored)'
+}
+if ($snip -match 'Optional off' -and $snip -match 'enabled = true') {
+    Ok 'config: Headroom MCP default on, optional off documented'
+} else {
+    Bad 'config-snippet missing Headroom MCP optional-off docs'
 }
 if ($rawReview -match 'Test-VanillaHatchEndpoint' -and $rawReview -match 'vanilla hatch') {
     Ok 'review: hatch official endpoint before proxy-down fallback'
@@ -453,6 +469,14 @@ try {
     if ($c.decision -eq 'allow') { Ok 'rtk allow: tiny + rtk segment' } else { Bad "rtk should allow cd&&rtk got $($c.decision)" }
     $d = Invoke-RtkGate 'echo hi'
     if ($d.decision -eq 'allow') { Ok 'rtk allow: tiny echo' } else { Bad "rtk should allow echo got $($d.decision)" }
+    $nl = Invoke-RtkGate "rtk git status`ngit log -p"
+    if ($nl.decision -eq 'deny') { Ok 'rtk deny: newline second leg bare git' } else { Bad "rtk should deny newline-split bare git got $($nl.decision)" }
+    $amp = Invoke-RtkGate 'rtk git status & git log -p'
+    if ($amp.decision -eq 'deny') { Ok 'rtk deny: bare & second leg' } else { Bad "rtk should deny bare-and second segment got $($amp.decision)" }
+    $redir = Invoke-RtkGate 'rtk git status 2>&1'
+    if ($redir.decision -eq 'allow') { Ok 'rtk allow: 2>&1 not a splitter' } else { Bad "rtk should allow rtk+2>&1 got $($redir.decision)" }
+    $call = Invoke-RtkGate '& rtk git status'
+    if ($call.decision -eq 'allow') { Ok 'rtk allow: leading call-operator & rtk' } else { Bad "rtk should allow & rtk got $($call.decision)" }
 } finally {
     if ($null -ne $prevBypass) { $env:RTK_BYPASS = $prevBypass } else { Remove-Item Env:RTK_BYPASS -ErrorAction SilentlyContinue }
 }

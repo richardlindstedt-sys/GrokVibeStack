@@ -17,7 +17,7 @@ user-invocable: true
 4. **Context hygiene** - grep before read; subagents for explore; no full-file dumps.
 5. **MCP cap** - large MCP results truncated (`[mcp] max_output_bytes=20000`).
 6. **Headroom proxy** (built-in `grok-4.6` override) - `--mode token --lossless --code-aware --intercept-tool-results --target-ratio 0.35` + `--no-ccr-proactive-expansion` + `--read-maturation`.
-7. **Headroom MCP** - `headroom__*` tools for on-demand compress/retrieve.
+7. **Headroom MCP** - `headroom__*` tools for on-demand compress/retrieve. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
 8. **Compaction** - **55%** auto + two-pass.
 
 **Not default:** Headroom `--memory` / `--learn`, `HEADROOM_OUTPUT_SHAPER`, profile `agent-90`.
@@ -62,4 +62,4 @@ RTK binary: `~/.grok/bin/rtk.exe` (ensure: `token-saving/scripts/ensure-rtk.ps1`
 - Caveman: "normal mode" or `/caveman off`
 - RTK: run bare shell command (or `rtk proxy <cmd>` for tracked raw); bypass once with `RTK_BYPASS=1`
 - Proxy: `start-grok -NoProxy` or model without headroom
-- Disable MCP: set `enabled = false` under `[mcp_servers.headroom]` in config.toml
+- Headroom MCP: default on. Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml`. Proxy + RTK stay on.

@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.1.1** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **1.2.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -195,7 +195,7 @@ Configured defaults (not a promise of one fixed % on your whole bill):
 | Layer | Configured value | What that means in practice |
 |-------|------------------|-----------------------------|
 | **Headroom proxy** | keep-ratio **target 0.35** (lossless + code-aware + tool-result intercept + read-maturation) | On traffic the proxy compresses, aim to **keep ~35%** of tokens → up to **~65% cut** on that path. Best on long sessions, big tool dumps, log/JSON-heavy turns. Does not shrink every prompt the same way. |
-| **RTK** | enforce prefix on **each** noisy shell segment (`&&`/`||`/`;`) | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` when every noisy leg uses `rtk …` (see `rtk gain`). One `rtk` does not unlock the rest of a chain. |
+| **RTK** | enforce prefix on **each** noisy shell segment (`&&`/`||`/`;`/newline/bare `&`) | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` when every noisy leg uses `rtk …` (see `rtk gain`). One `rtk` does not unlock the rest of a chain. Residual: `\|` pipelines, `2>&1`/`&>` redirects, leading `&` call operator, backticks/heredocs. |
 | **Caveman** | chat style **ultra** | Shorter model **replies** day-to-day (output tokens), not input context. |
 | **Compact** | fire at **55%** context, two-pass | Compacts earlier than a high threshold → fewer giant multi-hour contexts. |
 | **MCP** | `max_output_bytes = 20000` | Caps each MCP tool payload at **20 KB** so one tool cannot flood context. |
@@ -278,7 +278,9 @@ vibe-review                         # full scans + standard AI gate on current d
 & ...\scripts\run-vibe-scans.ps1    # scanners only
 ```
 
-Doctor shows: Headroom proxy up/down, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report.
+Doctor shows: Headroom proxy up/down plus live cmdline + fingerprint vs this stack, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report.
+
+**Headroom MCP** (`headroom__*` tools) is **on by default**. Optional off: set `enabled = false` under `[mcp_servers.headroom]` in `~/.grok/config.toml`. Proxy + RTK stay on. Re-run installer to restore the managed block, or edit that key only.
 
 Emergency:
 

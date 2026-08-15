@@ -52,7 +52,7 @@ Shims live on PATH via `~/.grok/bin`:
 | AGENTS.md + RTK.md | Global agent preferences + shell prefix rules |
 | hooks/token-saving.json | SessionStart + PostToolUse logging |
 | Headroom CLI + venv | Compression proxy + tools |
-| Headroom MCP | On-demand headroom__* tools |
+| Headroom MCP | On-demand `headroom__*` tools. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on). |
 | grok-4.6 Headroom override | In config.toml quoted `[model."grok-4.6"]` (`grok-via-headroom` alias; `[model."grok-4.6-direct"]` = vanilla) |
 
 ## Agent shell habit
