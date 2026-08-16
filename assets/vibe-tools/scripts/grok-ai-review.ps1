@@ -648,6 +648,7 @@ function Invoke-GrokHeadless {
             $pushed = $true
         }
         if ($OnPulse) {
+            $ownTemps = -not $OutLog
             $stdOut = if ($OutLog) { $OutLog } else { Join-Path $env:TEMP ('vibe-grok-' + [guid]::NewGuid().ToString('n') + '.log') }
             $stdErr = $stdOut + '.err'
             $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -664,18 +665,32 @@ function Invoke-GrokHeadless {
             if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {
                 $startArgs.WorkingDirectory = $WorkingDirectory
             }
-            $p = Start-Process @startArgs
-            while (-not $p.HasExited) {
-                Start-Sleep -Seconds ([Math]::Max(2, $PulseSec))
-                try { & $OnPulse } catch {}
+            try {
+                $p = Start-Process @startArgs
+                if (-not $p) { throw 'Start-Process returned null' }
+                while (-not $p.HasExited) {
+                    Start-Sleep -Seconds ([Math]::Max(2, $PulseSec))
+                    try {
+                        & $OnPulse
+                    } catch {
+                        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                            Write-GateProgress ('fixer pulse error: {0}' -f $_.Exception.Message)
+                        }
+                    }
+                }
+                try { $p.WaitForExit(5000) | Out-Null } catch {}
+                $code = [int]$p.ExitCode
+                $outTxt = ''
+                $errTxt = ''
+                try { if (Test-Path -LiteralPath $stdOut) { $outTxt = [System.IO.File]::ReadAllText($stdOut) } } catch {}
+                try { if (Test-Path -LiteralPath $stdErr) { $errTxt = [System.IO.File]::ReadAllText($stdErr) } } catch {}
+                $output = @(($outTxt + "`n" + $errTxt).TrimEnd())
+            } finally {
+                if ($ownTemps) {
+                    try { if (Test-Path -LiteralPath $stdOut) { Remove-Item -LiteralPath $stdOut -Force -ErrorAction SilentlyContinue } } catch {}
+                    try { if (Test-Path -LiteralPath $stdErr) { Remove-Item -LiteralPath $stdErr -Force -ErrorAction SilentlyContinue } } catch {}
+                }
             }
-            try { $p.WaitForExit(5000) | Out-Null } catch {}
-            $code = [int]$p.ExitCode
-            $outTxt = ''
-            $errTxt = ''
-            try { if (Test-Path -LiteralPath $stdOut) { $outTxt = [System.IO.File]::ReadAllText($stdOut) } } catch {}
-            try { if (Test-Path -LiteralPath $stdErr) { $errTxt = [System.IO.File]::ReadAllText($stdErr) } } catch {}
-            $output = @(($outTxt + "`n" + $errTxt).TrimEnd())
         } else {
             $output = & $GrokExe @($argList.ToArray()) 2>&1
             $code = $LASTEXITCODE
@@ -940,7 +955,7 @@ function Write-GateReport {
         $jsonPath = Join-Path $dir 'report.json'
         $mdPath = Join-Path $dir 'report.md'
         $htmlPath = Join-Path $dir 'report.html'
-        $utf8 = New-Object System.Text.UTF8Encoding $false
+        $utf8 = New-Object System.Text.UTF8Encoding $true
         [System.IO.File]::WriteAllText($jsonPath, ($Run | ConvertTo-Json -Depth 12), $utf8)
 
         $md = New-Object System.Text.StringBuilder
@@ -1005,7 +1020,7 @@ function Write-GateReport {
             }
             [void]$md.AppendLine('')
         }
-        $mdText = $md.ToString()
+        $mdText = $md.ToString() -replace [char]0x2014, '-' -replace [char]0x2013, '-'
         [System.IO.File]::WriteAllText($mdPath, $mdText, $utf8)
 
         $esc = [System.Net.WebUtility]::HtmlEncode($mdText)
@@ -1189,12 +1204,10 @@ function Invoke-ReviewerPanel {
                 break
             }
             $waitNames = (@($pending | ForEach-Object { $_.Name })) -join ', '
-            $gotLines = @($script:VoteNowPublished.Values | Where-Object { $_ })
-            $gotBit = if ($gotLines.Count) { ' | ' + ($gotLines -join ' || ') } else { '. none finished yet' }
-            $elapsed = [int]$swWait.Elapsed.TotalSeconds
-            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-                Write-GateProgress ("waiting {0} ({1}s)" -f $waitNames, $elapsed) `
-                    -Now ("Waiting on $waitNames (~${elapsed}s)$gotBit")
+            if (Get-Command Set-GateWaitNow -ErrorAction SilentlyContinue) {
+                Set-GateWaitNow $waitNames
+            } elseif (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("waiting {0}" -f $waitNames) -Now ("Waiting on $waitNames")
             }
             $null = Wait-Job -Job @($pending.ToArray()) -Timeout 15
         }
@@ -1748,8 +1761,15 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
         Write-Host "============================================================" -ForegroundColor Green
         Write-Host (" GATE PASSED - {0} after {1} round(s) in {2}s [{3}]" -f $arb.Verdict, $round, $elapsed, $script:ResolvedProfile.Name) -ForegroundColor Green
         Write-Host "============================================================" -ForegroundColor Green
+        $cwdNow = ''
+        try { $cwdNow = (Get-Location).Path } catch { $cwdNow = [string]$script:GateCwd }
+        if (Get-Command Save-GateOpenAdvisories -ErrorAction SilentlyContinue) {
+            $advNow = @()
+            if ($arb.Result -and $arb.Result.advisories) { $advNow = @($arb.Result.advisories) }
+            Save-GateOpenAdvisories -Items $advNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow
+        }
         if ($arb.Result -and @($arb.Result.advisories).Count -gt 0) {
-            Write-Host "Advisories remain (non-blocking). Consider follow-ups." -ForegroundColor Yellow
+            Write-Host "Advisories remain (non-blocking). Persisted for the next commit - not forgotten." -ForegroundColor Yellow
         }
         Write-Host "Artifacts: $WorkDir" -ForegroundColor DarkGray
         $nAdv = @($arb.Result.advisories).Count

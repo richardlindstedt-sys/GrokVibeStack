@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.4.7** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **1.4.8** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -288,7 +288,7 @@ Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-now.txt
 Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-status.txt -Wait   # append-only events
 ```
 
-Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md`.
+Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md` (overwritten each gate). Open advisories persist in `reports/gate-open-advisories.json` and must be fixed in the next commit.
 
 **Headroom MCP** (`headroom__*` tools) is **on by default**. Optional off: set `enabled = false` under `[mcp_servers.headroom]` in `~/.grok/config.toml`. Proxy + RTK stay on. Re-run installer to restore the managed block, or edit that key only.
 

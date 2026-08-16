@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.8] - 2026-08-16
+
+### Fixed
+
+- Open advisories persist in `gate-open-advisories.json` and must be fixed in the next commit (inject + rule). Not auto-fixed, not dropped when `latest.md` is overwritten
+- Reviewer wait no longer writes `(~Ns)` / `none finished yet` into NOW. `Set-GateWaitNow` refreshes ELAPSED only; chat stays quiet
+- Shared `gate-chat-lib.ps1` (tick key, wait test, RUN parse). Stop still speaks if VOTE lines exist while NOW says waiting
+- Fixer OnPulse: null Start-Process fail-closed, pulse errors logged, temp logs deleted
+- Gate reports write UTF-8 BOM and replace em dashes so Windows does not show mojibake
+- Wait-silence smoke waits for VOTE, then polls for a leaked wait tick (no fixed sleep)
+- Open-advisory merge uses a cwd+id hashtable (no ForEach-Object `$hit`). Same-cwd ids missing from this pass are marked resolved
+
 ## [1.4.7] - 2026-08-16
 
 ### Fixed

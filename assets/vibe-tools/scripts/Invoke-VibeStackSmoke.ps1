@@ -79,6 +79,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-prompt-context.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-chat-lib.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-evals.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-schema.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-push-plan.ps1'),
@@ -407,10 +408,16 @@ if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 45
 } else {
     Bad 'watch-gate-now missing sawLive arm / 45s linger / Heartbeat-only exit'
 }
-if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function Get-GateSnapshot' -and $watchNow -notmatch 'function Get-GateHead' -and $watchNow -match "EVT " -and $watchNow -match "'VOTE'" -and $watchNow -match 'seenEventsRun' -and $watchNow -match 'seenEvents.Clear' -and $promptCtx -match 'VOTES \(verdict' -and $promptCtx -notmatch '-Tail 80' -and $rawReview -match 'Publish-ReviewerVoteNow' -and $rawReview -match 'VoteNowPublished\[\$Role\] = \$evt' -and $rawReview -match '\$gotLines' -and $progSrc -match 'function Set-GateVote' -and $progSrc -match 'VOTE:') {
+if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function Get-GateSnapshot' -and $watchNow -notmatch 'function Get-GateHead' -and $watchNow -match "EVT " -and $watchNow -match "'VOTE'" -and $watchNow -match 'seenEventsRun' -and $watchNow -match 'seenEvents.Clear' -and $promptCtx -match 'VOTES \(verdict' -and $promptCtx -notmatch '-Tail 80' -and $rawReview -match 'Publish-ReviewerVoteNow' -and $rawReview -match 'VoteNowPublished\[\$Role\] = \$evt' -and $rawReview -match 'Set-GateWaitNow' -and $progSrc -match 'function Set-GateVote' -and $progSrc -match 'VOTE:') {
     Ok 'gate chat: sticky VOTE lines + full-file snapshot + inject VOTES block'
 } else {
     Bad 'gate chat missing sticky votes / Get-GateSnapshot / inject VOTES'
+}
+$chatLibSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-chat-lib.ps1') -Raw -ErrorAction SilentlyContinue
+if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN ADVISORIES' -and $chatLibSrc -match 'must fix in the next commit') {
+    Ok 'gate advisories: persist + inject next-commit (not forgotten)'
+} else {
+    Bad 'gate advisories missing persist/inject'
 }
 if ($progSrc -match 'function Save-GateLastDone' -and $progSrc -match 'gate-last-done\.txt' -and $promptCtx -match 'LAST GATE' -and $promptCtx -match 'gate-last-done\.txt' -and $promptCtx -match 'GATE DONE \(must post RUN' -and $promptCtx -notmatch "now -notmatch 'GATE DONE'" -and $stopSrc -match 'GATE DONE recap required' -and $stopSrc -match 'ageMin' -and $stopSrc -match 'gate-last-done-ack\.txt') {
     Ok 'gate recap: last-done persist + inject DONE/votes + stop ack latch'
@@ -422,10 +429,10 @@ if ($watchNow -match 'ELAPSED-only must not wake' -and $rawReview -match 'OnPuls
 } else {
     Bad 'gate chat missing speak-on-new / fixer pulse / 0-copy fail-closed'
 }
-if ($watchNow -match 'function Test-IsGateWaitNow' -and $stopSrc -match 'function Test-IsGateWaitNow' -and $stopSrc -match 'write zero chat' -and $promptCtx -match 'write zero chat' -and $progSrc -match 'LastWaitNow') {
-    Ok 'gate chat: wait ticks never wake / stop never nags wait'
+if ($chatLibSrc -match 'function Test-IsGateWaitNow' -and $chatLibSrc -match 'function Get-GateFileRun' -and $chatLibSrc -match 'function Format-GateOpenAdvisoriesInject' -and $watchNow -match 'gate-chat-lib.ps1 missing' -and $stopSrc -match 'gate-chat-lib.ps1 missing' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $stopSrc -match 'write zero chat' -and $promptCtx -match 'write zero chat' -and $progSrc -match 'LastWaitNow' -and $progSrc -match 'function Set-GateWaitNow' -and $rawReview -match 'Set-GateWaitNow') {
+    Ok 'gate chat: shared tick lib + Set-GateWaitNow (no (~Ns) NOW)'
 } else {
-    Bad 'gate chat missing Test-IsGateWaitNow / zero-chat stop+inject'
+    Bad 'gate chat missing gate-chat-lib / Set-GateWaitNow / zero-chat'
 }
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -533,7 +540,16 @@ try {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
         '-Monitor', '-IdleSec', '0', '-IntervalSec', '1', '-NowFile', $waitNow
     ) -RedirectStandardOutput $waitOut -WindowStyle Hidden -PassThru
-    Start-Sleep -Milliseconds 1200
+    $sawVote = $false
+    $until = (Get-Date).AddSeconds(8)
+    while ((Get-Date) -lt $until) {
+        $probe = Get-Content -LiteralPath $waitOut -Raw -ErrorAction SilentlyContinue
+        if ($probe -match '(?m)^VOTE ') { $sawVote = $true; break }
+        Start-Sleep -Milliseconds 150
+    }
+    if (-not $sawVote) {
+        Bad 'gate monitor wait-silence: VOTE never appeared (setup)'
+    }
     @(
         'RUN:     wait-test-1'
         'NOW:     Waiting on vibe-correctness (~30s)'
@@ -542,7 +558,16 @@ try {
         ''
         '[21:00:00] scan: Trivy ok'
     ) | Set-Content -LiteralPath $waitNow -Encoding ascii
-    Start-Sleep -Milliseconds 1500
+    $printedWait = $false
+    $until2 = (Get-Date).AddSeconds(4)
+    while ((Get-Date) -lt $until2) {
+        Start-Sleep -Milliseconds 150
+        $probe2 = Get-Content -LiteralPath $waitOut -Raw -ErrorAction SilentlyContinue
+        if ($probe2 -match '(?i)Waiting on') { $printedWait = $true; break }
+    }
+    if ($printedWait) {
+        Bad 'gate monitor printed wait tick after (~30s) rewrite'
+    }
     try { Stop-Process -Id $waitProc.Id -Force -ErrorAction SilentlyContinue } catch {}
     try { $waitProc.WaitForExit(3000) | Out-Null } catch {}
     $waitTxt = Get-Content -LiteralPath $waitOut -Raw -ErrorAction SilentlyContinue

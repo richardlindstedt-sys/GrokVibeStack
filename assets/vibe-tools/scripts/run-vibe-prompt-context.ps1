@@ -14,11 +14,10 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 $chunks = [System.Collections.Generic.List[string]]::new()
 
-function Get-GateFileRun([string[]]$Lines) {
-    $run = ($Lines | Where-Object { $_ -match '^RUN:\s+\S+' } | Select-Object -First 1)
-    if ($run -and $run -match '^RUN:\s+(\S+)') { return $Matches[1] }
-    return ''
-}
+$gateChatLib = Join-Path $PSScriptRoot 'gate-chat-lib.ps1'
+if (-not (Test-Path -LiteralPath $gateChatLib)) { throw 'gate-chat-lib.ps1 missing' }
+. $gateChatLib
+if (-not (Get-Command Get-GateFileRun -ErrorAction SilentlyContinue)) { throw 'gate-chat-lib.ps1 failed to load' }
 
 function Add-GateSnapshotChunk {
     param(
@@ -92,6 +91,11 @@ GATE LIVE (if nothing new: write zero chat. Never 'no new votes' or 'still waiti
     }
     Add-GateSnapshotChunk -Path $nowFile -Banner $liveBanner
 }
+
+$cwdNow = ''
+try { $cwdNow = (Get-Location).Path } catch { $cwdNow = '' }
+$openAdvText = Format-GateOpenAdvisoriesInject -Cwd $cwdNow
+if ($openAdvText) { [void]$chunks.Add($openAdvText) }
 
 $findingsFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\state\on-edit-findings.json'
 if (Test-Path -LiteralPath $findingsFile) {

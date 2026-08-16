@@ -35,6 +35,11 @@ try {
     [Console]::Error.AutoFlush = $true
 } catch {}
 
+$gateChatLib = Join-Path $PSScriptRoot 'gate-chat-lib.ps1'
+if (-not (Test-Path -LiteralPath $gateChatLib)) { throw 'gate-chat-lib.ps1 missing' }
+. $gateChatLib
+if (-not (Get-Command Test-IsGateWaitNow -ErrorAction SilentlyContinue)) { throw 'gate-chat-lib.ps1 failed to load' }
+
 if ($IntervalSec -lt 1) { $IntervalSec = 1 }
 if ($IdleSec -lt 0) { $IdleSec = 0 }
 $nowFile = if ($NowFile) { $NowFile } else { Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt' }
@@ -45,20 +50,6 @@ $idleRun = $null
 $sawLive = $false
 $seenEvents = New-Object 'System.Collections.Generic.HashSet[string]'
 $seenEventsRun = $null
-
-function Get-GateNowTickKey([string]$NowLine) {
-    # Waiting (~15s)/(~30s) is not a new event. Must not print or wake chat.
-    $s = "$NowLine"
-    $s = $s -replace '\s*\(~\d+s\)', ''
-    $s = $s -replace '\s*none finished yet[^\|]*', ''
-    $s = $s -replace '\s{2,}', ' '
-    return $s.Trim()
-}
-
-function Test-IsGateWaitNow([string]$NowLine) {
-    $s = (Get-GateNowTickKey $NowLine) -replace '^NOW:\s+', ''
-    return [bool]($s -match '(?i)^Waiting on\b')
-}
 
 function Get-InterestingGateEvents([object[]]$Snap) {
     return @($Snap | Where-Object {

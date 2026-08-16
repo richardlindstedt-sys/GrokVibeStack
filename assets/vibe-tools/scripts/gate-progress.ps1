@@ -102,6 +102,76 @@ function Save-GateLastDone {
     Write-GateFileRetry -Path $script:GateLastDoneFile -Lines $lines
 }
 
+function Get-GateOpenAdvisoriesFile {
+    Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
+}
+
+function Save-GateOpenAdvisories {
+    # Hashtable merge by cwd+id (no ForEach-Object $hit). This cwd's ids in $Items
+    # stay open; this cwd's ids missing from $Items are marked resolved.
+    param(
+        [object[]]$Items,
+        [string]$RunId,
+        [string]$Cwd
+    )
+    if (-not $Cwd) {
+        try { $Cwd = (Get-Location).Path } catch { $Cwd = '' }
+    }
+    if (-not $Cwd) { return }
+    $path = Get-GateOpenAdvisoriesFile
+    $prevItems = @()
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $prev = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+            if ($prev -and $prev.items) { $prevItems = @($prev.items) }
+        } catch { $prevItems = @() }
+    }
+    $byKey = @{}
+    foreach ($old in $prevItems) {
+        $oc = [string]$old.cwd
+        $oid = [string]$old.id
+        if (-not $oc -or -not $oid) { continue }
+        $byKey[('{0}|{1}' -f $oc, $oid)] = $old
+    }
+    $seen = @{}
+    foreach ($raw in @($Items | Where-Object { $_ })) {
+        $id = [string]$raw.id
+        if (-not $id) { $id = [string]$raw.title }
+        if (-not $id) { continue }
+        $k = '{0}|{1}' -f $Cwd, $id
+        $seen[$k] = $true
+        $byKey[$k] = [pscustomobject]@{
+            cwd    = $Cwd
+            id     = $id
+            title  = [string]$raw.title
+            detail = [string]$raw.detail
+            file   = [string]$raw.file
+            run    = $RunId
+            status = 'open'
+        }
+    }
+    foreach ($k in @($byKey.Keys)) {
+        $row = $byKey[$k]
+        if ([string]$row.cwd -ne $Cwd) { continue }
+        if ($seen.ContainsKey($k)) { continue }
+        if ([string]$row.status -eq 'resolved') { continue }
+        $row.status = 'resolved'
+        $row.resolvedRun = $RunId
+        $byKey[$k] = $row
+    }
+    $dir = Split-Path $path -Parent
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    $doc = [pscustomobject]@{
+        updated = (Get-Date).ToString('o')
+        items   = @($byKey.Values)
+    }
+    $json = $doc | ConvertTo-Json -Depth 6
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($path, $json, $utf8)
+}
+
 function Import-GateStatusTail {
     if (-not $script:GateEvents) {
         $script:GateEvents = [System.Collections.Generic.List[string]]::new()
@@ -428,6 +498,19 @@ function Write-GateDone {
     Stop-GateElapsedHeartbeat
 }
 
+function Set-GateWaitNow {
+    # Refresh ELAPSED without rewriting NOW on every pulse. Never embed (~Ns).
+    param([string]$WaitNames)
+    if (-not $WaitNames) { return }
+    $nowWait = "Waiting on $WaitNames"
+    if ($nowWait -ne $script:LastWaitNow) {
+        $script:LastWaitNow = $nowWait
+        Write-GateProgress ("waiting {0}" -f $WaitNames) -Now $nowWait
+    } elseif (Get-Command Write-GateStatusFile -ErrorAction SilentlyContinue) {
+        Write-GateStatusFile
+    }
+}
+
 function Wait-VibeJobs {
     param(
         $Jobs,
@@ -452,12 +535,7 @@ function Wait-VibeJobs {
             break
         }
         $waitNames = ($running | ForEach-Object { $_.Name }) -join ', '
-        $nowWait = "Waiting on $waitNames"
-        # Do not put (~Ns) in NOW — that woke chat every 15s.
-        if ($nowWait -ne $script:LastWaitNow) {
-            $script:LastWaitNow = $nowWait
-            Write-GateProgress ("waiting {0}" -f $waitNames) -Now $nowWait
-        }
+        Set-GateWaitNow $waitNames
         $null = Wait-Job -Job $running -Timeout $PulseSec
     }
 }

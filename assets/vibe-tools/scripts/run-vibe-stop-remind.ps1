@@ -50,18 +50,10 @@ if ($reason -and $reason -ne 'end_turn' -and $reason -notmatch 'Stop$') {
     exit 0
 }
 
-function Get-GateNowTickKey([string]$NowLine) {
-    $s = "$NowLine"
-    $s = $s -replace '\s*\(~\d+s\)', ''
-    $s = $s -replace '\s*none finished yet[^\|]*', ''
-    $s = $s -replace '\s{2,}', ' '
-    return $s.Trim()
-}
-
-function Test-IsGateWaitNow([string]$NowLine) {
-    $s = (Get-GateNowTickKey $NowLine) -replace '^NOW:\s+', ''
-    return [bool]($s -match '(?i)^Waiting on\b')
-}
+$gateChatLib = Join-Path $PSScriptRoot 'gate-chat-lib.ps1'
+if (-not (Test-Path -LiteralPath $gateChatLib)) { throw 'gate-chat-lib.ps1 missing' }
+. $gateChatLib
+if (-not (Get-Command Test-IsGateWaitNow -ErrorAction SilentlyContinue)) { throw 'gate-chat-lib.ps1 failed to load' }
 
 $nowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
 if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
@@ -89,8 +81,9 @@ if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
         if (Test-Path -LiteralPath $spokeFile) {
             try { $spokeNow = ((Get-Content -LiteralPath $spokeFile -TotalCount 1) -replace '[\r\n]+', '').Trim() } catch { $spokeNow = '' }
         }
-        # Waiting is not a speakable event. Do not force 'no new votes'.
-        if (Test-IsGateWaitNow $now) {
+        # Waiting is not speakable unless VOTE lines already landed (NOW can lag).
+        $hasVotes = @($head | Where-Object { $_ -match '^VOTE:' }).Count -gt 0
+        if ((Test-IsGateWaitNow $now) -and -not $hasVotes) {
             Invoke-EditRemind
             exit 0
         }
