@@ -63,7 +63,7 @@ If `.git` exists and hooks missing `Vibe pre-`:
 - **pre-commit** — scans (staged-first) + AI (`-AutoProfile`, default base standard)
 - **pre-push** — scans (full / cache) + AI fast (version tags → strict, parent..tip)
 - **on-edit** — global PostToolUse fast checks; findings injected on next `UserPromptSubmit`
-- **watch** — poll `~/.grok/vibe-tools/reports/gate-now.txt` every ~15s (PreToolUse clamps longer waits). Speak `RUN`+`NOW`+`ELAPSED` each poll. Start `monitor` on `watch-gate-now.ps1 -Monitor` once so chat wakes on ticks (stays up across commit then push; GATE DONE is a tick, not exit). After 5 minutes of the same RUN staying `GATE DONE`, the watcher prints `DONE` and exits. Stop hook blocks a silent end while the gate is live. Latch the new `RUN:` line; ignore `GATE DONE` until that RUN appears. Popup only if `VIBE_GATE_POPUP=1`.
+- **watch** — poll `~/.grok/vibe-tools/reports/gate-now.txt` every ~15s (PreToolUse clamps longer waits). Speak `RUN`+`NOW`+`ELAPSED` each poll. Start `monitor` on `watch-gate-now.ps1 -Monitor` when a gate starts (GATE DONE is a tick, not exit). Watcher lingers ~45s after the same RUN stays `GATE DONE`, then prints `DONE` and exits. After the last gate of the pair, **kill the watch**. If the next gate starts and the watch is already dead, start a new one. Stop hook blocks a silent end while the gate is live. Latch the new `RUN:` line; ignore `GATE DONE` until that RUN appears. Popup only if `VIBE_GATE_POPUP=1`.
 
 After install: if Grok was already open → `/hooks` then `r`, or restart.
 

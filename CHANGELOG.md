@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-16
+
+### Changed
+
+- Gate watcher lingers **45 seconds** after the same RUN stays `GATE DONE`, then prints `DONE` and exits (was 5 minutes). Covers immediate commit-then-push; if the next gate starts later, start a new monitor
+- After the last gate of a pair the agent **kills** the watch so chat is not left on a stale `GATE DONE` tick
+
+### Fixed
+
+- Missing `gate-now.txt` no longer resets an idle clock already started (idle-exit still fires)
+
 ## [1.3.9] - 2026-08-16
 
 ### Fixed

@@ -7,12 +7,13 @@
     Hidden loop: rewrite ELAPSED on gate-now.txt every 15s until GATE DONE.
 .PARAMETER Monitor
     Print RUN | NOW | ELAPSED when it changes. GATE DONE is a tick, not process
-    exit — stay up across sequential gates (commit then push). Print DONE and
-    exit after IdleSec of the same RUN staying GATE DONE (default 5m), or at
-    the 2h deadline. IdleSec 0 disables idle-exit. Use as the monitor tool command.
+    exit — linger IdleSec (default 45s) so commit-then-push can reuse one watch.
+    Then print DONE and exit. After the last gate of a pair the agent kills the
+    watch; if the next gate starts later, start a new monitor. IdleSec 0 keeps
+    the 2h-only deadline.
 .PARAMETER IdleSec
     Seconds of stale GATE DONE (same RUN) before Monitor prints DONE and exits.
-    Default 300. 0 = never idle-exit.
+    Default 45. 0 = never idle-exit.
 .PARAMETER IntervalSec
     Poll interval. Default 15.
 .PARAMETER NowFile
@@ -21,7 +22,7 @@
 param(
     [switch]$Heartbeat,
     [switch]$Monitor,
-    [int]$IdleSec = 300,
+    [int]$IdleSec = 45,
     [int]$IntervalSec = 15,
     [string]$NowFile = ''
 )
@@ -101,9 +102,9 @@ function Update-GateElapsed {
 
 if (-not $Heartbeat -and -not $Monitor) { $Monitor = $true }
 
-# Monitor stays up across sequential gates (commit then push).
+# Monitor lingers IdleSec after GATE DONE so commit-then-push can reuse it.
 # GATE DONE is a tick, not process exit. Heartbeat-only still stops on GATE DONE.
-# Monitor idle-exits after IdleSec of the same RUN staying GATE DONE.
+# Missing gate-now.txt does not reset an idle clock already started.
 while ((Get-Date) -lt $deadline) {
     $head = Get-GateHead
     $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
@@ -112,6 +113,10 @@ while ((Get-Date) -lt $deadline) {
     $runId = $null
     if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
     if (-not $head) {
+        if ($Monitor -and $IdleSec -gt 0 -and $null -ne $idleSince -and ((Get-Date) - $idleSince).TotalSeconds -ge $IdleSec) {
+            [Console]::Out.WriteLine('DONE')
+            exit 0
+        }
         Start-Sleep -Seconds $IntervalSec
         continue
     }

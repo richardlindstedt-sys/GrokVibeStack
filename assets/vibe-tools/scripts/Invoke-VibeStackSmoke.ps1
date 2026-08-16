@@ -402,10 +402,10 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
 }
-if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match 'Monitor stays up across sequential gates' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor' -and $watchNow -match 'IdleSec' -and $watchNow -match 'same RUN staying GATE DONE') {
-    Ok 'gate monitor: GATE DONE is a tick; stay up for commit then push; idle-exit'
+if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 45' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor' -and $watchNow -match 'does not reset an idle clock' -and $watchNow -match 'IdleSec') {
+    Ok 'gate monitor: GATE DONE is a tick; 45s linger; missing file keeps idle clock'
 } else {
-    Bad 'watch-gate-now still exits on GATE DONE or missing idle-exit (kills commit-then-push watch)'
+    Bad 'watch-gate-now missing 45s linger / idle clock keep / Heartbeat-only exit'
 }
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))

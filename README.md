@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.3.9** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **1.4.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -281,7 +281,7 @@ vibe-review                         # full scans + standard AI gate on current d
 
 Doctor shows: Headroom proxy up/down plus live cmdline + fingerprint vs this stack, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report.
 
-**Watch commit/push gates in this chat.** The agent backgrounds `git commit`/`git push` and polls `~/.grok/vibe-tools/reports/gate-now.txt`. First line is `RUN:` — ignore leftover `GATE DONE` until that new RUN appears, then report scans, reviewer votes, blockers, auto-fix, and `GATE DONE` on that RUN. No extra window.
+**Watch commit/push gates in this chat.** The agent backgrounds `git commit`/`git push` and polls `~/.grok/vibe-tools/reports/gate-now.txt`. First line is `RUN:` — ignore leftover `GATE DONE` until that new RUN appears, then report scans, reviewer votes, blockers, auto-fix, and `GATE DONE` on that RUN. The watcher lingers ~45s after `GATE DONE` then exits; after the last gate of the pair the agent kills it. No extra window.
 
 ```powershell
 Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-now.txt
