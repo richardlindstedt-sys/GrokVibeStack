@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.8] - 2026-08-16
+
+### Fixed
+
+- `Repair-GrokConfigFile` restores the live `config.toml` from the `relocations/` backup if the post-write re-read fails `Test-VibeToml`
+- Bak is merge source only when it has the quoted `[model."grok-4.6"]` Headroom override (not a bare `8787` string or duplicate tables alone)
+- Smoke covers `Repair-GrokConfigFile` quarantine/relocations IO and the restore-on-recheck throw
+
 ## [1.3.7] - 2026-08-16
 
 ### Fixed

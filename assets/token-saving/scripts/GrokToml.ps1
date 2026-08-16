@@ -228,6 +228,29 @@ function Backup-VibeConfigFile {
     return $dest
 }
 
+function Restore-VibeConfigBackup {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [string]$BackupPath
+    )
+    if (-not $BackupPath -or -not (Test-Path -LiteralPath $BackupPath)) { return $false }
+    Copy-Item -LiteralPath $BackupPath -Destination $ConfigPath -Force
+    return $true
+}
+
+function Confirm-VibeConfigWrite {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [string]$BackupPath
+    )
+    $onDisk = Read-Utf8NoBomFile -Path $ConfigPath
+    $recheck = Test-VibeToml -Raw $onDisk
+    if ($recheck.Ok) { return $recheck }
+    $restored = Restore-VibeConfigBackup -ConfigPath $ConfigPath -BackupPath $BackupPath
+    $note = if ($restored) { '; live file restored from backup' } else { '; no backup to restore' }
+    throw ('config.toml re-read after write is invalid: {0}{1}' -f ($recheck.Errors -join '; '), $note)
+}
+
 function Move-VibeConfigSidecar {
     param([string]$Path)
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
@@ -253,15 +276,14 @@ function Resolve-VibeConfigMergeSource {
     if ($live) {
         $liveHr = [bool]((Test-VibeToml -Raw $live).HasHeadroomOverride)
     }
-    # Prefer bak when live is a stub (no Headroom) and bak looks like the stack.
-    # Do not treat parse-Ok alone as "keep live" — a short Grok stub can be
-    # valid TOML. Do not set SidecarPath unless bak is the merge source.
-    $bakLooksLikeStack = $false
+    # Prefer bak only when live lacks Headroom and bak has the same stack
+    # signal (quoted [model."grok-4.6"] + 8787). Dups or a bare 8787 string
+    # are not enough — that would promote extra same-user tables.
+    $bakHr = $false
     if ($sidecarRaw) {
-        $bakDups = @(Get-TomlDuplicateTables -Raw $sidecarRaw)
-        $bakLooksLikeStack = ($bakDups.Count -gt 0) -or [bool]($sidecarRaw -match '127\.0\.0\.1:8787')
+        $bakHr = [bool]((Test-VibeToml -Raw $sidecarRaw).HasHeadroomOverride)
     }
-    if ($bakLooksLikeStack -and -not $liveHr) {
+    if ($bakHr -and -not $liveHr) {
         return @{
             Raw         = $sidecarRaw
             SourcePath  = $sidecar
@@ -338,11 +360,7 @@ function Repair-GrokConfigFile {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
     Write-Utf8NoBomFile -Path $ConfigPath -Content $merged
-    $onDisk = Read-Utf8NoBomFile -Path $ConfigPath
-    $recheck = Test-VibeToml -Raw $onDisk
-    if (-not $recheck.Ok) {
-        throw ('config.toml re-read after write is invalid: {0}' -f ($recheck.Errors -join '; '))
-    }
+    $recheck = Confirm-VibeConfigWrite -ConfigPath $ConfigPath -BackupPath $backup
     $quarantined = $null
     if ($src.SidecarPath) {
         $quarantined = Move-VibeConfigSidecar -Path $src.SidecarPath

@@ -553,6 +553,53 @@ default = "grok-4.6"
         } else {
             Bad ("config source valid+bak should keep live and not mark sidecar source={0} sidecar={1}" -f $fromOk.SourcePath, $fromOk.SidecarPath)
         }
+        $weakBak = "[cli]`nnote = `"see 127.0.0.1:8787`"`n"
+        [System.IO.File]::WriteAllText($livePath, $stub)
+        [System.IO.File]::WriteAllText($bakPath, $weakBak)
+        $fromWeak = Resolve-VibeConfigMergeSource -ConfigPath $livePath
+        if ($fromWeak.SourcePath -eq $livePath -and -not $fromWeak.SidecarPath) {
+            Ok 'config source: 8787-only bak is not stack'
+        } else {
+            Bad ("config source weak bak should stay on live got source={0}" -f $fromWeak.SourcePath)
+        }
+        [System.IO.File]::WriteAllText($livePath, $stub)
+        [System.IO.File]::WriteAllText($bakPath, $stack)
+        $snipPath = Join-Path $RepoRoot 'assets\config\config-snippet.toml'
+        $repaired = $null
+        try {
+            $repaired = Repair-GrokConfigFile -ConfigPath $livePath -SnippetPath $snipPath -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true -BackupSuffix ('smoke-{0}' -f [guid]::NewGuid().ToString('n'))
+            $reloc = Join-Path $env:USERPROFILE '.grok\relocations'
+            $liveAfter = Read-Utf8NoBomFile -Path $livePath
+            $liveOk = [bool]((Test-VibeToml -Raw $liveAfter).Ok)
+            $bakGone = -not (Test-Path -LiteralPath $bakPath)
+            $qOk = $repaired.Quarantined -and $repaired.Quarantined.StartsWith($reloc)
+            $bOk = $repaired.BackupPath -and $repaired.BackupPath.StartsWith($reloc)
+            if ($liveOk -and $bakGone -and $qOk -and $bOk) {
+                Ok 'Repair: stub+stack bak writes Headroom live; backup+sidecar under relocations'
+            } else {
+                Bad ("Repair path liveOk={0} bakGone={1} q={2} bak={3}" -f $liveOk, $bakGone, $repaired.Quarantined, $repaired.BackupPath)
+            }
+        } finally {
+            if ($repaired -and $repaired.BackupPath) { Remove-Item -LiteralPath $repaired.BackupPath -Force -ErrorAction SilentlyContinue }
+            if ($repaired -and $repaired.Quarantined) { Remove-Item -LiteralPath $repaired.Quarantined -Force -ErrorAction SilentlyContinue }
+        }
+        $origKeep = "[cli]`ninstaller = `"keep-me`"`n"
+        Write-Utf8NoBomFile -Path $livePath -Content $origKeep
+        $restoreBak = Backup-VibeConfigFile -ConfigPath $livePath -BackupSuffix ('smoke-restore-{0}' -f [guid]::NewGuid().ToString('n'))
+        Write-Utf8NoBomFile -Path $livePath -Content "[broken`n"
+        $threw = $false
+        try {
+            $null = Confirm-VibeConfigWrite -ConfigPath $livePath -BackupPath $restoreBak
+        } catch {
+            $threw = $true
+        }
+        $restored = Read-Utf8NoBomFile -Path $livePath
+        if ($threw -and $restored -match 'keep-me') {
+            Ok 'Confirm-VibeConfigWrite: invalid re-read restores backup then throws'
+        } else {
+            Bad ("restore-on-recheck threw={0} live={1}" -f $threw, $restored)
+        }
+        if ($restoreBak) { Remove-Item -LiteralPath $restoreBak -Force -ErrorAction SilentlyContinue }
     } finally {
         Remove-Item -LiteralPath $srcTmp -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -577,10 +624,10 @@ if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Repair-GrokConfigFile'
     Bad 'installer merge no longer calls Repair-GrokConfigFile'
 }
 $tomlSrc = Get-Content -LiteralPath $tomlHelper -Raw
-if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'SidecarPath = \$null') {
-    Ok 'GrokToml: repair throws on invalid merge; bak unused unless source'
+if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'SidecarPath = \$null' -and $tomlSrc -match 'Confirm-VibeConfigWrite' -and $tomlSrc -match 'live file restored from backup') {
+    Ok 'GrokToml: repair throws on invalid merge; bak unused unless source; recheck restores backup'
 } else {
-    Bad 'GrokToml missing throw-on-invalid or unused-sidecar SidecarPath=null'
+    Bad 'GrokToml missing throw-on-invalid, unused-sidecar, or restore-on-recheck'
 }
 if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile' -and $startSrc -match 'GrokToml\.ps1 missing' -and $startSrc -match 'HasHeadroomOverride' -and $startSrc -match 'if \(\$check\.HasHeadroomOverride -and \$check\.Ok\) \{ return \}') {
     Ok 'start-grok: config preflight + auto-repair + fail-closed helper + skip rewrite when Headroom Ok'
