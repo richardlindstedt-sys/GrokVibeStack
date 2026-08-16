@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-08-16
+
+### Fixed
+
+- `start-grok` no longer kills a freshly started Headroom proxy when the TCP owner of `:8787` is the pip-wrapper python child (or grandchild) instead of the Start-Process PID. Adopts only an own-tree listener that passes Headroom argv checks and rewrites the PID file.
+
 ## [1.3.4] - 2026-08-15
 
 ### Fixed

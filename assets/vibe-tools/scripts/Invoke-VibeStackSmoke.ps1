@@ -633,10 +633,10 @@ if ($progSrc -match 'PID:' -and $progSrc -match 'CWD:' -and $progSrc -match 'ado
     Bad 'gate adopt/tail/popup still stale'
 }
 $startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
-if ($startSrc -match 'Test-ProxyProcessOk' -and $startSrc -match 'TCP owner is not Headroom PID' -and $startSrc -match 'recordedPid is a hint only' -and $startSrc -notmatch 'recordedPid -and \$op -ne \$recordedPid' -and $startSrc -notmatch "ProcessName -match 'headroom\|python'") {
-    Ok 'proxy stop/start: Headroom argv + TCP owner PID; stale pid file does not veto live owner'
+if ($startSrc -match 'Test-ProxyProcessOk' -and $startSrc -match 'TCP owner is not Headroom PID' -and $startSrc -match 'recordedPid is a hint only' -and $startSrc -match 'Test-IsDescendantOf' -and $startSrc -match 'Get-ListenOwnerPids' -and $startSrc -notmatch 'recordedPid -and \$op -ne \$recordedPid' -and $startSrc -notmatch "ProcessName -match 'headroom\|python'") {
+    Ok 'proxy stop/start: Headroom argv + TCP owner PID; adopt child listener; stale pid file does not veto live owner'
 } else {
-    Bad 'proxy still force-kills by name/stale PID or rejects live owner on pid mismatch'
+    Bad 'proxy still force-kills by name/stale PID or rejects live owner / child bind on pid mismatch'
 }
 if ($scanSrc -match 'Get-VibeSameVolumeTempDir' -and $scanSrc -match 'vibe-scan-tmp') {
     Ok 'scans: staged/tip trees stay on repo volume'

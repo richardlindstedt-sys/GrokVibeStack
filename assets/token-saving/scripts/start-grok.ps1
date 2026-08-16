@@ -161,6 +161,35 @@ function Get-ProcessCommandLine([int]$procId) {
     return $null
 }
 
+function Get-ListenOwnerPids([int]$p) {
+    $owners = [System.Collections.Generic.List[int]]::new()
+    try {
+        $conns = @(Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction Stop)
+        foreach ($c in $conns) {
+            if (-not $c.OwningProcess) { continue }
+            $op = [int]$c.OwningProcess
+            if ($op -gt 0 -and -not $owners.Contains($op)) { [void]$owners.Add($op) }
+        }
+    } catch {}
+    return $owners
+}
+
+function Test-IsDescendantOf([int]$ancestorId, [int]$procId) {
+    if ($ancestorId -le 0 -or $procId -le 0) { return $false }
+    $cur = $procId
+    for ($i = 0; $i -lt 16; $i++) {
+        if ($cur -eq $ancestorId) { return $true }
+        $w = $null
+        try {
+            $w = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
+        } catch { return $false }
+        if (-not $w -or -not $w.ParentProcessId) { return $false }
+        $cur = [int]$w.ParentProcessId
+        if ($cur -le 0) { return $false }
+    }
+    return $false
+}
+
 function Test-ProxyCommandLineMatchesStack([string]$cmdLine) {
     # Live argv must look like our headroom proxy stack (not any python on the port).
     if ([string]::IsNullOrWhiteSpace($cmdLine)) { return $false }
@@ -433,32 +462,41 @@ function Start-HeadroomProxyIfNeeded {
             throw "Headroom proxy exited early (code $($proc.ExitCode)).`n--- stderr ---`n$($err -join "`n")`n--- stdout ---`n$($out -join "`n")"
         }
         if (Test-PortListening $Port) {
-            $ownerOk = $false
-            $queryOk = $false
-            try {
-                $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
-                foreach ($c in $conns) {
-                    if (-not $c.OwningProcess) { continue }
-                    $queryOk = $true
-                    if ([int]$c.OwningProcess -eq [int]$proc.Id) {
-                        $ownerOk = $true
+            # pip's headroom.exe is a launcher: python child (or grandchild) bind()s
+            # :8787. Start-Process PID is the wrapper - never require it == TCP owner.
+            $owners = @(Get-ListenOwnerPids $Port)
+            $adopted = $null
+            if ($owners.Count -eq 0) {
+                # Empty Listen / no OwningProcess / cmdlet-missing / race is not a mismatch.
+                if (-not $proc.HasExited -and (Test-ProxyProcessOk $proc.Id)) {
+                    $adopted = [int]$proc.Id
+                }
+            } else {
+                foreach ($op in $owners) {
+                    if ($op -eq [int]$proc.Id -and (Test-ProxyProcessOk $proc.Id)) {
+                        $adopted = $op
                         break
                     }
                 }
-            } catch { $queryOk = $false }
-            # Empty Listen / no OwningProcess / cmdlet-missing / race is not a mismatch.
-            if ($queryOk -and -not $ownerOk) {
+                if ($null -eq $adopted) {
+                    foreach ($op in $owners) {
+                        if (-not (Test-IsDescendantOf -AncestorId ([int]$proc.Id) -ProcId $op)) { continue }
+                        if (Test-ProxyProcessOk $op) {
+                            $adopted = $op
+                            break
+                        }
+                    }
+                }
+            }
+            if ($null -eq $adopted) {
                 try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
                 Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
-                throw "Port $Port is listening but TCP owner is not Headroom PID $($proc.Id)."
+                $ownerList = if ($owners.Count) { $owners -join ',' } else { 'unknown' }
+                throw "Port $Port is listening but TCP owner is not Headroom PID $($proc.Id) (owners=$ownerList)."
             }
-            if (-not (Test-ProxyProcessOk $proc.Id)) {
-                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-                Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
-                throw "Port $Port owner PID $($proc.Id) is not a Headroom proxy cmdline."
-            }
+            Set-Content -Path $ProxyPidFile -Value $adopted -Encoding ascii -NoNewline
             Save-ProxyFingerprint
-            Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port"
+            Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port (pid $adopted)"
             return
         }
         Start-Sleep -Milliseconds 400
