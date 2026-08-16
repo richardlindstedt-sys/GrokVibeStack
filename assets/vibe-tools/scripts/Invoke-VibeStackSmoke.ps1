@@ -402,10 +402,10 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
 }
-if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 45' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor' -and $watchNow -match 'does not reset an idle clock' -and $watchNow -match 'IdleSec') {
-    Ok 'gate monitor: GATE DONE is a tick; 45s linger; missing file keeps idle clock'
+if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 45' -and $watchNow -match '\$sawLive' -and $watchNow -match 'Do not idle until a live gate' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor') {
+    Ok 'gate monitor: leftover GATE DONE does not arm idle; 45s linger after live gate'
 } else {
-    Bad 'watch-gate-now missing 45s linger / idle clock keep / Heartbeat-only exit'
+    Bad 'watch-gate-now missing sawLive arm / 45s linger / Heartbeat-only exit'
 }
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -422,23 +422,34 @@ try {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
         '-Monitor', '-IdleSec', '2', '-IntervalSec', '1', '-NowFile', $idleNow
     ) -RedirectStandardOutput $idleOut -WindowStyle Hidden -PassThru
-    Start-Sleep -Milliseconds 800
-    if (-not $idleProc.HasExited) {
-        Ok 'gate monitor: GATE DONE does not exit immediately'
+    Start-Sleep -Milliseconds 2800
+    if ($idleProc.HasExited) {
+        Bad 'watch-gate-now idle-exited on leftover GATE DONE (kills monitor before next gate)'
+    } else {
+        Ok 'gate monitor: leftover GATE DONE does not idle-exit'
+        @(
+            'RUN:     idle-test-2'
+            'NOW:     Waiting on vibe-correctness'
+            'ELAPSED: 1s'
+        ) | Set-Content -LiteralPath $idleNow -Encoding ascii
+        Start-Sleep -Milliseconds 1200
+        @(
+            'RUN:     idle-test-2'
+            'NOW:     GATE DONE - passed'
+            'ELAPSED: 2s'
+        ) | Set-Content -LiteralPath $idleNow -Encoding ascii
         $idleProc.WaitForExit(8000) | Out-Null
         if ($idleProc.HasExited) {
             $idleTxt = Get-Content -LiteralPath $idleOut -Raw -ErrorAction SilentlyContinue
             if ($idleTxt -match '(?m)^DONE\s*$') {
-                Ok 'gate monitor: idle-exit prints DONE after stale GATE DONE'
+                Ok 'gate monitor: idle-exit after live gate then GATE DONE'
             } else {
-                Bad 'gate monitor idle-exit ran but stdout missing DONE'
+                Bad 'gate monitor idle-exit ran after live gate but stdout missing DONE'
             }
         } else {
             try { Stop-Process -Id $idleProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Bad 'gate monitor did not idle-exit within 8s (IdleSec=2)'
+            Bad 'gate monitor did not idle-exit within 8s after live then GATE DONE'
         }
-    } else {
-        Bad 'watch-gate-now exited immediately on GATE DONE (kills commit-then-push watch)'
     }
 } catch {
     Bad ("gate monitor idle-exit smoke: {0}" -f $_.Exception.Message)

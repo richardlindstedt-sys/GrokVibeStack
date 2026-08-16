@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-16
+
+### Fixed
+
+- Watcher does not arm idle-exit on leftover `GATE DONE` at startup. That printed `DONE` and killed the Grok monitor before the next gate wrote a new `RUN`. Idle starts only after this process has seen a live (non-DONE) `NOW`
+
 ## [1.4.0] - 2026-08-16
 
 ### Changed

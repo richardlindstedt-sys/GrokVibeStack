@@ -7,10 +7,12 @@
     Hidden loop: rewrite ELAPSED on gate-now.txt every 15s until GATE DONE.
 .PARAMETER Monitor
     Print RUN | NOW | ELAPSED when it changes. GATE DONE is a tick, not process
-    exit — linger IdleSec (default 45s) so commit-then-push can reuse one watch.
-    Then print DONE and exit. After the last gate of a pair the agent kills the
-    watch; if the next gate starts later, start a new monitor. IdleSec 0 keeps
-    the 2h-only deadline.
+    exit. Leftover GATE DONE at startup does not start the idle clock (that
+    printed DONE and killed the Grok monitor before the next gate). Idle arms
+    only after this process has seen a live (non-DONE) NOW, then lingers
+    IdleSec (default 45s) after that RUN becomes GATE DONE. After the last
+    gate of a pair the agent kills the watch; if the next gate starts later,
+    start a new monitor. IdleSec 0 keeps the 2h-only deadline.
 .PARAMETER IdleSec
     Seconds of stale GATE DONE (same RUN) before Monitor prints DONE and exits.
     Default 45. 0 = never idle-exit.
@@ -40,6 +42,7 @@ $deadline = (Get-Date).AddHours(2)
 $lastPrint = ''
 $idleSince = $null
 $idleRun = $null
+$sawLive = $false
 
 function Get-GateHead {
     if (-not (Test-Path -LiteralPath $nowFile)) { return @() }
@@ -104,6 +107,7 @@ if (-not $Heartbeat -and -not $Monitor) { $Monitor = $true }
 
 # Monitor lingers IdleSec after GATE DONE so commit-then-push can reuse it.
 # GATE DONE is a tick, not process exit. Heartbeat-only still stops on GATE DONE.
+# Do not idle until a live gate — leftover GATE DONE must not print DONE.
 # Missing gate-now.txt does not reset an idle clock already started.
 while ((Get-Date) -lt $deadline) {
     $head = Get-GateHead
@@ -129,11 +133,12 @@ while ((Get-Date) -lt $deadline) {
         if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
     }
     if ($done) {
-        if ($null -eq $idleSince -or $runId -ne $idleRun) {
+        if ($sawLive -and ($null -eq $idleSince -or $runId -ne $idleRun)) {
             $idleSince = Get-Date
             $idleRun = $runId
         }
     } else {
+        $sawLive = $true
         $idleSince = $null
         $idleRun = $null
     }
