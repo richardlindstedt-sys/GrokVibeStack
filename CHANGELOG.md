@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.9] - 2026-08-16
+
+### Fixed
+
+- Open-advisory resolve rebuilds the row instead of setting `resolvedRun` on a deserialized PSCustomObject (that threw and blocked the 1.4.8 push)
+
 ## [1.4.8] - 2026-08-16
 
 ### Fixed

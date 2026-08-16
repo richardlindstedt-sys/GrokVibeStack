@@ -155,9 +155,16 @@ function Save-GateOpenAdvisories {
         if ([string]$row.cwd -ne $Cwd) { continue }
         if ($seen.ContainsKey($k)) { continue }
         if ([string]$row.status -eq 'resolved') { continue }
-        $row.status = 'resolved'
-        $row.resolvedRun = $RunId
-        $byKey[$k] = $row
+        $byKey[$k] = [pscustomobject]@{
+            cwd         = [string]$row.cwd
+            id          = [string]$row.id
+            title       = [string]$row.title
+            detail      = [string]$row.detail
+            file        = [string]$row.file
+            run         = [string]$row.run
+            status      = 'resolved'
+            resolvedRun = $RunId
+        }
     }
     $dir = Split-Path $path -Parent
     if (-not (Test-Path -LiteralPath $dir)) {
