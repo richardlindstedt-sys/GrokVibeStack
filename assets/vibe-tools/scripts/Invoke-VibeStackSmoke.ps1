@@ -485,6 +485,11 @@ if ($instSrc -match 'stackOwned' -and $instSrc -match 'Never record pre-existing
 } else {
     Bad 'PATH AlwaysRecord / uninstall shared-dir strip still unsafe'
 }
+if ($instSrc -match "checkov\.cmd" -and $unSrc -match "checkov\.cmd" -and $unSrc -match 'relocations' -and $unSrc -match 'mcp_servers.headroom' -and $unSrc -match 'hadMarkers' -and $unSrc -notmatch 'Get-VibeOwnedTomlSections' -and $unSrc -notmatch 'pre-uninstall-') {
+    Ok 'uninstall: checkov shim + marker-or-stack-table strip + relocations bak'
+} else {
+    Bad 'uninstall missing checkov / still wipes shared TOML tables / next-to-live bak'
+}
 $rtkSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc -match 'Split-ShellSegments' -and $rtkSrc -match 'each shell segment' -and $rtkSrc -match 'newline' -and $rtkSrc -match 'isCallOp') {
     Ok 'rtk: per-segment enforce (&& || ; newline bare &)'

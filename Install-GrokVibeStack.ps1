@@ -111,7 +111,7 @@ $script:Manifest = [ordered]@{
     stackFiles           = New-Object System.Collections.Generic.List[string]
     binShims             = @(
         'start-grok.cmd', 'start-grok.ps1', 'stop-grok-proxy.cmd',
-        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'rtk.exe', 'scc.exe', 'tokei.exe'
+        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe'
     )
     hookFiles            = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')
     qualityGates         = @('pre-commit', 'pre-push', 'on-edit', 'rtk-enforce', 'ai-review-high')

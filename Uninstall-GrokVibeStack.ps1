@@ -7,7 +7,7 @@
   Safe by default:
     - NEVER deletes Grok Build (grok.exe, agent.exe, auth.json, sessions, marketplace, etc.)
     - Removes stack dirs: token-saving, vibe-tools, our rules/skills/hooks
-    - Removes managed config.toml block (restores from backup if available)
+    - Removes managed config.toml block and stack-owned tables (Grok may drop markers)
     - Removes PATH entries recorded in the install manifest
     - Removes bin shims we added (start-grok, vibe-review, rtk copy, ...)
 
@@ -86,7 +86,7 @@ function Get-Manifest {
         )
         binShims            = @(
             'start-grok.cmd', 'start-grok.ps1', 'stop-grok-proxy.cmd',
-            'vibe-review.ps1', 'install-vibe-hooks.ps1', 'rtk.exe', 'scc.exe', 'tokei.exe'
+            'vibe-review.ps1', 'install-vibe-hooks.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe'
         )
         hookFiles           = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')
         ruleFiles           = @('caveman.md', 'rtk.md', 'token-efficiency.md', 'vibe-coding.md')
@@ -176,25 +176,91 @@ function Remove-ManagedConfigBlock {
         Write-Info "no config.toml"
         return
     }
-    $begin = '# --- grok-vibe-stack managed block (begin) ---'
-    $end = '# --- grok-vibe-stack managed block (end) ---'
-    $raw = Get-Content -LiteralPath $cfg -Raw
-    if (-not $raw.Contains($begin)) {
-        Write-Info "no managed block markers (leaving config as-is)"
+
+    # Repo copy only (signed with this script). Never dot-source ~/.grok tree.
+    $tomlHelper = Join-Path $PSScriptRoot 'assets\token-saving\scripts\GrokToml.ps1'
+    if (Test-Path -LiteralPath $tomlHelper) { . $tomlHelper }
+
+    if ($DryRun) {
+        Write-Info "DRY strip managed block; if no markers, stack MCP/model tables only"
         return
     }
-    if ($DryRun) { Write-Info "DRY strip managed block"; return }
 
-    $bak = "$cfg.pre-uninstall-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    Copy-Item -LiteralPath $cfg -Destination $bak -Force
-    Write-Info "Backup before strip: $bak"
+    $reloc = Join-Path $GrokHome 'relocations'
+    if (-not (Test-Path -LiteralPath $reloc)) {
+        New-Item -ItemType Directory -Path $reloc -Force | Out-Null
+    }
+    $bak = $null
+    if (Get-Command Backup-VibeConfigFile -ErrorAction SilentlyContinue) {
+        $bak = Backup-VibeConfigFile -ConfigPath $cfg -BackupSuffix ("uninstall-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    } else {
+        $bak = Join-Path $reloc ("config-uninstall-{0}.toml" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        Copy-Item -LiteralPath $cfg -Destination $bak -Force
+    }
+    if ($bak) { Write-Info "Backup before strip: $bak" }
 
-    $pattern = '(?s)' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end) + '\r?\n?'
-    $newRaw = [regex]::Replace($raw, $pattern, '')
-    # collapse excessive blank lines
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    if (Get-Command Read-Utf8NoBomFile -ErrorAction SilentlyContinue) {
+        $raw = Read-Utf8NoBomFile -Path $cfg
+    } else {
+        $raw = [System.IO.File]::ReadAllText($cfg, $utf8)
+    }
+
+    $begin = '# --- grok-vibe-stack managed block (begin) ---'
+    if (Get-Command Get-VibeManagedBlockMarkers -ErrorAction SilentlyContinue) {
+        $begin = (Get-VibeManagedBlockMarkers).Begin
+    }
+    $hadMarkers = $raw.Contains($begin)
+
+    if ($hadMarkers) {
+        if (Get-Command Remove-VibeManagedTomlBlock -ErrorAction SilentlyContinue) {
+            $newRaw = Remove-VibeManagedTomlBlock -Raw $raw
+        } else {
+            $end = '# --- grok-vibe-stack managed block (end) ---'
+            $pattern = '(?s)' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
+            $newRaw = [regex]::Replace($raw, $pattern, '').TrimEnd()
+        }
+    } else {
+        # Grok rewrite drops markers. Strip stack MCP/model tables only — never
+        # whole [session]/[features]/[mcp]/[models] (user + Grok share those).
+        $stackTables = @(
+            'mcp_servers.headroom', 'mcp_servers.serena',
+            'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+            'model."grok-4.6-direct"', 'model.grok-4.6-direct'
+        )
+        if (Get-Command Remove-TomlSections -ErrorAction SilentlyContinue) {
+            $newRaw = Remove-TomlSections -Raw $raw -SectionNames $stackTables
+        } else {
+            $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            foreach ($n in $stackTables) { if ($n) { [void]$set.Add($n) } }
+            $lines = $raw -split "`r?`n", -1
+            $out = New-Object System.Collections.Generic.List[string]
+            $skip = $false
+            foreach ($line in $lines) {
+                $hdr = $null
+                if ($line -match '^\s*\[\[([^\]]+)\]\]\s*(?:#.*)?$') { $hdr = $Matches[1].Trim() }
+                elseif ($line -match '^\s*\[([^\]]+)\]\s*(?:#.*)?$') { $hdr = $Matches[1].Trim() }
+                if ($hdr) { $skip = $set.Contains($hdr) }
+                if (-not $skip) { [void]$out.Add($line) }
+            }
+            $newRaw = ($out -join "`n")
+        }
+    }
+
     $newRaw = $newRaw -replace '(\r?\n){3,}', "`n`n"
-    [System.IO.File]::WriteAllText($cfg, $newRaw.TrimEnd() + "`n")
-    Write-Do "stripped managed block from config.toml"
+    $newRaw = $newRaw.TrimEnd() + "`n"
+
+    if (Get-Command Write-Utf8NoBomFile -ErrorAction SilentlyContinue) {
+        Write-Utf8NoBomFile -Path $cfg -Content $newRaw
+    } else {
+        [System.IO.File]::WriteAllText($cfg, $newRaw, $utf8)
+    }
+
+    if ($hadMarkers) {
+        Write-Do "stripped managed block from config.toml"
+    } else {
+        Write-Do "stripped stack MCP/model tables from config.toml (no managed-block markers)"
+    }
 }
 
 function Remove-RepoHooks([string]$RepoPath) {
@@ -282,11 +348,21 @@ foreach ($f in @('AGENTS.md', 'RTK.md')) {
     Remove-FileSafe $p
 }
 Remove-FileSafe (Join-Path $GrokHome '.caveman-active')
+Remove-FileSafe (Join-Path $GrokHome 'VERSION')
 
 Write-Step "Bin shims (never grok.exe / agent.exe)"
-foreach ($shim in @($m.binShims)) {
+$shims = New-Object System.Collections.Generic.List[string]
+foreach ($shim in @($m.binShims)) { if ($shim) { [void]$shims.Add([string]$shim) } }
+foreach ($extra in @('checkov.cmd')) {
+    if (-not ($shims -contains $extra)) { [void]$shims.Add($extra) }
+}
+foreach ($shim in $shims) {
     Remove-FileSafe (Join-Path $GrokBin $shim)
 }
+
+# Config before deleting token-saving so installed GrokToml.ps1 is still loadable.
+Write-Step "config.toml"
+Remove-ManagedConfigBlock
 
 Write-Step "Stack directories (token-saving + vibe-tools only)"
 $allowedStackRoots = @(
@@ -317,9 +393,6 @@ foreach ($d in @($m.stackDirs)) {
 # Always try canonical stack trees
 Remove-DirSafe (Join-Path $GrokHome 'token-saving')
 Remove-DirSafe (Join-Path $GrokHome 'vibe-tools')
-
-Write-Step "config.toml"
-Remove-ManagedConfigBlock
 
 Write-Step "User PATH cleanup"
 $grokHomeNorm = $GrokHome.TrimEnd('\')

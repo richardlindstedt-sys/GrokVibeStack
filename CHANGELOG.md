@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-16
+
+### Fixed
+
+- Uninstall: if managed-block markers remain, strip that block only; if Grok dropped them, strip stack MCP/model tables (`headroom`/`serena`/`grok-4.6*`) -- never whole `[session]`/`[mcp]`/`[models]`. Pre-strip backup under `relocations/`
+- Uninstall removes `checkov.cmd` (now in installer `binShims`) and the dropped `~/.grok/VERSION`
+
 ## [1.4.1] - 2026-08-16
 
 ### Fixed
