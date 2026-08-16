@@ -13,15 +13,37 @@ $chunks = [System.Collections.Generic.List[string]]::new()
 $nowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
 if (Test-Path -LiteralPath $nowFile) {
     $head = @(Get-Content -LiteralPath $nowFile -TotalCount 8)
+    $rest = @(Get-Content -LiteralPath $nowFile | Select-Object -Skip 8)
+    $head = @($head + $rest)
     $run = ($head | Where-Object { $_ -match '^RUN:\s+\S+' } | Select-Object -First 1)
     $now = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
     $elapsed = ($head | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
     if ($run -and $now -and $now -notmatch 'GATE DONE') {
+        $votes = @($head | Where-Object {
+                $_ -and (
+                    $_ -match '^VOTE:' -or
+                    $_ -match '(?i)^\[[\d:]+\]\s*(correctness|security|simplicity):'
+                )
+            })
+        $evts = @($head | Where-Object {
+                $_ -and
+                $_ -notmatch '^(RUN|NOW|ELAPSED|PHASE|PID|CWD|LOG|EVENTS|VOTE):' -and
+                $_ -notmatch 'waiting vibe-' -and
+                $_ -notmatch '(?i)(correctness|security|simplicity):' -and
+                $_ -match 'scan:|scans passed|scans start|profile=|Round |reviewers running|start reviewer|done reviewer|arbiter|fixer|BLOCKER'
+            } | Select-Object -Last 24)
+        $evtBlock = ''
+        if ($votes.Count -gt 0) {
+            $evtBlock += "`n`nVOTES (verdict + reason; speak these as they land):`n" + ($votes -join "`n")
+        }
+        if ($evts.Count -gt 0) {
+            $evtBlock += "`n`nGATE EVENTS (paste this whole block in chat):`n" + ($evts -join "`n")
+        }
         [void]$chunks.Add(@"
-GATE LIVE (do not stay silent — report this NOW line in chat, then poll again in ~15s):
+GATE LIVE (do not stay silent — report NOW plus scan/reviewer/arbiter events, then poll again in ~15s):
 $run
 $now
-$elapsed
+$elapsed$evtBlock
 "@)
     }
 }

@@ -22,6 +22,9 @@ if (-not $script:GateNowFile) {
 if (-not $script:GateEvents) {
     $script:GateEvents = [System.Collections.Generic.List[string]]::new()
 }
+if (-not $script:GateVotes) {
+    $script:GateVotes = [ordered]@{}
+}
 if (-not $script:GateNow) { $script:GateNow = 'starting' }
 if (-not $script:GatePhase) { $script:GatePhase = '' }
 if (-not $script:GateSw) { $script:GateSw = [System.Diagnostics.Stopwatch]::StartNew() }
@@ -122,8 +125,13 @@ function Write-GateStatusFile {
         "CWD:     $($script:GateCwd)"
         "LOG:     $($script:GateLiveLog)"
         "EVENTS:  $($script:GateStatusFile)"
-        ''
     )
+    if ($script:GateVotes) {
+        foreach ($vk in @($script:GateVotes.Keys)) {
+            $body += ('VOTE:    {0}' -f $script:GateVotes[$vk])
+        }
+    }
+    $body += ''
     $ev = @($script:GateEvents | Where-Object {
         if ($script:GateNow -match 'GATE DONE') { $true } else { $_ -notmatch 'GATE DONE' }
     } | Select-Object -Last 20)
@@ -266,6 +274,7 @@ function Reset-GateLiveLog {
     $script:GatePid = $PID
     try { $script:GateCwd = (Get-Location).Path } catch { $script:GateCwd = '' }
     $script:GateEvents = [System.Collections.Generic.List[string]]::new()
+    $script:GateVotes = [ordered]@{}
     $script:GateNow = 'starting'
     $script:GatePhase = 'init'
     $script:GateSw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -340,6 +349,17 @@ function Start-GateRun {
     }
     if ($child) { return }
     Reset-GateLiveLog
+}
+
+function Set-GateVote {
+    param(
+        [string]$Role,
+        [string]$Text
+    )
+    if (-not $Role -or -not $Text) { return }
+    if (-not $script:GateVotes) { $script:GateVotes = [ordered]@{} }
+    $script:GateVotes[$Role] = ($Text -replace '[\r\n]+', ' ').Trim()
+    Write-GateStatusFile
 }
 
 function Write-GateProgress {

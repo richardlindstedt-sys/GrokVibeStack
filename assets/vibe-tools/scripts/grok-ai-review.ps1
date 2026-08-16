@@ -1004,6 +1004,54 @@ h1{font-size:1.4rem}
     }
 }
 
+function Publish-ReviewerVoteNow {
+    param(
+        [string]$Role,
+        $Result,
+        [string]$WaitingOn = ''
+    )
+    if (-not $script:VoteNowPublished) { $script:VoteNowPublished = @{} }
+    if ($script:VoteNowPublished.ContainsKey($Role)) { return }
+    $voteStr = 'FAIL'
+    $reason = 'no parseable vote'
+    $fc = 0
+    if ($Result -and $Result.Ok) {
+        $obj = ConvertFrom-JsonLoose $Result.Text
+        if ($obj) {
+            if (-not $obj.reviewer_id) { $obj | Add-Member -NotePropertyName reviewer_id -NotePropertyValue $Role -Force }
+            $obj = Normalize-ReviewerVote $obj
+        }
+        if ($obj) {
+            $voteStr = "$($obj.vote)"
+            $fc = @($obj.findings).Count
+            $reason = ''
+            try { $reason = ([string]$obj.summary).Trim() } catch { $reason = '' }
+            if (-not $reason) {
+                $reason = ((@($obj.findings | ForEach-Object {
+                                if ($_.title) { [string]$_.title } else { $null }
+                            } | Where-Object { $_ } | Select-Object -First 3)) -join '; ')
+            }
+            $reason = ($reason -replace '[\r\n]+', ' ').Trim()
+        }
+    }
+    if ($reason -and $reason.Length -gt 160) { $reason = $reason.Substring(0, 157) + '...' }
+    $evt = if ($reason) {
+        '{0}: {1} ({2} finding(s)) - {3}' -f $Role, $voteStr, $fc, $reason
+    } else {
+        '{0}: {1} ({2} finding(s))' -f $Role, $voteStr, $fc
+    }
+    $now = $evt
+    if ($WaitingOn) { $now = '{0} | waiting: {1}' -f $evt, $WaitingOn }
+    Write-Host ("    vote={0} findings={1}" -f $voteStr, $fc) -ForegroundColor Gray
+    if (Get-Command Set-GateVote -ErrorAction SilentlyContinue) {
+        Set-GateVote -Role $Role -Text $evt
+    }
+    if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+        Write-GateProgress $evt -Now $now -Phase 'reviewers'
+    }
+    $script:VoteNowPublished[$Role] = $evt
+}
+
 function Invoke-ReviewerPanel {
     param(
         $GrokExe, $ModelName, $DiffText, $RoundDir, $Round, $PriorBlockers, $Sequential, $Effort, $MaxTurns,
@@ -1012,6 +1060,7 @@ function Invoke-ReviewerPanel {
     if (-not $Roles -or $Roles.Count -eq 0) { $Roles = @('correctness', 'security', 'simplicity') }
     $roles = @($Roles)
     $results = @{}
+    $script:VoteNowPublished = @{}
 
     if ($Sequential) {
         $seqI = 0
@@ -1031,6 +1080,7 @@ function Invoke-ReviewerPanel {
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers)
             $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -OutLog $lf
+            Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn (($left | ForEach-Object { "vibe-$_" }) -join ', ')
         }
     } else {
         $jobs = @()
@@ -1068,18 +1118,47 @@ function Invoke-ReviewerPanel {
                 }
             } -ArgumentList $GrokExe, $ModelName, $pf, $lf, $Effort, $MaxTurns, $role
         }
-        Write-Host "  ... waiting for $($jobs.Count) reviewer jobs" -ForegroundColor DarkGray
-        if (Get-Command Wait-VibeJobs -ErrorAction SilentlyContinue) {
-            Wait-VibeJobs -Jobs $jobs -TimeoutSec 1200 -PulseSec 15
-        } else {
-            $null = Wait-Job -Job $jobs -Timeout 1200
-        }
-        foreach ($j in $jobs) {
-            $r = Receive-Job $j -ErrorAction SilentlyContinue
-            Remove-Job $j -Force -ErrorAction SilentlyContinue
-            if ($r -and $r.Role) {
-                $results[$r.Role] = @{ Ok = $r.Ok; Text = $r.Text; ExitCode = $r.ExitCode; Seconds = $r.Seconds }
+        Write-Host "  ... waiting for $($jobs.Count) reviewer jobs (votes publish as each finishes)" -ForegroundColor DarkGray
+        $script:VoteNowPublished = @{}
+        $pending = New-Object System.Collections.Generic.List[object]
+        foreach ($j in $jobs) { [void]$pending.Add($j) }
+        $swWait = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($pending.Count -gt 0) {
+            $still = New-Object System.Collections.Generic.List[object]
+            $justDone = New-Object System.Collections.Generic.List[object]
+            foreach ($j in $pending) {
+                if ($j.State -eq 'Running') { [void]$still.Add($j) } else { [void]$justDone.Add($j) }
             }
+            foreach ($j in $justDone) {
+                $r = Receive-Job $j -ErrorAction SilentlyContinue
+                Remove-Job $j -Force -ErrorAction SilentlyContinue
+                $roleName = $null
+                if ($r -and $r.Role) {
+                    $roleName = [string]$r.Role
+                    $results[$roleName] = @{ Ok = $r.Ok; Text = $r.Text; ExitCode = $r.ExitCode; Seconds = $r.Seconds }
+                } else {
+                    $roleName = ([string]$j.Name) -replace '^vibe-', ''
+                    $results[$roleName] = @{ Ok = $false; Text = ''; ExitCode = -1; Seconds = 0 }
+                }
+                $waitNames = (@($still | ForEach-Object { $_.Name })) -join ', '
+                Publish-ReviewerVoteNow -Role $roleName -Result $results[$roleName] -WaitingOn $waitNames
+            }
+            $pending = $still
+            if ($pending.Count -eq 0) { break }
+            if ($swWait.Elapsed.TotalSeconds -ge 1200) {
+                Write-GateProgress ('job timeout after {0:n0}s - stopping leftover jobs' -f $swWait.Elapsed.TotalSeconds)
+                foreach ($j in $pending) { try { Stop-Job $j -ErrorAction SilentlyContinue } catch {} }
+                break
+            }
+            $waitNames = (@($pending | ForEach-Object { $_.Name })) -join ', '
+            $gotLines = @($script:VoteNowPublished.Values | Where-Object { $_ })
+            $gotBit = if ($gotLines.Count) { ' | ' + ($gotLines -join ' || ') } else { '. none finished yet' }
+            $elapsed = [int]$swWait.Elapsed.TotalSeconds
+            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("waiting {0} ({1}s)" -f $waitNames, $elapsed) `
+                    -Now ("Waiting on $waitNames (~${elapsed}s)$gotBit")
+            }
+            $null = Wait-Job -Job @($pending.ToArray()) -Timeout 15
         }
         foreach ($role in $roles) {
             if (-not $results.ContainsKey($role)) {
@@ -1114,13 +1193,8 @@ function Invoke-ReviewerPanel {
         $voteStr = "$($obj.vote)"
         $fc = @($obj.findings).Count
         Write-Host ("    vote={0} findings={1}" -f $voteStr, $fc) -ForegroundColor Gray
-        $titles = @($obj.findings | ForEach-Object {
-            if ($_.title) { [string]$_.title } elseif ($_.id) { [string]$_.id } else { $null }
-        } | Where-Object { $_ } | Select-Object -First 4)
-        $titleBit = if ($titles.Count -gt 0) { ' - ' + ($titles -join '; ') } else { '' }
-        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-            Write-GateProgress ("{0}: {1} ({2} finding(s)){3}" -f $role, $voteStr, $fc, $titleBit) `
-                -Now ("{0} finished: {1} ({2} finding(s))" -f $role, $voteStr, $fc)
+        if (-not ($script:VoteNowPublished -and $script:VoteNowPublished.ContainsKey($role))) {
+            Publish-ReviewerVoteNow -Role $role -Result $r
         }
     }
 

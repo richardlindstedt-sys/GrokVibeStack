@@ -43,8 +43,21 @@ $lastPrint = ''
 $idleSince = $null
 $idleRun = $null
 $sawLive = $false
+$seenEvents = New-Object 'System.Collections.Generic.HashSet[string]'
+$seenEventsRun = $null
 
-function Get-GateHead {
+function Get-InterestingGateEvents([object[]]$Snap) {
+    return @($Snap | Where-Object {
+            $_ -and
+            $_ -notmatch '^(RUN|NOW|ELAPSED|PHASE|PID|CWD|LOG|EVENTS):' -and
+            $_ -notmatch 'waiting vibe-' -and
+            $_ -match '^VOTE:|scan:|scans passed|scans start|profile=|Round |reviewers running|start reviewer|done reviewer|correctness:|security:|simplicity:|arbiter|fixer|GATE DONE|BLOCKER'
+        })
+}
+
+function Get-GateSnapshot {
+    # Whole gate-now.txt: 8 meta lines, then VOTE:* (sticky), then event tail.
+    # Not a header-only read. Name used to be Get-GateHead; that lied.
     if (-not (Test-Path -LiteralPath $nowFile)) { return @() }
     return @(Get-Content -LiteralPath $nowFile -ErrorAction SilentlyContinue)
 }
@@ -76,10 +89,10 @@ function Update-GateElapsed {
     } catch { $owned = $false }
     if (-not $owned) {
         if ($mutex) { try { $mutex.Dispose() } catch {} }
-        return @(Get-GateHead)
+        return @(Get-GateSnapshot)
     }
     try {
-        $lines = @(Get-GateHead)
+        $lines = @(Get-GateSnapshot)
         if (-not $lines) { return $lines }
         $nowLine = ($lines | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
         if ($nowLine -and $nowLine -match 'GATE DONE') { return $lines }
@@ -96,7 +109,7 @@ function Update-GateElapsed {
         [System.IO.File]::WriteAllLines($nowFile, [string[]]$clean, $utf8)
         return $out
     } catch {
-        return @(Get-GateHead)
+        return @(Get-GateSnapshot)
     } finally {
         if ($owned -and $mutex) { try { $mutex.ReleaseMutex() } catch {} }
         if ($mutex) { $mutex.Dispose() }
@@ -110,13 +123,13 @@ if (-not $Heartbeat -and -not $Monitor) { $Monitor = $true }
 # Do not idle until a live gate — leftover GATE DONE must not print DONE.
 # Missing gate-now.txt does not reset an idle clock already started.
 while ((Get-Date) -lt $deadline) {
-    $head = Get-GateHead
-    $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
-    $runLine = ($head | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
+    $snap = Get-GateSnapshot
+    $nowLine = ($snap | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
+    $runLine = ($snap | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
     $done = $nowLine -and ($nowLine -match 'GATE DONE')
     $runId = $null
     if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
-    if (-not $head) {
+    if (-not $snap) {
         if ($Monitor -and $IdleSec -gt 0 -and $null -ne $idleSince -and ((Get-Date) - $idleSince).TotalSeconds -ge $IdleSec) {
             [Console]::Out.WriteLine('DONE')
             exit 0
@@ -125,9 +138,9 @@ while ((Get-Date) -lt $deadline) {
         continue
     }
     if ($Heartbeat -and -not $done) {
-        $head = Update-GateElapsed
-        $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
-        $runLine = ($head | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
+        $snap = Update-GateElapsed
+        $nowLine = ($snap | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
+        $runLine = ($snap | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
         $done = $nowLine -and ($nowLine -match 'GATE DONE')
         $runId = $null
         if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
@@ -143,11 +156,21 @@ while ((Get-Date) -lt $deadline) {
         $idleRun = $null
     }
     if ($Monitor) {
-        $elapsed = ($head | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
-        $snap = ('{0} | {1} | {2}' -f $runLine, $nowLine, $elapsed)
-        if ($snap -ne $lastPrint) {
-            [Console]::Out.WriteLine($snap)
-            $lastPrint = $snap
+        if ($runId -and $runId -ne $seenEventsRun) {
+            $seenEvents.Clear()
+            $seenEventsRun = $runId
+        }
+        $elapsed = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
+        $tick = ('{0} | {1} | {2}' -f $runLine, $nowLine, $elapsed)
+        if ($tick -ne $lastPrint) {
+            [Console]::Out.WriteLine($tick)
+            $lastPrint = $tick
+        }
+        foreach ($evt in (Get-InterestingGateEvents $snap)) {
+            if ($seenEvents.Add([string]$evt)) {
+                $tag = if ([string]$evt -match '(?i)^VOTE:|correctness:|security:|simplicity:') { 'VOTE' } else { 'EVT' }
+                [Console]::Out.WriteLine(('{0} {1}' -f $tag, $evt))
+            }
         }
         if ($IdleSec -gt 0 -and $null -ne $idleSince -and ((Get-Date) - $idleSince).TotalSeconds -ge $IdleSec) {
             [Console]::Out.WriteLine('DONE')

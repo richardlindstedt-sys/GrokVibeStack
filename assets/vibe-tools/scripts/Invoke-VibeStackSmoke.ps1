@@ -407,6 +407,11 @@ if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 45
 } else {
     Bad 'watch-gate-now missing sawLive arm / 45s linger / Heartbeat-only exit'
 }
+if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function Get-GateSnapshot' -and $watchNow -notmatch 'function Get-GateHead' -and $watchNow -match "EVT " -and $watchNow -match "'VOTE'" -and $watchNow -match 'seenEventsRun' -and $watchNow -match 'seenEvents.Clear' -and $promptCtx -match 'VOTES \(verdict' -and $promptCtx -notmatch '-Tail 80' -and $rawReview -match 'Publish-ReviewerVoteNow' -and $rawReview -match 'VoteNowPublished\[\$Role\] = \$evt' -and $rawReview -match '\$gotLines' -and $progSrc -match 'function Set-GateVote' -and $progSrc -match 'VOTE:') {
+    Ok 'gate chat: sticky VOTE lines + full-file snapshot + inject VOTES block'
+} else {
+    Bad 'gate chat missing sticky votes / Get-GateSnapshot / inject VOTES'
+}
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
 try {
@@ -456,6 +461,44 @@ try {
 } finally {
     if ($idleDir -and (Test-Path -LiteralPath $idleDir)) {
         Remove-Item -LiteralPath $idleDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+$voteDir = Join-Path $env:TEMP ("vibe-watch-vote-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $voteDir -Force | Out-Null
+    $voteNow = Join-Path $voteDir 'gate-now.txt'
+    $voteOut = Join-Path $voteDir 'out.txt'
+    @(
+        'RUN:     vote-test-1'
+        'NOW:     Waiting on vibe-correctness (~15s)'
+        'ELAPSED: 15s'
+        'PHASE:   reviewers'
+        'PID:     1'
+        'CWD:     x'
+        'LOG:     y'
+        'EVENTS:  z'
+        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
+        ''
+        '[21:00:00] scan: Trivy ok'
+    ) | Set-Content -LiteralPath $voteNow -Encoding ascii
+    $voteProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
+        '-Monitor', '-IdleSec', '0', '-IntervalSec', '1', '-NowFile', $voteNow
+    ) -RedirectStandardOutput $voteOut -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 1800
+    try { Stop-Process -Id $voteProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    try { $voteProc.WaitForExit(3000) | Out-Null } catch {}
+    $voteTxt = Get-Content -LiteralPath $voteOut -Raw -ErrorAction SilentlyContinue
+    if ($voteTxt -match '(?m)^VOTE .*security: APPROVE' -and $voteTxt -match '(?m)^EVT .*scan: Trivy ok') {
+        Ok 'gate monitor: full snapshot emits VOTE + EVT'
+    } else {
+        Bad 'gate monitor fixture missing VOTE/EVT (Get-GateSnapshot not seeing body)'
+    }
+} catch {
+    Bad ("gate monitor vote/EVT smoke: {0}" -f $_.Exception.Message)
+} finally {
+    if ($voteDir -and (Test-Path -LiteralPath $voteDir)) {
+        Remove-Item -LiteralPath $voteDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {

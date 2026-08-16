@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-16
+
+### Fixed
+
+- Gate chat shows scan/reviewer/arbiter events, not only the current `NOW` line. Watcher prints `EVT` ticks; UserPromptSubmit injects the event tail from `gate-now.txt`. `$seenEvents` clears on a new `RUN`
+- Each reviewer vote is published as it finishes (`NOW` + EVT include vote and summary/reason), not batched after the whole panel
+- Waiting heartbeat no longer replaces those votes with `votes in: names`. Sticky `VOTE:` lines keep verdict + reason; watcher prints `VOTE`; inject has a VOTES block
+- Watcher reads the whole `gate-now.txt` snapshot (`Get-GateSnapshot`), not an 8-line header. Smoke writes a fake file with `VOTE:` + scan and asserts monitor prints both
+
 ## [1.4.2] - 2026-08-16
 
 ### Fixed
