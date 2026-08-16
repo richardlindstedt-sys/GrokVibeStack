@@ -304,7 +304,7 @@ if ($scanSrc -match 'index blob unavailable' -and $scanSrc -notmatch 'Copy-Item 
     Bad 'staged scan still Copy-Item worktree fallback'
 }
 $progSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-progress.ps1') -Raw
-if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gate\.log' -and $progSrc -match 'gate-status\.txt' -and $progSrc -match 'AppendAllLines' -and $progSrc -match 'gate-now\.txt' -and $progSrc -match 'function Write-GateDone' -and $progSrc -match 'Start-GateWatchPopup' -and $progSrc -match 'function Wait-VibeJobs' -and $progSrc -match 'function Start-GateRun' -and $progSrc -match 'RUN:' -and $progSrc -notmatch 'WriteAllLines\(\$script:GateStatusFile' -and $rawReview -match 'Wait-VibeJobs' -and $rawReview -match 'Write-GateDone' -and $rawReview -match 'Write-GateFail' -and $rawReview -match 'Start-GateRun' -and $scanSrc -match 'Write-GateDone' -and $scanSrc -match 'Start-GateRun' -and $prePushSrc -match 'gate-progress\.ps1') {
+if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gate\.log' -and $progSrc -match 'gate-status\.txt' -and $progSrc -match 'AppendAllLines' -and $progSrc -match 'gate-now\.txt' -and $progSrc -match 'function Write-GateDone' -and $progSrc -match 'Start-GateWatchPopup' -and $progSrc -match 'function Wait-VibeJobs' -and $progSrc -match 'function Start-GateRun' -and $progSrc -match 'RUN:' -and $progSrc -notmatch 'WriteAllLines\(\$script:GateStatusFile' -and $rawReview -match 'Write-GateDone' -and $rawReview -match 'Write-GateFail' -and $rawReview -match 'Start-GateRun' -and $scanSrc -match 'Write-GateDone' -and $scanSrc -match 'Start-GateRun' -and $prePushSrc -match 'gate-progress\.ps1') {
     Ok 'gate progress: RUN token + append-only status + recap + opt-in popup + heartbeats'
 } else {
     Bad 'gate-progress.ps1 missing RUN token / append-only status / recap / popup or not wired'
@@ -411,6 +411,11 @@ if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function
     Ok 'gate chat: sticky VOTE lines + full-file snapshot + inject VOTES block'
 } else {
     Bad 'gate chat missing sticky votes / Get-GateSnapshot / inject VOTES'
+}
+if ($progSrc -match 'function Save-GateLastDone' -and $progSrc -match 'gate-last-done\.txt' -and $promptCtx -match 'LAST GATE' -and $promptCtx -match 'gate-last-done\.txt' -and $promptCtx -match 'GATE DONE \(must post RUN' -and $promptCtx -notmatch "now -notmatch 'GATE DONE'" -and $stopSrc -match 'GATE DONE recap required' -and $stopSrc -match 'ageMin') {
+    Ok 'gate recap: last-done persist + inject DONE/votes + stop blocks skip'
+} else {
+    Bad 'gate recap missing last-done persist / DONE inject / stop recap block'
 }
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))

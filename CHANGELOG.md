@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-08-16
+
+### Fixed
+
+- Gate recap cannot vanish on commit-then-push. `Write-GateDone` / new RUN persist `gate-last-done.txt`. UserPromptSubmit injects that prior RUN (votes + arbiter + DONE) plus the live snapshot, including `GATE DONE`. Stop hook blocks end-of-turn after a fresh DONE until chat named that RUN and `GATE DONE`
+
 ## [1.4.4] - 2026-08-16
 
 ### Changed

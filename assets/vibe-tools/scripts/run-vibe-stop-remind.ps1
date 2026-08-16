@@ -51,7 +51,7 @@ if ($reason -and $reason -ne 'end_turn' -and $reason -notmatch 'Stop$') {
 
 $nowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
 if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
-    $head = @(Get-Content -LiteralPath $nowFile -TotalCount 8)
+    $head = @(Get-Content -LiteralPath $nowFile)
     $run = ($head | Where-Object { $_ -match '^RUN:\s+\S+' } | Select-Object -First 1)
     $now = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
     $elapsed = ($head | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
@@ -92,6 +92,37 @@ Optional: start monitor on ~/.grok/vibe-tools/scripts/watch-gate-now.ps1 -Monito
             }
         }
         exit 0
+    }
+    # Fresh GATE DONE: do not let the turn end until chat has the recap.
+    # Stops commit-then-push from skipping votes.
+    $ageMin = 999
+    try {
+        $ageMin = ((Get-Date) - (Get-Item -LiteralPath $nowFile).LastWriteTime).TotalMinutes
+    } catch { $ageMin = 999 }
+    if ($run -and $now -match 'GATE DONE' -and $ageMin -lt 8) {
+        $last = ''
+        if ($evt) {
+            $last = [string]$evt.lastAssistantMessage
+            if (-not $last) { $last = [string]$evt.last_assistant_message }
+        }
+        $runId = ''
+        if ($run -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
+        $spoke = ($runId -and $last.Contains($runId) -and $last -match 'GATE DONE')
+        $votes = @($head | Where-Object { $_ -match '^VOTE:' })
+        $voteBlock = if ($votes.Count -gt 0) { "`n" + ($votes -join "`n") } else { '' }
+        $snap = @"
+GATE DONE recap required in chat before the next git command (votes + arbiter + this DONE line):
+$run
+$now
+$elapsed$voteBlock
+"@
+        if (-not $spoke) {
+            Write-Json @{
+                decision = 'block'
+                reason   = $snap
+            }
+            exit 0
+        }
     }
 }
 

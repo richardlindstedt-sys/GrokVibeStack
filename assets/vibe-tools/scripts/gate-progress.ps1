@@ -19,6 +19,9 @@ if (-not $script:GateStatusFile) {
 if (-not $script:GateNowFile) {
     $script:GateNowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
 }
+if (-not $script:GateLastDoneFile) {
+    $script:GateLastDoneFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-last-done.txt'
+}
 if (-not $script:GateEvents) {
     $script:GateEvents = [System.Collections.Generic.List[string]]::new()
 }
@@ -83,6 +86,20 @@ function Write-GateFileRetry {
     $msg = 'GATE STATUS WRITE FAILED ({0}): {1}' -f $Path, $last
     try { [Console]::Error.WriteLine($msg) } catch {}
     Write-Warning $msg
+}
+
+function Save-GateLastDone {
+    # Keep the finished snapshot when the next RUN overwrites gate-now.txt.
+    param([string]$From = $script:GateNowFile)
+    if (-not $From -or -not (Test-Path -LiteralPath $From)) { return }
+    $lines = @(Get-Content -LiteralPath $From -ErrorAction SilentlyContinue)
+    if ($lines.Count -eq 0) { return }
+    $blob = $lines -join "`n"
+    if ($blob -notmatch 'GATE DONE' -and $blob -notmatch '(?m)^VOTE:') { return }
+    if (-not $script:GateLastDoneFile) {
+        $script:GateLastDoneFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-last-done.txt'
+    }
+    Write-GateFileRetry -Path $script:GateLastDoneFile -Lines $lines
 }
 
 function Import-GateStatusTail {
@@ -265,6 +282,8 @@ while (`$true) {
 }
 
 function Reset-GateLiveLog {
+    # Persist votes/DONE before this new RUN overwrites gate-now.txt.
+    Save-GateLastDone
     # New RUN first so poller can latch before any GATE DONE. Append-only status.
     $dir = Split-Path $script:GateLiveLog -Parent
     if (-not (Test-Path -LiteralPath $dir)) {
@@ -404,6 +423,7 @@ function Write-GateDone {
     $script:GateNow = $msg
     $script:GatePhase = if ($Passed) { 'done-pass' } else { 'done-block' }
     Write-GateProgress $msg
+    Save-GateLastDone
     Stop-GateElapsedHeartbeat
 }
 
