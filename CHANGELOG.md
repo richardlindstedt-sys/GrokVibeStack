@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-08-16
+
+### Fixed
+
+- Gate chat speaks only on new events (NOW phase, vote, arbiter, fixer file, GATE DONE). Monitor no longer wakes on ELAPSED-only ticks
+- Stop recap ack (`gate-last-done-ack.txt`): after chat names that RUN + GATE DONE, later turns do not re-block for 8 minutes
+- Fixer loop is visible and fail-closed: live file-write pulses, copied paths listed, 0-file copy stops empty re-review rounds so the agent can commit and push
+
 ## [1.4.5] - 2026-08-16
 
 ### Fixed

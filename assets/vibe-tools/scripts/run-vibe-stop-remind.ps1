@@ -70,9 +70,19 @@ if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
         $runId = ''
         if ($run -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
         $nowVal = $now -replace '^NOW:\s+', ''
+        $spokeFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-last-spoke.txt'
+        $spokeNow = ''
+        if (Test-Path -LiteralPath $spokeFile) {
+            try { $spokeNow = ((Get-Content -LiteralPath $spokeFile -TotalCount 1) -replace '[\r\n]+', '').Trim() } catch { $spokeNow = '' }
+        }
         $spoke = ($runId -and $last.Contains($runId)) -or ($nowVal -and $last.Contains($nowVal))
+        if ($spoke -and $nowVal) {
+            try { [System.IO.File]::WriteAllText($spokeFile, $nowVal) } catch {}
+        }
+        # Same NOW already posted: do not nag again for ELAPSED-only ticks.
+        if (-not $spoke -and $spokeNow -and $nowVal -eq $spokeNow) { $spoke = $true }
         $snap = @"
-GATE LIVE — do not go silent. Post this in chat, then poll gate-now (timeout_ms=15000):
+GATE LIVE — speak only if NOW/votes/fixer/DONE changed (not ELAPSED). Poll timeout_ms=15000:
 $run
 $now
 $elapsed
@@ -107,7 +117,17 @@ Optional: start monitor on ~/.grok/vibe-tools/scripts/watch-gate-now.ps1 -Monito
         }
         $runId = ''
         if ($run -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
+        $ackFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-last-done-ack.txt'
+        $acked = ''
+        if (Test-Path -LiteralPath $ackFile) {
+            try { $acked = ((Get-Content -LiteralPath $ackFile -TotalCount 1) -replace '[\r\n]+', '').Trim() } catch { $acked = '' }
+        }
         $spoke = ($runId -and $last.Contains($runId) -and $last -match 'GATE DONE')
+        if ($spoke -and $runId) {
+            try { [System.IO.File]::WriteAllText($ackFile, $runId) } catch {}
+        }
+        # Recap once: later turns must not re-block while this RUN stays DONE.
+        if (-not $spoke -and $runId -and $acked -eq $runId) { $spoke = $true }
         $votes = @($head | Where-Object { $_ -match '^VOTE:' })
         $voteBlock = if ($votes.Count -gt 0) { "`n" + ($votes -join "`n") } else { '' }
         $snap = @"

@@ -608,7 +608,9 @@ function Invoke-GrokHeadless {
         [int]$MaxTurns = 12,
         [switch]$AllowWrites,
         [string]$OutLog,
-        [string]$WorkingDirectory = ''
+        [string]$WorkingDirectory = '',
+        [scriptblock]$OnPulse = $null,
+        [int]$PulseSec = 8
     )
 
     $argList = [System.Collections.Generic.List[string]]::new()
@@ -645,8 +647,39 @@ function Invoke-GrokHeadless {
             Push-Location -LiteralPath $WorkingDirectory
             $pushed = $true
         }
-        $output = & $GrokExe @($argList.ToArray()) 2>&1
-        $code = $LASTEXITCODE
+        if ($OnPulse) {
+            $stdOut = if ($OutLog) { $OutLog } else { Join-Path $env:TEMP ('vibe-grok-' + [guid]::NewGuid().ToString('n') + '.log') }
+            $stdErr = $stdOut + '.err'
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            [System.IO.File]::WriteAllText($stdOut, '', $utf8)
+            [System.IO.File]::WriteAllText($stdErr, '', $utf8)
+            $startArgs = @{
+                FilePath               = $GrokExe
+                ArgumentList           = @($argList.ToArray())
+                RedirectStandardOutput = $stdOut
+                RedirectStandardError  = $stdErr
+                PassThru               = $true
+                NoNewWindow            = $true
+            }
+            if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {
+                $startArgs.WorkingDirectory = $WorkingDirectory
+            }
+            $p = Start-Process @startArgs
+            while (-not $p.HasExited) {
+                Start-Sleep -Seconds ([Math]::Max(2, $PulseSec))
+                try { & $OnPulse } catch {}
+            }
+            try { $p.WaitForExit(5000) | Out-Null } catch {}
+            $code = [int]$p.ExitCode
+            $outTxt = ''
+            $errTxt = ''
+            try { if (Test-Path -LiteralPath $stdOut) { $outTxt = [System.IO.File]::ReadAllText($stdOut) } } catch {}
+            try { if (Test-Path -LiteralPath $stdErr) { $errTxt = [System.IO.File]::ReadAllText($stdErr) } } catch {}
+            $output = @(($outTxt + "`n" + $errTxt).TrimEnd())
+        } else {
+            $output = & $GrokExe @($argList.ToArray()) 2>&1
+            $code = $LASTEXITCODE
+        }
     } catch {
         $sw.Stop()
         if ($pushed) { Pop-Location }
@@ -786,7 +819,7 @@ function New-ArbiterPrompt {
 }
 
 function New-FixerPrompt {
-    param([string]$DiffText, [string]$BlockersJson, [int]$Round)
+    param([string]$DiffText, [string]$BlockersJson, [int]$Round, [string]$WorkRoot = '')
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("You are the IMPLEMENTER in a vibe-coding quality loop (round $Round).")
     [void]$sb.AppendLine('An arbiter panel found BLOCKER issues that must be fixed before commit.')
@@ -797,7 +830,12 @@ function New-FixerPrompt {
     [void]$sb.AppendLine('3) Keep changes minimal and correct.')
     [void]$sb.AppendLine('4) After edits, briefly summarize what you changed.')
     [void]$sb.AppendLine('5) Do NOT commit. Do NOT push. Staging is handled by the gate script.')
-    [void]$sb.AppendLine('6) Cwd may be an isolated git worktree of HEAD + staged patch. Edit only files here; do not touch other checkouts.')
+    if ($WorkRoot) {
+        [void]$sb.AppendLine(("6) Edit ONLY files under this worktree: {0}" -f $WorkRoot))
+        [void]$sb.AppendLine('   Do not edit any other checkout or the user main tree.')
+    } else {
+        [void]$sb.AppendLine('6) Cwd may be an isolated git worktree of HEAD + staged patch. Edit only files here; do not touch other checkouts.')
+    }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('BLOCKERS (JSON):')
     [void]$sb.AppendLine($BlockersJson)
@@ -1337,7 +1375,6 @@ function Invoke-Fixer {
     $bjson = ($Blockers | ConvertTo-Json -Depth 10)
     $pf = Join-Path $RoundDir 'fixer.prompt.txt'
     $lf = Join-Path $RoundDir 'fixer.log.txt'
-    Save-Text $pf (New-FixerPrompt -DiffText $DiffText -BlockersJson $bjson -Round $Round)
     Save-Text (Join-Path $RoundDir 'blockers.json') $bjson
 
     $titles = @($Blockers | ForEach-Object { if ($_.title) { $_.title } else { $_.id } } | Where-Object { $_ })
@@ -1359,13 +1396,53 @@ function Invoke-Fixer {
     $before = Get-WorktreeFileFingerprints -Root $wt.Root
     Write-Host ('  fixer worktree: {0}' -f $wt.Root) -ForegroundColor DarkCyan
     $wd = $wt.Root
+    Save-Text $pf (New-FixerPrompt -DiffText $DiffText -BlockersJson $bjson -Round $Round -WorkRoot $wd)
     try {
-        $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'implementer-fix' -Effort $Effort -MaxTurns $MaxTurns -AllowWrites -OutLog $lf -WorkingDirectory $wd
+        $pulseState = @{
+            Wd       = $wd
+            Before   = $before
+            LastSeen = @{}
+            SaidIdle = $false
+        }
+        $pulse = {
+            $st = $pulseState
+            if (-not $st -or -not $st.Wd) { return }
+            if (-not (Get-Command Get-WorktreeFileFingerprints -ErrorAction SilentlyContinue)) { return }
+            if (-not (Get-Command Write-GateProgress -ErrorAction SilentlyContinue)) { return }
+            $nowMap = Get-WorktreeFileFingerprints -Root $st.Wd
+            $newFiles = New-Object System.Collections.Generic.List[string]
+            foreach ($k in @($nowMap.Keys)) {
+                if (-not $st.Before.ContainsKey($k) -or $st.Before[$k] -ne $nowMap[$k]) {
+                    if (-not $st.LastSeen.ContainsKey($k) -or $st.LastSeen[$k] -ne $nowMap[$k]) {
+                        $newFiles.Add($k)
+                        $st.LastSeen[$k] = $nowMap[$k]
+                    }
+                }
+            }
+            if ($newFiles.Count -gt 0) {
+                $short = (@($newFiles | Select-Object -First 5) -join ', ')
+                if ($newFiles.Count -gt 5) { $short += '...' }
+                Write-GateProgress ("fixer wrote {0}" -f $short) -Now ("Fixer writing {0}" -f $short) -Phase 'fixer'
+            } elseif (-not $st.SaidIdle) {
+                $st.SaidIdle = $true
+                Write-GateProgress 'fixer running (no file writes yet)' -Now 'Auto-fixing (no files yet)...' -Phase 'fixer'
+            }
+        }.GetNewClosure()
+        $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'implementer-fix' -Effort $Effort -MaxTurns $MaxTurns -AllowWrites -OutLog $lf -WorkingDirectory $wd -OnPulse $pulse -PulseSec 8
         if ($wt) {
             $copied = @(Copy-FixerWorktreeBack -Worktree $wt -BeforeHashes $before)
-            Write-Host ('  fixer copied {0} file(s) back from worktree' -f $copied.Count) -ForegroundColor DarkCyan
+            $names = if ($copied.Count -gt 0) { ($copied | Select-Object -First 8) -join ', ' } else { '(none)' }
+            Write-Host ('  fixer copied {0} file(s) back from worktree: {1}' -f $copied.Count, $names) -ForegroundColor DarkCyan
             if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-                Write-GateProgress ("fixer copied {0} file(s) back" -f $copied.Count)
+                Write-GateProgress ("fixer copied {0} file(s) back: {1}" -f $copied.Count, $names) `
+                    -Now ("Fixer copied {0} file(s): {1}" -f $copied.Count, $names) -Phase 'fixer'
+            }
+            if ($copied.Count -eq 0) {
+                Write-Host '  fixer produced no file changes; fail-closed (no empty re-review)' -ForegroundColor Yellow
+                if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                    Write-GateProgress 'fixer produced no file changes — fail-closed'
+                }
+                if ($r) { $r.Ok = $false } else { $r = @{ Ok = $false; Seconds = 0; ExitCode = 1; Text = 'no file changes' } }
             }
         }
         return $r

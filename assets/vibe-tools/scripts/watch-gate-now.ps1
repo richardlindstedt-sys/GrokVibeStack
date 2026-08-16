@@ -6,7 +6,7 @@
 .PARAMETER Heartbeat
     Hidden loop: rewrite ELAPSED on gate-now.txt every 15s until GATE DONE.
 .PARAMETER Monitor
-    Print RUN | NOW | ELAPSED when it changes. GATE DONE is a tick, not process
+    Print RUN | NOW when that pair changes (not ELAPSED-only ticks). GATE DONE is a tick, not process
     exit. Leftover GATE DONE at startup does not start the idle clock (that
     printed DONE and killed the Grok monitor before the next gate). Idle arms
     only after this process has seen a live (non-DONE) NOW, then lingers
@@ -160,10 +160,11 @@ while ((Get-Date) -lt $deadline) {
             $seenEvents.Clear()
             $seenEventsRun = $runId
         }
-        $elapsed = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
-        $tick = ('{0} | {1} | {2}' -f $runLine, $nowLine, $elapsed)
+        # ELAPSED-only must not wake chat. Speak RUN|NOW when the phase changes.
+        $tick = ('{0} | {1}' -f $runLine, $nowLine)
         if ($tick -ne $lastPrint) {
-            [Console]::Out.WriteLine($tick)
+            $elapsed = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
+            [Console]::Out.WriteLine(('{0} | {1}' -f $tick, $elapsed))
             $lastPrint = $tick
         }
         foreach ($evt in (Get-InterestingGateEvents $snap)) {

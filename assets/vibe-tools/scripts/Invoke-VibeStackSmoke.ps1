@@ -412,10 +412,15 @@ if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function
 } else {
     Bad 'gate chat missing sticky votes / Get-GateSnapshot / inject VOTES'
 }
-if ($progSrc -match 'function Save-GateLastDone' -and $progSrc -match 'gate-last-done\.txt' -and $promptCtx -match 'LAST GATE' -and $promptCtx -match 'gate-last-done\.txt' -and $promptCtx -match 'GATE DONE \(must post RUN' -and $promptCtx -notmatch "now -notmatch 'GATE DONE'" -and $stopSrc -match 'GATE DONE recap required' -and $stopSrc -match 'ageMin') {
-    Ok 'gate recap: last-done persist + inject DONE/votes + stop blocks skip'
+if ($progSrc -match 'function Save-GateLastDone' -and $progSrc -match 'gate-last-done\.txt' -and $promptCtx -match 'LAST GATE' -and $promptCtx -match 'gate-last-done\.txt' -and $promptCtx -match 'GATE DONE \(must post RUN' -and $promptCtx -notmatch "now -notmatch 'GATE DONE'" -and $stopSrc -match 'GATE DONE recap required' -and $stopSrc -match 'ageMin' -and $stopSrc -match 'gate-last-done-ack\.txt') {
+    Ok 'gate recap: last-done persist + inject DONE/votes + stop ack latch'
 } else {
-    Bad 'gate recap missing last-done persist / DONE inject / stop recap block'
+    Bad 'gate recap missing last-done persist / DONE inject / stop recap ack'
+}
+if ($watchNow -match 'ELAPSED-only must not wake' -and $rawReview -match 'OnPulse' -and $rawReview -match 'fixer wrote' -and $rawReview -match 'fixer produced no file changes') {
+    Ok 'gate chat: speak-on-new + fixer file pulse + 0-copy fail-closed'
+} else {
+    Bad 'gate chat missing speak-on-new / fixer pulse / 0-copy fail-closed'
 }
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
