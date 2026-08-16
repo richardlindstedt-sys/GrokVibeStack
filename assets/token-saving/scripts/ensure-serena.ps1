@@ -30,6 +30,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Bump with VERSION / req floors when a new Serena release is intended.
+$script:SerenaPin = '1.7.0'
+
 $GrokHome = Join-Path $env:USERPROFILE '.grok'
 $GrokBin = Join-Path $GrokHome 'bin'
 $LocalBin = Join-Path $env:USERPROFILE '.local\bin'
@@ -101,7 +104,7 @@ function Install-SerenaBinary {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            & $uv tool install --force serena-agent==1.7.0 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
+            & $uv tool install --force serena-agent==$($script:SerenaPin) 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
         } finally {
             $ErrorActionPreference = $prev
         }
@@ -112,7 +115,7 @@ function Install-SerenaBinary {
         Write-Msg "PyPI miss; trying git+https://github.com/oraios/serena" 'Yellow'
         $ErrorActionPreference = 'Continue'
         try {
-            & $uv tool install --force git+https://github.com/oraios/serena@v1.7.0 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
+            & $uv tool install --force git+https://github.com/oraios/serena@v$($script:SerenaPin) 2>&1 | ForEach-Object { Write-Msg "$_" 'DarkGray' }
         } finally {
             $ErrorActionPreference = $prev
         }
@@ -131,7 +134,7 @@ function Install-SerenaBinary {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            & $py -m pip install --user serena-agent==1.7.0 2>&1 | Out-Null
+            & $py -m pip install --user serena-agent==$($script:SerenaPin) 2>&1 | Out-Null
         } finally {
             $ErrorActionPreference = $prev
         }
@@ -284,8 +287,16 @@ Add-ProcessPath $LocalBin
 Add-ProcessPath $GrokBin
 
 $serena = Find-Serena
-if (-not $serena -and -not $SkipInstall) {
-    $serena = Install-SerenaBinary
+if (-not $SkipInstall) {
+    $verOut = ''
+    if ($serena) {
+        $verOut = "$((& $serena --version 2>&1))"
+    }
+    $pinOk = $serena -and ($verOut -match [regex]::Escape($script:SerenaPin))
+    if (-not $pinOk) {
+        if ($serena) { Write-Msg "Serena $verOut != pin $($script:SerenaPin); reinstall" 'Yellow' }
+        $serena = Install-SerenaBinary
+    }
 }
 
 if (-not $serena) {

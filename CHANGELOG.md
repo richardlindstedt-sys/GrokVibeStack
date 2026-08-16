@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-08-16
+
+### Changed
+
+- Requirement floors to current PyPI latest (2026-08-16): `headroom-ai>=0.35.0`, `ast-grep-cli>=0.45.1`, `ruff>=0.16.3`, `mypy>=2.3.1`, `bandit>=1.9.4`, `semgrep>=1.173.0`, `vulture>=2.16`, `yamllint>=1.38.0`, `checkov>=3.3.11`
+- Installer `pip install -U -r` so a re-run upgrades existing venvs to those floors
+- Direct pins in `*-freeze.txt` match those versions (`-UseFrozenReqs`)
+- GitHub binaries: `scc` still `v3.7.0` (latest with Windows zip). `tokei` still `v13.0.0-alpha.0` — `v14.0.0` ships no Windows exe
+- Serena remains `1.7.0` (PyPI latest). `ensure-serena.ps1` reinstalls if the installed version does not match the pin
+
 ## [1.4.3] - 2026-08-16
 
 ### Fixed

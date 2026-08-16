@@ -477,15 +477,15 @@ function New-VenvAndPip {
         Write-Info "venv exists: $VenvDir"
     }
     if ($DryRun) {
-        Write-Info "DRY pip install -r $ReqFile"
+        Write-Info "DRY pip install -U -r $ReqFile"
         return $true
     }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         $null = & $pyExe -m pip install --upgrade pip wheel setuptools 2>&1
-        Write-Info "pip install -r $ReqFile ($Label) - this can take several minutes"
-        $pipOut = & $pyExe -m pip install -r $ReqFile 2>&1
+        Write-Info "pip install -U -r $ReqFile ($Label) - this can take several minutes"
+        $pipOut = & $pyExe -m pip install --upgrade -r $ReqFile 2>&1
         $code = $LASTEXITCODE
         $pipOut | ForEach-Object {
             $line = "$_"

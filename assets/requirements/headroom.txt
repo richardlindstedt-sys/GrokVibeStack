@@ -1,3 +1,4 @@
 # Headroom proxy + RTK installer + structural search
-headroom-ai>=0.31.0
-ast-grep-cli>=0.44.0
+# Floors = latest verified on 2026-08-16. ast-grep 0.44.1 is excluded by headroom-ai.
+headroom-ai>=0.35.0
+ast-grep-cli>=0.45.1

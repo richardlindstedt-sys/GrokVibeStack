@@ -16,7 +16,7 @@
       "asset": "tokei-x86_64-pc-windows-msvc.exe",
       "sha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
       "destSha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
-      "note": "v13/v14 source-only tags ship no Windows binaries; this is the newest x64 exe."
+      "note": "v14.0.0 (latest) ships no assets; v13/v14 source-only. This alpha is still the newest x64 exe."
     }
   ]
 }
