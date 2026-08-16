@@ -522,7 +522,7 @@ function Get-PipLockedPaths {
     param([string]$Text)
     if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
     $found = New-Object System.Collections.Generic.List[string]
-    foreach ($m in [regex]::Matches($Text, "['\"]([^'\"]+\.exe)['\"]")) {
+    foreach ($m in [regex]::Matches($Text, '[''"]([^''"]+\.exe)[''"]')) {
         $p = $m.Groups[1].Value
         if ($p) { $found.Add($p) }
     }

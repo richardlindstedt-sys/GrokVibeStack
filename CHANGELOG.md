@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.11] - 2026-08-17
+
+### Fixed
+
+- Installer parses again. `Get-PipLockedPaths` used `\"` inside a double-quoted regex; PowerShell treated that as a string terminator (`ParserError` at line 525)
+
 ## [1.4.10] - 2026-08-17
 
 ### Fixed
