@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.10] - 2026-08-17
+
+### Fixed
+
+- Reinstall no longer dies on `WinError 32` when Headroom proxy/MCP still holds `headroom.exe`. Installer stops those lockers, renames only the locked entry points, force-reinstalls on retry, and restores `.old` copies if pip did not rewrite them
+
 ## [1.4.9] - 2026-08-16
 
 ### Fixed

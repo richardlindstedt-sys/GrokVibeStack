@@ -352,6 +352,11 @@ if ($instSrc -match 'ensure-serena\.ps1' -and $instSrc -match 'function Test-Ser
 } else {
     Bad 'installer missing ensure-serena.ps1 wiring'
 }
+if ($instSrc -match 'function Test-PipFileLockText' -and $instSrc -match 'function Stop-VenvLockers' -and $instSrc -match 'function Unlock-VenvEntryPoints' -and $instSrc -match 'function Restore-VenvOldEntryPoints' -and $instSrc -match 'function Get-PipLockedPaths' -and $instSrc -match '--force-reinstall' -and $instSrc -match 'WinError\s*32' -and $instSrc -match 'pip retry' -and $instSrc -match 'Stop-HeadroomServices') {
+    Ok 'installer: stop venv lockers + WinError 32 pip retry'
+} else {
+    Bad 'installer missing WinError 32 / venv-locker pip retry'
+}
 $projYmlSrc = Join-Path $RepoRoot '.serena\project.yml'
 if ((Test-Path $projYmlSrc) -and ((Get-Content $projYmlSrc -Raw) -match '(?m)^-\s+powershell') -and ((Get-Content $projYmlSrc -Raw) -notmatch '(?m)^language_servers:\s*\[\s*\]')) {
     Ok 'serena project.yml has powershell language server'

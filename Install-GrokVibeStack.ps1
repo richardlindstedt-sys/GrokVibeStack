@@ -441,6 +441,154 @@ function Ensure-Uv {
     return $false
 }
 
+function Test-PipFileLockText {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    # WinError 32 / 5, EN, and Swedish sharing-violation fragments (OS locale).
+    return [bool]($Text -match '(?i)(WinError\s*32|WinError\s*5|sharing violation|being used by another process|cannot access the file|kan inte komma |g.r inte att komma |det g.r inte att komma)')
+}
+
+function Stop-HeadroomServices {
+    $startPs1 = Join-Path $TokenRoot 'scripts\start-grok.ps1'
+    $stopShim = Join-Path $GrokBin 'stop-grok-proxy.cmd'
+    if (Test-Path -LiteralPath $startPs1) {
+        Write-Info "Stopping Headroom proxy (unlock venv for pip)"
+        try { & $startPs1 -StopProxy 2>$null | Out-Null } catch {}
+    } elseif (Test-Path -LiteralPath $stopShim) {
+        try { & $stopShim 2>$null | Out-Null } catch {}
+    }
+}
+
+function Get-VenvLockerPids {
+    param([string]$VenvDir)
+    if (-not $VenvDir -or -not (Test-Path -LiteralPath $VenvDir)) { return @() }
+    $root = [IO.Path]::GetFullPath($VenvDir).TrimEnd('\')
+    $scripts = Join-Path $root 'Scripts'
+    $needles = @(
+        (Join-Path $scripts 'headroom.exe'),
+        (Join-Path $scripts 'python.exe'),
+        (Join-Path $scripts 'pythonw.exe'),
+        (Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd')
+    )
+    $ids = New-Object 'System.Collections.Generic.HashSet[int]'
+    try {
+        foreach ($proc in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) {
+            if (-not $proc.ProcessId) { continue }
+            $procId = [int]$proc.ProcessId
+            if ($procId -eq $PID) { continue }
+            $exe = [string]$proc.ExecutablePath
+            $cmd = [string]$proc.CommandLine
+            $hit = $false
+            if ($exe) {
+                if ($exe.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                    $exe.Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+                    $hit = $true
+                }
+            }
+            if (-not $hit -and $cmd) {
+                foreach ($n in $needles) {
+                    if ($n -and $cmd.IndexOf($n, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                        $hit = $true
+                        break
+                    }
+                }
+                if (-not $hit -and $cmd -match '(?i)headroom(\.exe)?(\s|").*mcp\s+serve') { $hit = $true }
+            }
+            if ($hit) { [void]$ids.Add($procId) }
+        }
+    } catch {}
+    return @($ids)
+}
+
+function Stop-VenvLockers {
+    param(
+        [string]$VenvDir,
+        [string]$Label
+    )
+    if ($Label -eq 'headroom') {
+        Stop-HeadroomServices
+    }
+    $lockPids = @(Get-VenvLockerPids -VenvDir $VenvDir)
+    foreach ($procId in $lockPids) {
+        Write-Info "Stopping venv locker PID $procId ($Label)"
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+    if ($lockPids.Count -gt 0) {
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+function Get-PipLockedPaths {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+    $found = New-Object System.Collections.Generic.List[string]
+    foreach ($m in [regex]::Matches($Text, "['\"]([^'\"]+\.exe)['\"]")) {
+        $p = $m.Groups[1].Value
+        if ($p) { $found.Add($p) }
+    }
+    return @($found)
+}
+
+function Unlock-VenvEntryPoints {
+    param(
+        [string]$VenvDir,
+        [string[]]$OnlyPaths
+    )
+    $scripts = Join-Path $VenvDir 'Scripts'
+    if (-not (Test-Path -LiteralPath $scripts)) { return }
+    $keep = @{
+        'python.exe'  = $true
+        'pythonw.exe' = $true
+        'python3.exe' = $true
+    }
+    $files = @()
+    if ($OnlyPaths -and @($OnlyPaths).Count -gt 0) {
+        $files = @($OnlyPaths | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { Get-Item -LiteralPath $_ -ErrorAction SilentlyContinue })
+    } else {
+        # Never rename the whole Scripts dir. Only common lock magnets.
+        foreach ($n in @('headroom.exe', 'pip.exe', 'pip3.exe')) {
+            $p = Join-Path $scripts $n
+            if (Test-Path -LiteralPath $p) { $files += ,(Get-Item -LiteralPath $p) }
+        }
+    }
+    foreach ($item in $files) {
+        if (-not $item) { continue }
+        if ($keep.ContainsKey($item.Name.ToLowerInvariant())) { continue }
+        $newName = $item.Name + '.old'
+        $bak = Join-Path $scripts $newName
+        if (Test-Path -LiteralPath $bak) {
+            $newName = '{0}.old-{1}' -f $item.Name, [DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff')
+        }
+        try {
+            Rename-Item -LiteralPath $item.FullName -NewName $newName -ErrorAction Stop
+            Write-Info "Renamed locked $($item.Name) -> $newName"
+        } catch {
+            Write-Info "Could not rename $($item.Name): $_"
+        }
+    }
+}
+
+function Restore-VenvOldEntryPoints {
+    param([string]$VenvDir)
+    $scripts = Join-Path $VenvDir 'Scripts'
+    if (-not (Test-Path -LiteralPath $scripts)) { return }
+    Get-ChildItem -LiteralPath $scripts -Filter '*.old*' -ErrorAction SilentlyContinue | ForEach-Object {
+        $origName = $_.Name -replace '\.old(-\d+)?$', ''
+        if (-not $origName -or $origName -eq $_.Name) { return }
+        $orig = Join-Path $scripts $origName
+        if (-not (Test-Path -LiteralPath $orig)) {
+            try {
+                Rename-Item -LiteralPath $_.FullName -NewName $origName -ErrorAction Stop
+                Write-Info "Restored $origName from $($_.Name)"
+            } catch {
+                Write-Warn2 "Could not restore $origName : $_"
+            }
+        } else {
+            Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function New-VenvAndPip {
     param(
         [string]$VenvDir,
@@ -480,25 +628,59 @@ function New-VenvAndPip {
         Write-Info "DRY pip install -U -r $ReqFile"
         return $true
     }
+    # Reinstall while proxy/MCP hold headroom.exe -> WinError 32. Stop, then retry/rename.
+    if (Test-Path -LiteralPath $pyExe) {
+        Stop-VenvLockers -VenvDir $VenvDir -Label $Label
+    }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $null = & $pyExe -m pip install --upgrade pip wheel setuptools 2>&1
-        Write-Info "pip install -U -r $ReqFile ($Label) - this can take several minutes"
-        $pipOut = & $pyExe -m pip install --upgrade -r $ReqFile 2>&1
-        $code = $LASTEXITCODE
-        $pipOut | ForEach-Object {
-            $line = "$_"
-            if ($line -match '(?i)(ERROR:(?! pip.s dependency)|No matching distribution|Could not find|failed building)') {
-                Write-Host "    $line" -ForegroundColor DarkYellow
+        $maxTries = 4
+        $lastPipText = ''
+        for ($attempt = 1; $attempt -le $maxTries; $attempt++) {
+            $forceReinstall = $false
+            if ($attempt -gt 1) {
+                Write-Info "pip retry $attempt/$maxTries after file lock ($Label)"
+                Stop-VenvLockers -VenvDir $VenvDir -Label $Label
+                Unlock-VenvEntryPoints -VenvDir $VenvDir -OnlyPaths (Get-PipLockedPaths $lastPipText)
+                $forceReinstall = $true
+                Start-Sleep -Seconds 1
             }
-        }
-        if ($code -ne 0) {
+            $null = & $pyExe -m pip install --upgrade pip wheel setuptools 2>&1
+            Write-Info "pip install -U -r $ReqFile ($Label) - this can take several minutes"
+            $pipArgs = @('install', '--upgrade')
+            if ($forceReinstall) { $pipArgs += '--force-reinstall' }
+            $pipArgs += @('-r', $ReqFile)
+            $pipOut = & $pyExe -m pip @pipArgs 2>&1
+            $code = $LASTEXITCODE
+            $pipText = ($pipOut | Out-String)
+            $lastPipText = $pipText
+            $pipOut | ForEach-Object {
+                $line = "$_"
+                if ($line -match '(?i)(ERROR:(?! pip.s dependency)|No matching distribution|Could not find|failed building|WinError)') {
+                    Write-Host "    $line" -ForegroundColor DarkYellow
+                }
+            }
+            if ($code -eq 0) {
+                Restore-VenvOldEntryPoints -VenvDir $VenvDir
+                Write-Ok "pip $Label"
+                return $true
+            }
+            if ((Test-PipFileLockText $pipText) -and $attempt -lt $maxTries) {
+                Write-Warn2 "pip $Label file in use (WinError 32) - stopping lockers and retrying"
+                continue
+            }
+            Restore-VenvOldEntryPoints -VenvDir $VenvDir
+            if (Test-PipFileLockText $pipText) {
+                Write-Fail "pip install $Label (exit $code) - file in use; close Grok/Headroom and re-run"
+                return $false
+            }
             Write-Fail "pip install $Label (exit $code)"
             return $false
         }
-        Write-Ok "pip $Label"
-        return $true
+        Restore-VenvOldEntryPoints -VenvDir $VenvDir
+        Write-Fail "pip install $Label (retries exhausted)"
+        return $false
     } finally {
         $ErrorActionPreference = $prev
     }
