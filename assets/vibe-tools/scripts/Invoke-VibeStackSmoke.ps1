@@ -401,6 +401,11 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
 }
+if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match 'Monitor stays up across sequential gates' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor') {
+    Ok 'gate monitor: GATE DONE is a tick; stay up for commit then push'
+} else {
+    Bad 'watch-gate-now still exits on GATE DONE (kills commit-then-push watch)'
+}
 if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {
     Ok 'review: schema cache + intent/blast + token estimate + worktree fixer'
 } else {

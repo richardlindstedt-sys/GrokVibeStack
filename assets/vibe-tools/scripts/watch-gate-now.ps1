@@ -6,8 +6,9 @@
 .PARAMETER Heartbeat
     Hidden loop: rewrite ELAPSED on gate-now.txt every 15s until GATE DONE.
 .PARAMETER Monitor
-    Print RUN | NOW | ELAPSED when it changes (or every tick). Print DONE and
-    exit when NOW is GATE DONE. Use as the monitor tool command.
+    Print RUN | NOW | ELAPSED when it changes. GATE DONE is a tick, not process
+    exit — stay up across sequential gates (commit then push). Print DONE only
+    at the 2h deadline. Use as the monitor tool command.
 #>
 param(
     [switch]$Heartbeat,
@@ -86,25 +87,20 @@ function Update-GateElapsed {
 
 if (-not $Heartbeat -and -not $Monitor) { $Monitor = $true }
 
+# Monitor stays up across sequential gates (commit then push).
+# GATE DONE is a tick, not process exit. Heartbeat-only still stops on GATE DONE.
 while ((Get-Date) -lt $deadline) {
     $head = Get-GateHead
     $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
-    # Missing/empty file is not success: wait for NOW GATE DONE (or deadline).
-    if ($nowLine -and $nowLine -match 'GATE DONE') {
-        if ($Monitor) { [Console]::Out.WriteLine('DONE') }
-        exit 0
-    }
+    $done = $nowLine -and ($nowLine -match 'GATE DONE')
     if (-not $head) {
         Start-Sleep -Seconds $intervalSec
         continue
     }
-    if ($Heartbeat) {
+    if ($Heartbeat -and -not $done) {
         $head = Update-GateElapsed
         $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
-        if ($nowLine -and $nowLine -match 'GATE DONE') {
-            if ($Monitor) { [Console]::Out.WriteLine('DONE') }
-            exit 0
-        }
+        $done = $nowLine -and ($nowLine -match 'GATE DONE')
     }
     if ($Monitor) {
         $run = ($head | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
@@ -116,6 +112,7 @@ while ((Get-Date) -lt $deadline) {
             $lastPrint = $snap
         }
     }
+    if ($done -and $Heartbeat -and -not $Monitor) { exit 0 }
     Start-Sleep -Seconds $intervalSec
 }
 

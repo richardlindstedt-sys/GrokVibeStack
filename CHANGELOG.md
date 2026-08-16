@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-08-16
+
+### Fixed
+
+- `watch-gate-now.ps1 -Monitor` no longer prints `DONE` and exits when `NOW` is `GATE DONE`. That killed the Grok monitor between commit and push. GATE DONE is a tick; the watcher stays up across sequential gates until the 2h deadline or kill.
+
 ## [1.3.5] - 2026-08-16
 
 ### Fixed
