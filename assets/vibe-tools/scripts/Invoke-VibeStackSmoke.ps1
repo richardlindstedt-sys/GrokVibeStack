@@ -422,6 +422,11 @@ if ($watchNow -match 'ELAPSED-only must not wake' -and $rawReview -match 'OnPuls
 } else {
     Bad 'gate chat missing speak-on-new / fixer pulse / 0-copy fail-closed'
 }
+if ($watchNow -match 'function Test-IsGateWaitNow' -and $stopSrc -match 'function Test-IsGateWaitNow' -and $stopSrc -match 'write zero chat' -and $promptCtx -match 'write zero chat' -and $progSrc -match 'LastWaitNow') {
+    Ok 'gate chat: wait ticks never wake / stop never nags wait'
+} else {
+    Bad 'gate chat missing Test-IsGateWaitNow / zero-chat stop+inject'
+}
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
 try {
@@ -509,6 +514,50 @@ try {
 } finally {
     if ($voteDir -and (Test-Path -LiteralPath $voteDir)) {
         Remove-Item -LiteralPath $voteDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+$waitDir = Join-Path $env:TEMP ("vibe-watch-wait-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $waitDir -Force | Out-Null
+    $waitNow = Join-Path $waitDir 'gate-now.txt'
+    $waitOut = Join-Path $waitDir 'out.txt'
+    @(
+        'RUN:     wait-test-1'
+        'NOW:     Waiting on vibe-correctness (~15s)'
+        'ELAPSED: 15s'
+        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
+        ''
+        '[21:00:00] scan: Trivy ok'
+    ) | Set-Content -LiteralPath $waitNow -Encoding ascii
+    $waitProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
+        '-Monitor', '-IdleSec', '0', '-IntervalSec', '1', '-NowFile', $waitNow
+    ) -RedirectStandardOutput $waitOut -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 1200
+    @(
+        'RUN:     wait-test-1'
+        'NOW:     Waiting on vibe-correctness (~30s)'
+        'ELAPSED: 30s'
+        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
+        ''
+        '[21:00:00] scan: Trivy ok'
+    ) | Set-Content -LiteralPath $waitNow -Encoding ascii
+    Start-Sleep -Milliseconds 1500
+    try { Stop-Process -Id $waitProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    try { $waitProc.WaitForExit(3000) | Out-Null } catch {}
+    $waitTxt = Get-Content -LiteralPath $waitOut -Raw -ErrorAction SilentlyContinue
+    if ($waitTxt -match '(?i)Waiting on' ) {
+        Bad 'gate monitor printed wait tick (wakes chat)'
+    } elseif ($waitTxt -match '(?m)^VOTE .*security: APPROVE' -and $waitTxt -match '(?m)^EVT .*scan: Trivy ok') {
+        Ok 'gate monitor: wait ticks silent; VOTE+EVT still print'
+    } else {
+        Bad 'gate monitor wait-silence fixture missing VOTE/EVT'
+    }
+} catch {
+    Bad ("gate monitor wait-silence smoke: {0}" -f $_.Exception.Message)
+} finally {
+    if ($waitDir -and (Test-Path -LiteralPath $waitDir)) {
+        Remove-Item -LiteralPath $waitDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {

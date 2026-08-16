@@ -5,7 +5,7 @@
 .NOTES
     Write-Host is dropped when git/Grok redirects the hook. Console + stderr + files
     stay visible. Popup is opt-in (VIBE_GATE_POPUP=1). Default watch is chat:
-    agent polls gate-now.txt while commit/push runs in the background.
+    watch-gate-now -Monitor wakes chat on real events only (not wait ticks).
     First line of gate-now.txt is RUN: <pid-timestamp>. Poller must ignore
     GATE DONE until it has seen that RUN (stale DONE from a prior gate).
 #>
@@ -298,6 +298,7 @@ function Reset-GateLiveLog {
     $script:GatePhase = 'init'
     $script:GateSw = [System.Diagnostics.Stopwatch]::StartNew()
     $script:GateWatchStarted = $false
+    $script:LastWaitNow = $null
     Write-GateStatusFile
     $hdr = '==== gate start {0} run={1} pid={2} cwd={3} ====' -f (Get-Date -Format 'o'), $script:GateRunId, $PID, (Get-Location).Path
     $last = $null
@@ -451,14 +452,12 @@ function Wait-VibeJobs {
             break
         }
         $waitNames = ($running | ForEach-Object { $_.Name }) -join ', '
-        $doneBit = if ($done.Count -gt 0) {
-            ' finished: ' + (($done | ForEach-Object { $_.Name }) -join ', ')
-        } else {
-            ' none finished yet - still thinking, no findings to show'
+        $nowWait = "Waiting on $waitNames"
+        # Do not put (~Ns) in NOW — that woke chat every 15s.
+        if ($nowWait -ne $script:LastWaitNow) {
+            $script:LastWaitNow = $nowWait
+            Write-GateProgress ("waiting {0}" -f $waitNames) -Now $nowWait
         }
-        $elapsed = [int]$sw.Elapsed.TotalSeconds
-        Write-GateProgress ("waiting {0} ({1}s).{2}" -f $waitNames, $elapsed, $doneBit) `
-            -Now ("Waiting on $waitNames (~${elapsed}s).$doneBit")
         $null = Wait-Job -Job $running -Timeout $PulseSec
     }
 }

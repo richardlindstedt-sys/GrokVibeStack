@@ -3,8 +3,9 @@
 .SYNOPSIS
   Stop hook: keep the turn alive while a gate is live, and nag after edits.
 .DESCRIPTION
-  If gate-now.txt is not GATE DONE and this is a real end_turn, block (or
-  keep-working) so the agent must post RUN/NOW/ELAPSED instead of going idle.
+  If gate-now.txt is not GATE DONE and this is a real end_turn, keep the turn
+  alive for speakable events (vote/arbiter/fixer/DONE). Waiting ticks must not
+  nag — that produced 'no new votes' spam.
   Then the existing edit-session reminder. Fail-open.
 #>
 $ErrorActionPreference = 'SilentlyContinue'
@@ -49,6 +50,19 @@ if ($reason -and $reason -ne 'end_turn' -and $reason -notmatch 'Stop$') {
     exit 0
 }
 
+function Get-GateNowTickKey([string]$NowLine) {
+    $s = "$NowLine"
+    $s = $s -replace '\s*\(~\d+s\)', ''
+    $s = $s -replace '\s*none finished yet[^\|]*', ''
+    $s = $s -replace '\s{2,}', ' '
+    return $s.Trim()
+}
+
+function Test-IsGateWaitNow([string]$NowLine) {
+    $s = (Get-GateNowTickKey $NowLine) -replace '^NOW:\s+', ''
+    return [bool]($s -match '(?i)^Waiting on\b')
+}
+
 $nowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
 if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
     $head = @(Get-Content -LiteralPath $nowFile)
@@ -75,14 +89,20 @@ if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
         if (Test-Path -LiteralPath $spokeFile) {
             try { $spokeNow = ((Get-Content -LiteralPath $spokeFile -TotalCount 1) -replace '[\r\n]+', '').Trim() } catch { $spokeNow = '' }
         }
+        # Waiting is not a speakable event. Do not force 'no new votes'.
+        if (Test-IsGateWaitNow $now) {
+            Invoke-EditRemind
+            exit 0
+        }
         $spoke = ($runId -and $last.Contains($runId)) -or ($nowVal -and $last.Contains($nowVal))
         if ($spoke -and $nowVal) {
-            try { [System.IO.File]::WriteAllText($spokeFile, $nowVal) } catch {}
+            try { [System.IO.File]::WriteAllText($spokeFile, (Get-GateNowTickKey $nowVal)) } catch {}
         }
-        # Same NOW already posted: do not nag again for ELAPSED-only ticks.
-        if (-not $spoke -and $spokeNow -and $nowVal -eq $spokeNow) { $spoke = $true }
+        $nowKey = Get-GateNowTickKey $nowVal
+        $spokeKey = Get-GateNowTickKey $spokeNow
+        if (-not $spoke -and $spokeKey -and $nowKey -eq $spokeKey) { $spoke = $true }
         $snap = @"
-GATE LIVE — speak only if NOW/votes/fixer/DONE changed (not ELAPSED). Poll timeout_ms=15000:
+GATE LIVE — If nothing new: write zero chat. Never 'still waiting' or 'no new votes'. Speak only a new vote / arbiter / fixer file / GATE DONE.
 $run
 $now
 $elapsed

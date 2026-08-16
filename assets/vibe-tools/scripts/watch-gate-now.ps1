@@ -46,6 +46,20 @@ $sawLive = $false
 $seenEvents = New-Object 'System.Collections.Generic.HashSet[string]'
 $seenEventsRun = $null
 
+function Get-GateNowTickKey([string]$NowLine) {
+    # Waiting (~15s)/(~30s) is not a new event. Must not print or wake chat.
+    $s = "$NowLine"
+    $s = $s -replace '\s*\(~\d+s\)', ''
+    $s = $s -replace '\s*none finished yet[^\|]*', ''
+    $s = $s -replace '\s{2,}', ' '
+    return $s.Trim()
+}
+
+function Test-IsGateWaitNow([string]$NowLine) {
+    $s = (Get-GateNowTickKey $NowLine) -replace '^NOW:\s+', ''
+    return [bool]($s -match '(?i)^Waiting on\b')
+}
+
 function Get-InterestingGateEvents([object[]]$Snap) {
     return @($Snap | Where-Object {
             $_ -and
@@ -160,11 +174,13 @@ while ((Get-Date) -lt $deadline) {
             $seenEvents.Clear()
             $seenEventsRun = $runId
         }
-        # ELAPSED-only must not wake chat. Speak RUN|NOW when the phase changes.
-        $tick = ('{0} | {1}' -f $runLine, $nowLine)
-        if ($tick -ne $lastPrint) {
+        # ELAPSED-only must not wake. Wait ticks must not print. Every stdout line wakes chat.
+        $tick = ('{0} | {1}' -f $runLine, (Get-GateNowTickKey $nowLine))
+        if (-not (Test-IsGateWaitNow $nowLine) -and $tick -ne $lastPrint) {
             $elapsed = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
             [Console]::Out.WriteLine(('{0} | {1}' -f $tick, $elapsed))
+            $lastPrint = $tick
+        } elseif (Test-IsGateWaitNow $nowLine) {
             $lastPrint = $tick
         }
         foreach ($evt in (Get-InterestingGateEvents $snap)) {

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-08-16
+
+### Fixed
+
+- Gate chat stays quiet until something real happens. Monitor never prints wait (`~15s`) ticks. Stop hook no longer nags on `Waiting on …` (that was the `no new votes` spam). Prompt inject says write zero chat if nothing new
+
 ## [1.4.6] - 2026-08-16
 
 ### Fixed

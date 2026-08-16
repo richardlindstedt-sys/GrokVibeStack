@@ -26,6 +26,6 @@
 
 - Chat: light self-check after edits. On-edit hooks handle fast secrets/linters.
 - Full multi-reviewer + full scanner suite = **commit/push hooks** or explicit `vibe-review` — not every turn.
-- **Gate in chat:** background commit/push. Start `monitor` on `watch-gate-now.ps1 -Monitor` when a gate starts (GATE DONE is a tick). Leftover DONE at startup does not kill the watch. Linger ~45s after live DONE then `DONE`; kill after last gate of the pair. Poll `gate-now.txt` every ~15s (`timeout_ms`<=15000) but **speak only on new events** (NOW phase, vote, arbiter, fixer action, GATE DONE). Do not repeat the same RUN+NOW for ELAPSED ticks. Recap votes+arbiter+DONE before next git. Latch new `RUN:`. No popup unless `VIBE_GATE_POPUP=1`.
+- **Gate in chat:** background commit/push. Start `monitor` on `watch-gate-now.ps1 -Monitor` when a gate starts (only wake). **If nothing new: write zero chat.** Never "still waiting" or "no new votes". Speak only: scan result, vote, arbiter, fixer file, GATE DONE. Recap votes+arbiter+DONE before next git. Latch new `RUN:`. Kill watch after last gate of the pair. Stop does not nag on wait ticks. No popup unless `VIBE_GATE_POPUP=1`.
 - Serena MCP on by default (symbol nav). Serena **remind hooks** stay off unless opted in.
 - Launchers: `start-grok` · `vibe-review` · tools under `~/.grok/vibe-tools/`

@@ -87,7 +87,7 @@ GATE DONE (must post RUN + every VOTE + arbiter + this DONE line in chat before 
 '@
     } else {
         @'
-GATE LIVE (do not stay silent — report NOW plus scan/reviewer/arbiter events, then poll again in ~15s):
+GATE LIVE (if nothing new: write zero chat. Never 'no new votes' or 'still waiting'. Speak only a new scan/vote/arbiter/fixer/DONE event):
 '@
     }
     Add-GateSnapshotChunk -Path $nowFile -Banner $liveBanner
