@@ -501,6 +501,17 @@ default = "grok-4.6"
     } else {
         Bad ("config merge invalid after reinstall-shaped input: {0}" -f ($mergedCheck.Errors -join '; '))
     }
+    # Exact user failure: Grok rewrite (tables, no markers) + installer appended snippet.
+    $preDup = $pre.TrimEnd() + "`n`n" + $snippetText
+    $mergedDup = Merge-VibeToml -Raw $preDup -Snippet $snippetText
+    $dupCheck = Test-VibeToml -Raw $mergedDup
+    $sessionHits = @([regex]::Matches($mergedDup, '(?m)^\s*\[session\]\s*$'))
+    $modelHits = @([regex]::Matches($mergedDup, '(?m)^\s*\[model\."grok-4\.6"\]\s*$'))
+    if ($dupCheck.Ok -and $sessionHits.Count -eq 1 -and $modelHits.Count -eq 1) {
+        Ok 'config merge: rewritten tables + appended managed block collapses to one copy'
+    } else {
+        Bad ("config merge left duplicate tables after append-shaped input sessions={0} models={1} ok={2}" -f $sessionHits.Count, $modelHits.Count, $dupCheck.Ok)
+    }
     # Strip-miss: table not in Get-VibeOwnedTomlSections. Merge must keep last
     # (snippet), not first (stale). Assert snippet command, not only Test-VibeToml.Ok.
     $preMiss = $pre + "`n`n[mcp_servers.untracked]`ncommand = 'stale-stub'`n"
@@ -512,6 +523,38 @@ default = "grok-4.6"
         Ok 'config merge: snippet wins when strip misses a table'
     } else {
         Bad ("config merge strip-miss did not keep snippet tables={0} ok={1}" -f $untracked.Count, $missCheck.Ok)
+    }
+    $stubToml = Test-VibeToml -Raw "[cli]`ninstaller = `"internal`"`n"
+    if (-not $stubToml.Ok -and -not $stubToml.HasHeadroomOverride) {
+        Ok 'Test-VibeToml: Headroom-less stub is not Ok'
+    } else {
+        Bad 'Test-VibeToml treated Headroom-less stub as Ok'
+    }
+    $srcTmp = Join-Path $env:TEMP ("vibe-cfg-src-{0}" -f [guid]::NewGuid().ToString('n'))
+    try {
+        New-Item -ItemType Directory -Path $srcTmp -Force | Out-Null
+        $livePath = Join-Path $srcTmp 'config.toml'
+        $bakPath = Join-Path $srcTmp 'config.toml.bak'
+        $stub = "[cli]`ninstaller = `"internal`"`n"
+        $stack = $pre
+        [System.IO.File]::WriteAllText($livePath, $stub)
+        [System.IO.File]::WriteAllText($bakPath, $stack)
+        $fromStub = Resolve-VibeConfigMergeSource -ConfigPath $livePath
+        if ($fromStub.SourcePath -eq $bakPath -and $fromStub.SidecarPath -eq $bakPath -and $fromStub.Raw -match '127\.0\.0\.1:8787') {
+            Ok 'config source: stub live + stack bak prefers bak'
+        } else {
+            Bad ("config source stub+bak expected bak got source={0}" -f $fromStub.SourcePath)
+        }
+        [System.IO.File]::WriteAllText($livePath, $stack)
+        [System.IO.File]::WriteAllText($bakPath, $stack)
+        $fromOk = Resolve-VibeConfigMergeSource -ConfigPath $livePath
+        if ($fromOk.SourcePath -eq $livePath -and -not $fromOk.SidecarPath -and (Test-Path -LiteralPath $bakPath)) {
+            Ok 'config source: valid live leaves leftover bak unused'
+        } else {
+            Bad ("config source valid+bak should keep live and not mark sidecar source={0} sidecar={1}" -f $fromOk.SourcePath, $fromOk.SidecarPath)
+        }
+    } finally {
+        Remove-Item -LiteralPath $srcTmp -Recurse -Force -ErrorAction SilentlyContinue
     }
     $utfTmp = Join-Path $env:TEMP ("vibe-utf8-smoke-{0}.toml" -f [guid]::NewGuid().ToString('n'))
     try {
@@ -528,15 +571,21 @@ default = "grok-4.6"
 } else {
     Bad 'missing GrokToml.ps1'
 }
-if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Test-VibeToml' -and $instSrc -match 'Merge-VibeToml' -and $instSrc -match 'Write-Utf8NoBomFile' -and $instSrc -match 'throw \("config.toml merge invalid') {
-    Ok 'installer: merge uses GrokToml + validates + UTF8 no BOM + throw on invalid'
+if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Repair-GrokConfigFile') {
+    Ok 'installer: merge uses GrokToml Repair-GrokConfigFile'
 } else {
-    Bad 'installer merge no longer validates TOML / uses GrokToml / throw'
+    Bad 'installer merge no longer calls Repair-GrokConfigFile'
 }
-if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile') {
-    Ok 'start-grok: config preflight + auto-repair'
+$tomlSrc = Get-Content -LiteralPath $tomlHelper -Raw
+if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'SidecarPath = \$null') {
+    Ok 'GrokToml: repair throws on invalid merge; bak unused unless source'
 } else {
-    Bad 'start-grok missing config preflight/repair'
+    Bad 'GrokToml missing throw-on-invalid or unused-sidecar SidecarPath=null'
+}
+if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile' -and $startSrc -match 'GrokToml\.ps1 missing' -and $startSrc -match 'HasHeadroomOverride' -and $startSrc -match 'if \(\$check\.HasHeadroomOverride -and \$check\.Ok\) \{ return \}') {
+    Ok 'start-grok: config preflight + auto-repair + fail-closed helper + skip rewrite when Headroom Ok'
+} else {
+    Bad 'start-grok missing config preflight/repair/fail-closed helper/Headroom-Ok return'
 }
 if ($rawReview -match 'Test-VanillaHatchEndpoint' -and $rawReview -match 'vanilla hatch') {
     Ok 'review: hatch official endpoint before proxy-down fallback'

@@ -537,24 +537,18 @@ function Merge-GrokConfig {
 
     Ensure-Dir $GrokHome
     $existed = Test-Path -LiteralPath $cfgPath
-    $raw = ''
-    if ($existed) {
-        $bak = "$cfgPath.vibe-bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-        Copy-Item -LiteralPath $cfgPath -Destination $bak -Force
-        $script:Manifest.configBackup = $bak
-        Write-Info "Config backup: $bak"
-        $raw = Read-Utf8NoBomFile -Path $cfgPath
-    } else {
-        $raw = "[cli]`ninstaller = `"internal`"`n"
+    if (-not $existed) {
+        Write-Utf8NoBomFile -Path $cfgPath -Content "[cli]`ninstaller = `"internal`"`n"
     }
 
-    $snippet = Get-VibeManagedSnippet -SnippetPath $snippetPath -HeadroomCmd $hr -SerenaExe $serenaExe -SerenaEnabled $serenaOn
-    $newRaw = Merge-VibeToml -Raw $raw -Snippet $snippet
-    $check = Test-VibeToml -Raw $newRaw
-    if (-not $check.Ok) {
-        throw ("config.toml merge invalid: {0}" -f ($check.Errors -join '; '))
+    $result = Repair-GrokConfigFile -ConfigPath $cfgPath -SnippetPath $snippetPath -HeadroomCmd $hr -SerenaExe $serenaExe -SerenaEnabled $serenaOn -BackupSuffix ("install-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    if ($result.BackupPath) {
+        $script:Manifest.configBackup = $result.BackupPath
+        Write-Info "Config backup: $($result.BackupPath)"
     }
-    Write-Utf8NoBomFile -Path $cfgPath -Content $newRaw
+    if ($result.Quarantined) {
+        Write-Info "Quarantined sidecar: $($result.Quarantined)"
+    }
     if ($existed) {
         Write-Ok "Merged vibe stack into config.toml"
     } else {

@@ -200,14 +200,79 @@ function Merge-VibeToml {
     $merged = $body.TrimEnd()
     if ($merged) { $merged += "`n`n" }
     $merged += $Snippet.TrimEnd() + "`n"
-    $dups = @(Get-TomlDuplicateTables -Raw $merged)
-    if ($dups.Count -gt 0) {
-        # Snippet is last. Keep-first would preserve a missed stub and drop
-        # the managed table (Grok-rewrite / stale-stub). Snippet wins.
-        $merged = Repair-TomlKeepLastTables -Raw $merged
-        $merged = $merged.TrimEnd() + "`n"
+    # Always keep-last. Grok rewrite drops managed-block comments; a later
+    # append then has two copies of the same tables. Strip-by-name can miss
+    # a renamed table; last (snippet) must win.
+    $merged = Repair-TomlKeepLastTables -Raw $merged
+    return ($merged.TrimEnd() + "`n")
+}
+
+function Get-VibeConfigBackupDir {
+    $d = Join-Path $env:USERPROFILE '.grok\relocations'
+    if (-not (Test-Path -LiteralPath $d)) {
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
     }
-    return $merged
+    return $d
+}
+
+function Backup-VibeConfigFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [string]$BackupSuffix = ''
+    )
+    if (-not (Test-Path -LiteralPath $ConfigPath)) { return $null }
+    $suffix = if ($BackupSuffix) { ($BackupSuffix -replace '[^\w.\-]+', '-').Trim('-') } else { '' }
+    if (-not $suffix) { $suffix = Get-Date -Format 'yyyyMMdd-HHmmss' }
+    $dest = Join-Path (Get-VibeConfigBackupDir) ('config-{0}.toml' -f $suffix)
+    Copy-Item -LiteralPath $ConfigPath -Destination $dest -Force
+    return $dest
+}
+
+function Move-VibeConfigSidecar {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    $leaf = Split-Path -Leaf $Path
+    $dest = Join-Path (Get-VibeConfigBackupDir) ('sidecar-{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $leaf)
+    Move-Item -LiteralPath $Path -Destination $dest -Force
+    return $dest
+}
+
+function Resolve-VibeConfigMergeSource {
+    param([Parameter(Mandatory = $true)][string]$ConfigPath)
+    $dir = Split-Path -Parent $ConfigPath
+    $live = ''
+    if (Test-Path -LiteralPath $ConfigPath) {
+        $live = Read-Utf8NoBomFile -Path $ConfigPath
+    }
+    $sidecar = Join-Path $dir 'config.toml.bak'
+    $sidecarRaw = $null
+    if (Test-Path -LiteralPath $sidecar) {
+        $sidecarRaw = Read-Utf8NoBomFile -Path $sidecar
+    }
+    $liveHr = $false
+    if ($live) {
+        $liveHr = [bool]((Test-VibeToml -Raw $live).HasHeadroomOverride)
+    }
+    # Prefer bak when live is a stub (no Headroom) and bak looks like the stack.
+    # Do not treat parse-Ok alone as "keep live" — a short Grok stub can be
+    # valid TOML. Do not set SidecarPath unless bak is the merge source.
+    $bakLooksLikeStack = $false
+    if ($sidecarRaw) {
+        $bakDups = @(Get-TomlDuplicateTables -Raw $sidecarRaw)
+        $bakLooksLikeStack = ($bakDups.Count -gt 0) -or [bool]($sidecarRaw -match '127\.0\.0\.1:8787')
+    }
+    if ($bakLooksLikeStack -and -not $liveHr) {
+        return @{
+            Raw         = $sidecarRaw
+            SourcePath  = $sidecar
+            SidecarPath = $sidecar
+        }
+    }
+    return @{
+        Raw         = $live
+        SourcePath  = $ConfigPath
+        SidecarPath = $null
+    }
 }
 
 function Test-VibeToml {
@@ -257,24 +322,38 @@ function Repair-GrokConfigFile {
         [bool]$SerenaEnabled = $true,
         [string]$BackupSuffix = ''
     )
-    $raw = ''
-    if (Test-Path -LiteralPath $ConfigPath) {
-        $raw = Read-Utf8NoBomFile -Path $ConfigPath
-    }
+    $src = Resolve-VibeConfigMergeSource -ConfigPath $ConfigPath
     $snippet = Get-VibeManagedSnippet -SnippetPath $SnippetPath -HeadroomCmd $HeadroomCmd -SerenaExe $SerenaExe -SerenaEnabled $SerenaEnabled
-    $merged = Merge-VibeToml -Raw $raw -Snippet $snippet
+    $merged = Merge-VibeToml -Raw $src.Raw -Snippet $snippet
     $check = Test-VibeToml -Raw $merged
     if (-not $check.Ok) {
         throw ('config.toml merge still invalid: {0}' -f ($check.Errors -join '; '))
     }
+    $backup = $null
     if (Test-Path -LiteralPath $ConfigPath) {
-        $suffix = if ($BackupSuffix) { $BackupSuffix } else { (Get-Date -Format 'yyyyMMdd-HHmmss') }
-        Copy-Item -LiteralPath $ConfigPath -Destination "$ConfigPath.vibe-bak-$suffix" -Force
+        $backup = Backup-VibeConfigFile -ConfigPath $ConfigPath -BackupSuffix $BackupSuffix
     }
     $dir = Split-Path -Parent $ConfigPath
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
     Write-Utf8NoBomFile -Path $ConfigPath -Content $merged
-    return $check
+    $onDisk = Read-Utf8NoBomFile -Path $ConfigPath
+    $recheck = Test-VibeToml -Raw $onDisk
+    if (-not $recheck.Ok) {
+        throw ('config.toml re-read after write is invalid: {0}' -f ($recheck.Errors -join '; '))
+    }
+    $quarantined = $null
+    if ($src.SidecarPath) {
+        $quarantined = Move-VibeConfigSidecar -Path $src.SidecarPath
+    }
+    return @{
+        Ok           = $true
+        Duplicates   = @()
+        Errors       = @()
+        BackupPath   = $backup
+        SourcePath   = $src.SourcePath
+        Quarantined  = $quarantined
+        HasHeadroomOverride = $recheck.HasHeadroomOverride
+    }
 }

@@ -518,8 +518,7 @@ function Test-GrokTomlHelperLoaded {
 function Assert-GrokConfig {
     $cfg = Join-Path $GrokHome 'config.toml'
     if (-not (Test-GrokTomlHelperLoaded)) {
-        Write-Warn "GrokToml.ps1 missing — cannot preflight config.toml"
-        return
+        throw "GrokToml.ps1 missing — cannot preflight config.toml. Re-run Install-GrokVibeStack.ps1 (do not run plain grok)."
     }
     $raw = ''
     if (Test-Path -LiteralPath $cfg) {
@@ -528,7 +527,9 @@ function Assert-GrokConfig {
     $check = if ($raw) { Test-VibeToml -Raw $raw } else {
         @{ Ok = $false; Errors = @('config.toml missing'); Duplicates = @(); HasHeadroomOverride = $false }
     }
-    if ($check.Ok) { return }
+    # Ok already requires HasHeadroomOverride + no dups. Check Headroom
+    # explicitly so a parse-valid stub never skips Repair (bak prefer).
+    if ($check.HasHeadroomOverride -and $check.Ok) { return }
 
     Write-Warn ("config.toml needs repair: {0}" -f ($check.Errors -join '; '))
     $snippet = Get-VibeConfigSnippetPath -TokenRoot $TokenRoot
@@ -538,8 +539,12 @@ function Assert-GrokConfig {
     $hr = Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'
     $serena = Join-Path $env:USERPROFILE '.local\bin\serena.exe'
     $serenaOn = Test-Path -LiteralPath $serena
-    $null = Repair-GrokConfigFile -ConfigPath $cfg -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn -BackupSuffix ("startgrok-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-    Write-Ok "Repaired ~/.grok/config.toml (Headroom override restored). Backup next to the file."
+    $result = Repair-GrokConfigFile -ConfigPath $cfg -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn -BackupSuffix ("startgrok-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    if ($result.Quarantined) {
+        Write-Ok ("Repaired ~/.grok/config.toml (source {0}). Sidecar moved to {1}" -f $result.SourcePath, $result.Quarantined)
+    } else {
+        Write-Ok "Repaired ~/.grok/config.toml (Headroom override restored). Backup under ~/.grok/relocations/"
+    }
 }
 
 # --- main ---

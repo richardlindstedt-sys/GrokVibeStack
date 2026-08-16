@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-08-16
+
+### Fixed
+
+- `config.toml` merge always keep-last after strip, so a Grok rewrite (drops managed-block comments) plus a later install/start append cannot leave duplicate tables
+- Installer and `start-grok` repair write backups under `~/.grok/relocations/` (never `config.toml.vibe-bak-*` next to the live file)
+- `start-grok` fail-closed if `GrokToml.ps1` is missing; if live `config.toml` lacks Headroom and `config.toml.bak` looks like the stack, merge from the bak and quarantine that sidecar only
+- `start-grok` does not rewrite a valid live `config.toml` just because a leftover `config.toml.bak` exists
+
 ## [1.3.6] - 2026-08-16
 
 ### Fixed
