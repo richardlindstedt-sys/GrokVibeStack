@@ -7,12 +7,23 @@
     Hidden loop: rewrite ELAPSED on gate-now.txt every 15s until GATE DONE.
 .PARAMETER Monitor
     Print RUN | NOW | ELAPSED when it changes. GATE DONE is a tick, not process
-    exit — stay up across sequential gates (commit then push). Print DONE only
-    at the 2h deadline. Use as the monitor tool command.
+    exit — stay up across sequential gates (commit then push). Print DONE and
+    exit after IdleSec of the same RUN staying GATE DONE (default 5m), or at
+    the 2h deadline. IdleSec 0 disables idle-exit. Use as the monitor tool command.
+.PARAMETER IdleSec
+    Seconds of stale GATE DONE (same RUN) before Monitor prints DONE and exits.
+    Default 300. 0 = never idle-exit.
+.PARAMETER IntervalSec
+    Poll interval. Default 15.
+.PARAMETER NowFile
+    Override path to gate-now.txt (tests).
 #>
 param(
     [switch]$Heartbeat,
-    [switch]$Monitor
+    [switch]$Monitor,
+    [int]$IdleSec = 300,
+    [int]$IntervalSec = 15,
+    [string]$NowFile = ''
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -21,10 +32,13 @@ try {
     [Console]::Error.AutoFlush = $true
 } catch {}
 
-$nowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
-$intervalSec = 15
+if ($IntervalSec -lt 1) { $IntervalSec = 1 }
+if ($IdleSec -lt 0) { $IdleSec = 0 }
+$nowFile = if ($NowFile) { $NowFile } else { Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt' }
 $deadline = (Get-Date).AddHours(2)
 $lastPrint = ''
+$idleSince = $null
+$idleRun = $null
 
 function Get-GateHead {
     if (-not (Test-Path -LiteralPath $nowFile)) { return @() }
@@ -89,31 +103,49 @@ if (-not $Heartbeat -and -not $Monitor) { $Monitor = $true }
 
 # Monitor stays up across sequential gates (commit then push).
 # GATE DONE is a tick, not process exit. Heartbeat-only still stops on GATE DONE.
+# Monitor idle-exits after IdleSec of the same RUN staying GATE DONE.
 while ((Get-Date) -lt $deadline) {
     $head = Get-GateHead
     $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
+    $runLine = ($head | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
     $done = $nowLine -and ($nowLine -match 'GATE DONE')
+    $runId = $null
+    if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
     if (-not $head) {
-        Start-Sleep -Seconds $intervalSec
+        Start-Sleep -Seconds $IntervalSec
         continue
     }
     if ($Heartbeat -and -not $done) {
         $head = Update-GateElapsed
         $nowLine = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
+        $runLine = ($head | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
         $done = $nowLine -and ($nowLine -match 'GATE DONE')
+        $runId = $null
+        if ($runLine -and $runLine -match '^RUN:\s+(\S+)') { $runId = $Matches[1] }
+    }
+    if ($done) {
+        if ($null -eq $idleSince -or $runId -ne $idleRun) {
+            $idleSince = Get-Date
+            $idleRun = $runId
+        }
+    } else {
+        $idleSince = $null
+        $idleRun = $null
     }
     if ($Monitor) {
-        $run = ($head | Where-Object { $_ -match '^RUN:\s+' } | Select-Object -First 1)
-        $now = ($head | Where-Object { $_ -match '^NOW:\s+' } | Select-Object -First 1)
         $elapsed = ($head | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
-        $snap = ('{0} | {1} | {2}' -f $run, $now, $elapsed)
+        $snap = ('{0} | {1} | {2}' -f $runLine, $nowLine, $elapsed)
         if ($snap -ne $lastPrint) {
             [Console]::Out.WriteLine($snap)
             $lastPrint = $snap
         }
+        if ($IdleSec -gt 0 -and $null -ne $idleSince -and ((Get-Date) - $idleSince).TotalSeconds -ge $IdleSec) {
+            [Console]::Out.WriteLine('DONE')
+            exit 0
+        }
     }
     if ($done -and $Heartbeat -and -not $Monitor) { exit 0 }
-    Start-Sleep -Seconds $intervalSec
+    Start-Sleep -Seconds $IntervalSec
 }
 
 if ($Monitor) { [Console]::Out.WriteLine('DONE') }

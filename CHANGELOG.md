@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.9] - 2026-08-16
+
+### Fixed
+
+- `watch-gate-now.ps1 -Monitor` prints `DONE` and exits after 5 minutes of the same RUN staying `GATE DONE` (commit-then-push still stays up; `IdleSec 0` keeps the old 2h-only deadline)
+
 ## [1.3.8] - 2026-08-16
 
 ### Fixed

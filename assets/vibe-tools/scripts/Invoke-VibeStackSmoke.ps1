@@ -78,6 +78,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-on-edit.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-prompt-context.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-evals.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-schema.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-push-plan.ps1'),
@@ -401,10 +402,50 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
 }
-if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match 'Monitor stays up across sequential gates' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor') {
-    Ok 'gate monitor: GATE DONE is a tick; stay up for commit then push'
+if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match 'Monitor stays up across sequential gates' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor' -and $watchNow -match 'IdleSec' -and $watchNow -match 'same RUN staying GATE DONE') {
+    Ok 'gate monitor: GATE DONE is a tick; stay up for commit then push; idle-exit'
 } else {
-    Bad 'watch-gate-now still exits on GATE DONE (kills commit-then-push watch)'
+    Bad 'watch-gate-now still exits on GATE DONE or missing idle-exit (kills commit-then-push watch)'
+}
+$watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
+$idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $idleDir -Force | Out-Null
+    $idleNow = Join-Path $idleDir 'gate-now.txt'
+    $idleOut = Join-Path $idleDir 'out.txt'
+    @(
+        'RUN:     idle-test-1'
+        'NOW:     GATE DONE - passed'
+        'ELAPSED: 1s'
+    ) | Set-Content -LiteralPath $idleNow -Encoding ascii
+    $idleProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
+        '-Monitor', '-IdleSec', '2', '-IntervalSec', '1', '-NowFile', $idleNow
+    ) -RedirectStandardOutput $idleOut -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 800
+    if (-not $idleProc.HasExited) {
+        Ok 'gate monitor: GATE DONE does not exit immediately'
+        $idleProc.WaitForExit(8000) | Out-Null
+        if ($idleProc.HasExited) {
+            $idleTxt = Get-Content -LiteralPath $idleOut -Raw -ErrorAction SilentlyContinue
+            if ($idleTxt -match '(?m)^DONE\s*$') {
+                Ok 'gate monitor: idle-exit prints DONE after stale GATE DONE'
+            } else {
+                Bad 'gate monitor idle-exit ran but stdout missing DONE'
+            }
+        } else {
+            try { Stop-Process -Id $idleProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Bad 'gate monitor did not idle-exit within 8s (IdleSec=2)'
+        }
+    } else {
+        Bad 'watch-gate-now exited immediately on GATE DONE (kills commit-then-push watch)'
+    }
+} catch {
+    Bad ("gate monitor idle-exit smoke: {0}" -f $_.Exception.Message)
+} finally {
+    if ($idleDir -and (Test-Path -LiteralPath $idleDir)) {
+        Remove-Item -LiteralPath $idleDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {
     Ok 'review: schema cache + intent/blast + token estimate + worktree fixer'
