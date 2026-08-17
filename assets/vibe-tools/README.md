@@ -72,10 +72,10 @@ Grok should still use in-session subagents; the **git gate enforces** the panel 
 
 ## Always-on Behavior (via rules)
 Grok must:
-1. Use subagents heavily (reviewer, security-auditor, explore, plan, implementer).
-2. After writing code, run relevant scans (`run-vibe-scans.ps1` or targeted tools).
-3. Always perform a full self-review (via reviewer subagent or `vibe-review` / `grok-ai-review.ps1`) of its own changes.
-4. Prefer Serena MCP for symbol-level navigation when available (activate project if needed).
+1. Explore with grep / Serena / small subagents when the work is non-trivial.
+2. After writing code, do a light self-check. On-edit hooks already run secrets + linters.
+3. **Not** spawn a full multi-reviewer panel in chat — pre-commit runs that (`standard`). Use `vibe-review` only when asked or before a risky push.
+4. Prefer Serena MCP for symbol-level navigation when available.
 5. Look specifically for: duplication, dead code, unwired/incomplete features, security issues, bugs.
 
 ## Using the Tools Manually
@@ -107,7 +107,7 @@ install-vibe-hooks.ps1 .
 
 | Gate | When | What runs | Blocks? |
 |------|------|-----------|---------|
-| **On edit** | Grok `PostToolUse` after `search_replace` / write | `run-vibe-on-edit.ps1` — secrets + linters; writes `on-edit-findings.json` | No |
+| **On edit** | Grok `PostToolUse` after write / `search_replace` / Serena write tools | `run-vibe-on-edit.ps1` — secrets + linters; merge-by-file findings | No |
 | **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings + GATE LIVE | No |
 | **Poll clamp** | `PreToolUse` `get_command_or_subagent_output` | Live gate: `timeout_ms` → 15000 | Rewrite |
 | **Stop keep-alive** | `Stop` | Block silent end while gate live | Keeps turn |
@@ -120,7 +120,7 @@ If Grok was already open during install: `/hooks` then `r`, or restart. New sess
 
 Emergency bypass only: `git commit --no-verify` / `git push --no-verify`.
 
-**Grok will remind you** (via the `vibe-coding` skill) if this repo is missing the vibe pre-commit hook.
+Missing hooks: `doctor` (cwd) shows yellow if this repo has no vibe pre-commit. Install with `install-vibe-hooks.ps1 .`.
 
 ## Recommended Workflow (inside Grok)
 - Ask Grok to implement something.

@@ -3,7 +3,7 @@
     pre-push gate: full static scans + Grok AI review of commits about to be pushed.
 .DESCRIPTION
     Blocks the push (exit 1) on critical scan failures or LLM BLOCK verdict.
-    Uses the range of commits being pushed when available; falls back to working tree.
+    Requires git hook stdin refs. Empty range after refs: scans only, no guessed checkout diff.
 #>
 [CmdletBinding()]
 param()
@@ -106,7 +106,7 @@ if ($ranges.Count -gt 0) {
             if ($d) { $d }
             continue
         }
-        $d = git diff --no-color "$r" 2>$null
+        $d = ConvertTo-SinglePatchText (git diff --no-color "$r" 2>$null)
         if ($d) {
             [void]$labels.Add($r)
             $d
@@ -252,7 +252,8 @@ try {
 }
 
 # Only the post-review exit matters (not scan Start-Process or earlier natives).
-$reviewEc = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+# Null LASTEXITCODE is fail-closed: a review that did not exit is not a pass.
+$reviewEc = if ($null -eq $LASTEXITCODE) { 1 } else { [int]$LASTEXITCODE }
 if ($reviewEc -ne 0) {
     Write-Host ""
     Write-Host "PRE-PUSH BLOCKED: Grok returned BLOCK (or review failed)." -ForegroundColor Red

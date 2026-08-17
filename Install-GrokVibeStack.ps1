@@ -111,7 +111,7 @@ $script:Manifest = [ordered]@{
     stackFiles           = New-Object System.Collections.Generic.List[string]
     binShims             = @(
         'start-grok.cmd', 'start-grok.ps1', 'stop-grok-proxy.cmd',
-        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe'
+        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe'
     )
     hookFiles            = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')
     qualityGates         = @('pre-commit', 'pre-push', 'on-edit', 'rtk-enforce', 'ai-review-high')
@@ -1205,6 +1205,12 @@ Copy-Tree (Join-Path $Assets 'vibe-tools\scripts') (Join-Path $VibeRoot 'scripts
 if (-not $DryRun) {
     Copy-Item (Join-Path $Assets 'vibe-tools\*.ps1') $VibeRoot -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $Assets 'vibe-tools\README.md') (Join-Path $VibeRoot 'README.md') -Force -ErrorAction SilentlyContinue
+    $tplDir = Join-Path $VibeRoot 'templates'
+    Ensure-Dir $tplDir
+    $hookTpl = Join-Path $Assets 'hooks\vibe-coding.json'
+    if (Test-Path -LiteralPath $hookTpl) {
+        Copy-Item -LiteralPath $hookTpl -Destination (Join-Path $tplDir 'vibe-coding.json') -Force
+    }
     Copy-Item (Join-Path $Assets 'bin-shims\*') $GrokBin -Force
     $verSrc = Join-Path $ScriptRoot 'VERSION'
     if (Test-Path -LiteralPath $verSrc) {

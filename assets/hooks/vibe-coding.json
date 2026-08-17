@@ -14,7 +14,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "search_replace|Write|Edit|MultiEdit|write",
+        "matcher": "search_replace|Write|Edit|MultiEdit|write|use_tool|serena__replace_content|serena__replace_symbol_body|serena__insert_after_symbol|serena__insert_before_symbol|serena__replace_in_files",
         "hooks": [
           {
             "type": "command",

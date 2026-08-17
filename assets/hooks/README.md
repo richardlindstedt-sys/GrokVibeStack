@@ -15,7 +15,7 @@ RTK enforce / post-shell (required for deny decisions).
 | File | Role |
 |------|------|
 | `token-saving.json` | SessionStart + **RTK PreToolUse deny** + shell post metrics |
-| `vibe-coding.json` | On-edit checks + Stop reminder |
+| `vibe-coding.json` | On-edit checks + UserPromptSubmit inject + poll clamp + Stop keep-alive |
 | `serena-hooks.json` | **Not installed by default.** Serena MCP still works. Opt-in remind hooks: `Enable-SerenaRemindHooks.ps1` (uses fail-soft wrapper). |
 
 After install or hook **file** changes in an already-open Grok session: run **`/hooks` then `r`**, or restart Grok. New sessions load hooks from disk automatically.

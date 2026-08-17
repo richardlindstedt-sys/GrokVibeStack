@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.12] - 2026-08-17
+
+### Fixed
+
+- Pre-push **update** ranges (`remote..local`) now flatten `git diff` through `ConvertTo-SinglePatchText`. PS 5.1 used to join every hunk line with a blank line, so the common push path sent a broken patch to the reviewer
+- Null `$LASTEXITCODE` after AI review is fail-closed (was treated as pass)
+- Pre-commit inherit: only a **dead** scan + `VIBE_GATE_INHERIT=1` takes `PID:`. A live sibling (overlapping `vibe-review` / hook) attaches and does not steal the owner PID
+- Full scan-pass cache writes only when `-TreeIsh` is set. Worktree Full no longer hashes `write-tree`/`HEAD` and authorizes a later push skip
+- Open advisories are injected into the **next reviewer brief**, not only chat. Cwd match is case-insensitive
+- On-edit findings merge per path (clean edit of B does not drop A). Extra secret patterns (`github_pat_`, `sk-`/`xai-`). Serena write tools via `use_tool` / `serena__*`
+- Pre-commit AI is `-StagedOnly` — no working-tree or whole-project fallback
+- `install-vibe-hooks` looks at `vibe-tools/templates/vibe-coding.json` (installer copies it). If no unsubstituted template exists, a valid live hook is kept instead of failing after git hooks were already written
+- `doctor` is a `~\.grok\bin` shim so the README command works after PATH refresh
+- Gate schema **3** (advisory brief in reviewer context invalidates old pass-cache hits)
+
 ## [1.4.11] - 2026-08-17
 
 ### Fixed

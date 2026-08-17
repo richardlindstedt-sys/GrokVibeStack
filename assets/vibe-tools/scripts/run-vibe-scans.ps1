@@ -775,9 +775,12 @@ if ($failed -gt 0) {
     exit 1
 }
 
-# Only Full-tree passes write cache (Staged/Auto must not authorize push Full skip).
-$th = Get-TreeHashForScanCache -TreeIsh $TreeIsh
-if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
+# Only Full + explicit TreeIsh may write cache. Worktree Full (no tip) hashes
+# write-tree/HEAD, which is not the tree that was scanned — must not authorize push skip.
+if ($Scope -eq 'Full' -and -not [string]::IsNullOrWhiteSpace($TreeIsh)) {
+    $th = Get-TreeHashForScanCache -TreeIsh $TreeIsh
+    if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
+}
 if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
     Write-GateProgress ("scans passed ({0} advisory)" -f $advisory) `

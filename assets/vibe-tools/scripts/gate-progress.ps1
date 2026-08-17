@@ -437,10 +437,22 @@ function Start-GateRun {
         $inherit = ($env:VIBE_GATE_INHERIT -eq '1')
         if ($runId -and $nowLine -notmatch 'GATE DONE' -and $cwdOk -and ($child -or $alive -or $inherit)) {
             $script:GateRunId = $runId
-            if ($adoptPid -gt 0) { $script:GatePid = $adoptPid }
             if ($adoptCwd) { $script:GateCwd = $adoptCwd }
             Import-GateStatusTail
-            if (-not $child) { Start-GateElapsedHeartbeat }
+            if ($child) {
+                if ($adoptPid -gt 0) { $script:GatePid = $adoptPid }
+                return
+            }
+            if ($inherit -and -not $alive) {
+                # Pre-commit inherit: scan PID is dead. This process owns the RUN
+                # so Stop keep-alive / recap can see a live PID during the AI panel.
+                $script:GatePid = $PID
+                Write-GateStatusFile
+                Start-GateElapsedHeartbeat
+                return
+            }
+            # Live owner still running (overlapping vibe-review / hook). Attach only.
+            if ($adoptPid -gt 0) { $script:GatePid = $adoptPid }
             return
         }
     }

@@ -22,6 +22,13 @@ function Get-GateFileRun([string[]]$Lines) {
     return ''
 }
 
+function Get-VibeStateDir {
+    if (-not [string]::IsNullOrWhiteSpace($env:VIBE_STATE_DIR)) {
+        return $env:VIBE_STATE_DIR.Trim()
+    }
+    return (Join-Path $env:USERPROFILE '.grok\vibe-tools\state')
+}
+
 function Get-GateOpenAdvisoriesFile {
     Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
 }
@@ -34,8 +41,17 @@ function Format-GateOpenAdvisoriesInject {
     try {
         $doc = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
     } catch { return '' }
+    $want = ''
+    try { $want = [System.IO.Path]::GetFullPath($Cwd).TrimEnd('\', '/').ToLowerInvariant() } catch { $want = "$Cwd".TrimEnd('\', '/').ToLowerInvariant() }
     $open = @($doc.items | Where-Object {
-            $_ -and [string]$_.status -ne 'resolved' -and [string]$_.cwd -eq $Cwd
+            if (-not $_) { return $false }
+            if ([string]$_.status -eq 'resolved') { return $false }
+            $oc = [string]$_.cwd
+            if (-not $oc) { return $false }
+            try {
+                $ocn = [System.IO.Path]::GetFullPath($oc).TrimEnd('\', '/').ToLowerInvariant()
+            } catch { $ocn = $oc.TrimEnd('\', '/').ToLowerInvariant() }
+            return $ocn -eq $want
         })
     if ($open.Count -eq 0) { return '' }
     $lines = foreach ($a in $open) {

@@ -168,6 +168,38 @@ function Get-StrictFullFileAppendix {
     return $sb.ToString()
 }
 
+function Get-PriorOpenAdvisoriesBlock {
+    $path = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    try {
+        $doc = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+    } catch { return '' }
+    $cwd = ''
+    try { $cwd = [System.IO.Path]::GetFullPath((Get-Location).Path).TrimEnd('\', '/').ToLowerInvariant() } catch { return '' }
+    $open = @($doc.items | Where-Object {
+            if (-not $_) { return $false }
+            if ([string]$_.status -eq 'resolved') { return $false }
+            $oc = [string]$_.cwd
+            if (-not $oc) { return $false }
+            try {
+                $ocn = [System.IO.Path]::GetFullPath($oc).TrimEnd('\', '/').ToLowerInvariant()
+            } catch { $ocn = $oc.TrimEnd('\', '/').ToLowerInvariant() }
+            return $ocn -eq $cwd
+        })
+    if ($open.Count -eq 0) { return '' }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('## PRIOR OPEN ADVISORIES')
+    [void]$sb.AppendLine('These shipped last gate (APPROVE_WITH_CHANGES). Re-evaluate each. If still present, keep as advisory or promote to blocker. Omit from advisories ONLY if the diff actually fixed it — do not drop by silence.')
+    foreach ($a in $open) {
+        $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
+        $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
+        $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
+        [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
+    }
+    [void]$sb.AppendLine('')
+    return $sb.ToString()
+}
+
 function Add-ReviewContext {
     param(
         [string]$Brief,
@@ -186,6 +218,9 @@ function Add-ReviewContext {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Intent check: advisory if staged diff clearly does not match this intent (extra unrelated files, missing promised change). Blocker if the message claims a security/correctness fix but the diff is unrelated or empty of that fix.')
     [void]$sb.AppendLine('')
+
+    $priorAdv = Get-PriorOpenAdvisoriesBlock
+    if ($priorAdv) { [void]$sb.AppendLine($priorAdv) }
 
     $paths = @(Get-ChangedPathsFromDiff $RawDiff)
     $blast = Get-BlastRadiusNotes -Diff $RawDiff -ChangedPaths $paths

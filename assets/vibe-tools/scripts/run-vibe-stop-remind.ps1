@@ -19,8 +19,9 @@ function Invoke-EditRemind {
         [Console]::Error.WriteLine('[vibe] Turn end - edits this session: confirm scans/review (vibe-review) before calling done.')
         return
     }
-    $flag = Join-Path $env:USERPROFILE '.grok\vibe-tools\state\edited-this-session.flag'
-    $findingsFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\state\on-edit-findings.json'
+    $stateDir = if (Get-Command Get-VibeStateDir -ErrorAction SilentlyContinue) { Get-VibeStateDir } else { Join-Path $env:USERPROFILE '.grok\vibe-tools\state' }
+    $flag = Join-Path $stateDir 'edited-this-session.flag'
+    $findingsFile = Join-Path $stateDir 'on-edit-findings.json'
     $hadFindings = Test-Path -LiteralPath $findingsFile
     if (Test-Path -LiteralPath $flag) {
         if ($hadFindings) {

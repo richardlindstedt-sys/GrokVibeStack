@@ -289,10 +289,15 @@ if ($prePushSrc -match 'scanner process did not start or returned no exit code' 
 } else {
     Bad 'pre-push still maps null scan ExitCode to 0'
 }
-if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-list --max-count=20' -and $prePushSrc -match '--not --remotes' -and $prePushSrc -notmatch "'origin/HEAD'" -and $prePushSrc -notmatch "'origin/main'" -and $prePushSrc -notmatch "'origin/master'" -and $prePushSrc -notmatch 'refs/remotes/origin/HEAD' -and $prePushSrc -notmatch '\$localSha~20' -and $prePushSrc -match 'ConvertTo-SinglePatchText') {
+if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-list --max-count=20' -and $prePushSrc -match '--not --remotes' -and $prePushSrc -notmatch "'origin/HEAD'" -and $prePushSrc -notmatch "'origin/main'" -and $prePushSrc -notmatch "'origin/master'" -and $prePushSrc -notmatch 'refs/remotes/origin/HEAD' -and $prePushSrc -notmatch '\$localSha~20' -and $prePushSrc -match 'ConvertTo-SinglePatchText \(git diff --no-color "\$r"') {
     Ok 'pre-push: new branch is unique-vs-remotes (no 20-commit cap, no guessed origin/*); patches flattened'
 } else {
     Bad 'pre-push still caps new-branch history, guesses origin/*, or nests git string[]'
+}
+if ($prePushSrc -match 'null -eq \$LASTEXITCODE\) \{ 1 \}') {
+    Ok 'pre-push: null review LASTEXITCODE fail-closed'
+} else {
+    Bad 'pre-push maps null review LASTEXITCODE to 0 (fail-open)'
 }
 if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -match '\.vibe-wt-' -and $scanSrc -match '\.Trim\(\)' -and $scanSrc -match 'absolute-git-dir' -and $prePushSrc -match 'ForEach-Object \{ "\$_"\.Trim\(\) \}' -and $scanSrc -notmatch 'Expand-Archive') {
     Ok 'pre-push: scans push tip via worktree (no Expand-Archive)'
@@ -419,10 +424,36 @@ if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function
     Bad 'gate chat missing sticky votes / Get-GateSnapshot / inject VOTES'
 }
 $chatLibSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-chat-lib.ps1') -Raw -ErrorAction SilentlyContinue
-if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN ADVISORIES' -and $chatLibSrc -match 'must fix in the next commit') {
-    Ok 'gate advisories: persist + inject next-commit (not forgotten)'
+$ctxSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-review-context.ps1') -Raw -ErrorAction SilentlyContinue
+if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN ADVISORIES' -and $chatLibSrc -match 'must fix in the next commit' -and $ctxSrc -match 'PRIOR OPEN ADVISORIES' -and $ctxSrc -match 'function Get-PriorOpenAdvisoriesBlock') {
+    Ok 'gate advisories: persist + inject + next-review brief (not forgotten)'
 } else {
-    Bad 'gate advisories missing persist/inject'
+    Bad 'gate advisories missing persist/inject/review-brief'
+}
+if ($progSrc -match 'Pre-commit inherit' -and $progSrc -match '\$script:GatePid = \$PID') {
+    Ok 'gate inherit: review process takes RUN PID (Stop keep-alive)'
+} else {
+    Bad 'gate inherit still keeps dead scan PID'
+}
+if ($scanSrc -match 'explicit TreeIsh' -and $scanSrc -match 'must not authorize push skip') {
+    Ok 'scan-pass cache: Full without TreeIsh does not write'
+} else {
+    Bad 'scan-pass cache still writes write-tree hash for worktree Full'
+}
+if ($rawReview -match 'StagedOnly' -and $hooksInstSrc -match '-StagedOnly') {
+    Ok 'pre-commit AI: staged-only (no WT / whole-project fallback)'
+} else {
+    Bad 'pre-commit AI missing -StagedOnly'
+}
+if ($hooksInstSrc -match 'templates\\vibe-coding\.json' -and $hooksInstSrc -match 'Kept existing session hook') {
+    Ok 'hook install: deployed template + keep-valid-live fallback'
+} else {
+    Bad 'hook install missing templates/ or live-hook fallback'
+}
+if ($onEditSrc -match 'byFile' -and $onEditSrc -match 'github_pat_' -and $vibeHookTpl -match 'use_tool' -and $onEditSrc -match 'serena\.\*\(replace') {
+    Ok 'on-edit: merge-by-file + extra secrets + Serena use_tool'
+} else {
+    Bad 'on-edit missing merge / secrets / Serena matcher'
 }
 if ($progSrc -match 'function Save-GateLastDone' -and $progSrc -match 'gate-last-done\.txt' -and $promptCtx -match 'LAST GATE' -and $promptCtx -match 'gate-last-done\.txt' -and $promptCtx -match 'GATE DONE \(must post RUN' -and $promptCtx -notmatch "now -notmatch 'GATE DONE'" -and $stopSrc -match 'GATE DONE recap required' -and $stopSrc -match 'ageMin' -and $stopSrc -match 'gate-last-done-ack\.txt') {
     Ok 'gate recap: last-done persist + inject DONE/votes + stop ack latch'

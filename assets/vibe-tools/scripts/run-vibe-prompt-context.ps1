@@ -97,7 +97,8 @@ try { $cwdNow = (Get-Location).Path } catch { $cwdNow = '' }
 $openAdvText = Format-GateOpenAdvisoriesInject -Cwd $cwdNow
 if ($openAdvText) { [void]$chunks.Add($openAdvText) }
 
-$findingsFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\state\on-edit-findings.json'
+$stateDir = Get-VibeStateDir
+$findingsFile = Join-Path $stateDir 'on-edit-findings.json'
 if (Test-Path -LiteralPath $findingsFile) {
     try {
         $doc = Get-Content -LiteralPath $findingsFile -Raw | ConvertFrom-Json

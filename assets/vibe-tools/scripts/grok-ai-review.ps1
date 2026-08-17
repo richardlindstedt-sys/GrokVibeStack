@@ -49,7 +49,9 @@ param(
     # Skip diff-hash pass cache
     [switch]$NoCache,
     # Do not write report files
-    [switch]$NoReport
+    [switch]$NoReport,
+    # Pre-commit: staged diff only. No working-tree or whole-project fallback.
+    [switch]$StagedOnly
 )
 
 $ErrorActionPreference = 'Continue'
@@ -583,6 +585,10 @@ function Get-GitDiffText {
     if ($staged) {
         Write-Host "Using staged diff (what will be committed)." -ForegroundColor Green
         return $staged
+    }
+    if ($StagedOnly) {
+        Write-Host "No staged changes to review." -ForegroundColor DarkGray
+        return $null
     }
     $wt = ConvertTo-SinglePatchText (git diff --no-color 2>$null)
     if ($wt) {
@@ -1650,6 +1656,10 @@ Write-Host "  workdir=$WorkDir" -ForegroundColor DarkGray
 # Compress on RAW unified diff only — never Limit-DiffText first (head/tail splice
 # is not valid input for Get-DiffFileStats and drops middle files on huge commits).
 $rawDiff = Get-GitDiffText -Override $DiffOverride
+if ($StagedOnly -and -not $DiffOverride -and [string]::IsNullOrWhiteSpace($rawDiff)) {
+    Write-Host "PRE-COMMIT OK - nothing staged to review." -ForegroundColor Green
+    Exit-Gate -Code 0 -Reason 'no staged diff'
+}
 $rawLen = if ($rawDiff) { $rawDiff.Length } else { 0 }
 $initialDiff = Compress-DiffForReview $rawDiff
 if (Get-Command Add-ReviewContext -ErrorAction SilentlyContinue) {

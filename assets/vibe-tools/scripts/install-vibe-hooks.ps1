@@ -102,7 +102,7 @@ echo ""
 
 # Same RUN as the scan step (scan PID is already dead).
 export VIBE_GATE_INHERIT=1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/grok-ai-review.ps1" -NoScans -Profile standard -AutoProfile
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$VIBE_SCRIPTS/grok-ai-review.ps1" -NoScans -Profile standard -AutoProfile -StagedOnly
 REVIEW_EXIT=$?
 
 if [ $REVIEW_EXIT -ne 0 ]; then
@@ -125,7 +125,7 @@ $prePush = @'
 
 echo ""
 echo "+================================================================+"
-echo "|   VIBE PRE-PUSH HOOK  [profile=fast + AutoProfile]             |"
+echo "|   VIBE PRE-PUSH HOOK  [fast; version tags -> strict]           |"
 echo "|   Scans + AI on push range (sensitive paths add security)      |"
 echo "+================================================================+"
 echo "LIVE: ~/.grok/vibe-tools/reports/gate-now.txt (chat polls this)"
@@ -165,7 +165,7 @@ foreach ($h in @($preCommitPath, $prePushPath)) {
 Write-Host ""
 Write-Host "Installed vibe git hooks in: $hooksDir" -ForegroundColor Green
 Write-Host "  pre-commit  -> scans -Scope Auto + grok-ai-review -Profile standard -AutoProfile" -ForegroundColor Yellow
-Write-Host "  pre-push    -> scans Full/cache + grok-ai-review -Profile fast -AutoProfile" -ForegroundColor Yellow
+Write-Host "  pre-push    -> scans Full/cache + grok-ai-review fast (version tags -> strict)" -ForegroundColor Yellow
 Write-Host "  reports     -> ~/.grok/vibe-tools/reports/latest.md" -ForegroundColor DarkGray
 
 # Global Grok on-edit hook — materialize from assets/hooks/vibe-coding.json
@@ -176,7 +176,9 @@ New-Item -ItemType Directory -Force -Path $grokHooksDir | Out-Null
 $vibeHookJson = Join-Path $grokHooksDir 'vibe-coding.json'
 
 $tplCandidates = @(
-    (Join-Path $PSScriptRoot '..\..\hooks\vibe-coding.json')
+    (Join-Path $PSScriptRoot '..\templates\vibe-coding.json'),
+    (Join-Path $PSScriptRoot '..\..\hooks\vibe-coding.json'),
+    (Join-Path $PSScriptRoot '..\..\assets\hooks\vibe-coding.json')
 )
 $manifestPath = Join-Path $grokHome 'vibe-stack-manifest.json'
 if (Test-Path -LiteralPath $manifestPath) {
@@ -201,31 +203,49 @@ foreach ($c in $tplCandidates) {
     }
 }
 if (-not $tpl) {
-    Write-Error "Missing hook template vibe-coding.json (assets/hooks) with __GROK_HOME__"
-    exit 1
+    $liveOk = $false
+    if (Test-Path -LiteralPath $vibeHookJson) {
+        try {
+            $live = Get-Content -LiteralPath $vibeHookJson -Raw
+            $liveOk = $live -and
+                ($live -notmatch '__GROK_HOME__') -and
+                ($live -match 'run-vibe-stop-remind\.ps1') -and
+                ($live -match 'run-vibe-prompt-context\.ps1') -and
+                ($live -match 'run-vibe-gate-chat\.ps1')
+            if ($liveOk) { $null = $live | ConvertFrom-Json }
+        } catch { $liveOk = $false }
+    }
+    if ($liveOk) {
+        Write-Host "Kept existing session hook (already valid): $vibeHookJson" -ForegroundColor Yellow
+    } else {
+        Write-Error "Missing hook template vibe-coding.json (assets/hooks or vibe-tools/templates) with __GROK_HOME__"
+        exit 1
+    }
 }
 
-$homeJson = $grokHome.Replace('\', '\\')
-$hookText = $raw.Replace('__GROK_HOME__', $homeJson)
-if ($hookText.Contains('__GROK_HOME__')) {
-    Write-Error "Unsubstituted placeholder in vibe-coding.json"
-    exit 1
+if ($tpl) {
+    $homeJson = $grokHome.Replace('\', '\\')
+    $hookText = $raw.Replace('__GROK_HOME__', $homeJson)
+    if ($hookText.Contains('__GROK_HOME__')) {
+        Write-Error "Unsubstituted placeholder in vibe-coding.json"
+        exit 1
+    }
+    if ($hookText -notmatch 'run-vibe-stop-remind\.ps1') {
+        Write-Error "refusing to write vibe-coding.json without run-vibe-stop-remind.ps1"
+        exit 1
+    }
+    if ($hookText -notmatch 'run-vibe-prompt-context\.ps1') {
+        Write-Error "refusing to write vibe-coding.json without run-vibe-prompt-context.ps1"
+        exit 1
+    }
+    if ($hookText -notmatch 'run-vibe-gate-chat\.ps1') {
+        Write-Error "refusing to write vibe-coding.json without run-vibe-gate-chat.ps1"
+        exit 1
+    }
+    $null = $hookText | ConvertFrom-Json
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($vibeHookJson, $hookText, $utf8NoBom)
 }
-if ($hookText -notmatch 'run-vibe-stop-remind\.ps1') {
-    Write-Error "refusing to write vibe-coding.json without run-vibe-stop-remind.ps1"
-    exit 1
-}
-if ($hookText -notmatch 'run-vibe-prompt-context\.ps1') {
-    Write-Error "refusing to write vibe-coding.json without run-vibe-prompt-context.ps1"
-    exit 1
-}
-if ($hookText -notmatch 'run-vibe-gate-chat\.ps1') {
-    Write-Error "refusing to write vibe-coding.json without run-vibe-gate-chat.ps1"
-    exit 1
-}
-$null = $hookText | ConvertFrom-Json
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllText($vibeHookJson, $hookText, $utf8NoBom)
 Write-Host ""
 Write-Host "Installed Grok session hook: $vibeHookJson" -ForegroundColor Green
 Write-Host "  PreToolUse (poll)   -> clamp live-gate waits to 15s (run-vibe-gate-chat.ps1)" -ForegroundColor Yellow
