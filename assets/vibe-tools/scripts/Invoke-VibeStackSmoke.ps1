@@ -294,10 +294,10 @@ if ($prePushSrc -match 'Get-NewBranchPushDiff' -and $prePushSrc -notmatch 'rev-l
 } else {
     Bad 'pre-push still caps new-branch history, guesses origin/*, or nests git string[]'
 }
-if ($prePushSrc -match 'null -eq \$LASTEXITCODE\) \{ 1 \}') {
-    Ok 'pre-push: null review LASTEXITCODE fail-closed'
+if ($prePushSrc -match 'null -eq \$LASTEXITCODE\) \{ 1 \}' -and $prePushSrc -match 'no payload to review' -and $prePushSrc -notmatch '\$reviewRan') {
+    Ok 'pre-push: null LASTEXITCODE fail-closed after review; empty-range exits before'
 } else {
-    Bad 'pre-push maps null review LASTEXITCODE to 0 (fail-open)'
+    Bad 'pre-push LASTEXITCODE / empty-range contract wrong'
 }
 if ($prePushSrc -match 'Get-VibePushTipShas' -and $prePushSrc -match '-TreeIsh' -and $scanSrc -match 'function New-CommitScanTree' -and $scanSrc -match 'TreeIsh' -and $scanSrc -match 'worktree add --detach' -and $scanSrc -match '\.vibe-wt-' -and $scanSrc -match '\.Trim\(\)' -and $scanSrc -match 'absolute-git-dir' -and $prePushSrc -match 'ForEach-Object \{ "\$_"\.Trim\(\) \}' -and $scanSrc -notmatch 'Expand-Archive') {
     Ok 'pre-push: scans push tip via worktree (no Expand-Archive)'

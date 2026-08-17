@@ -9,7 +9,7 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - Pre-push **update** ranges (`remote..local`) now flatten `git diff` through `ConvertTo-SinglePatchText`. PS 5.1 used to join every hunk line with a blank line, so the common push path sent a broken patch to the reviewer
-- Null `$LASTEXITCODE` after AI review is fail-closed (was treated as pass)
+- Null `$LASTEXITCODE` after AI review is fail-closed (was treated as pass). Empty-range / delete-ref already exit 0 before review, so they never see that mapping
 - Pre-commit inherit: only a **dead** scan + `VIBE_GATE_INHERIT=1` takes `PID:`. A live sibling (overlapping `vibe-review` / hook) attaches and does not steal the owner PID
 - Full scan-pass cache writes only when `-TreeIsh` is set. Worktree Full no longer hashes `write-tree`/`HEAD` and authorizes a later push skip
 - Open advisories are injected into the **next reviewer brief**, not only chat. Cwd match is case-insensitive

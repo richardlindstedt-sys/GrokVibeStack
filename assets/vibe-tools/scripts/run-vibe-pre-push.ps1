@@ -251,8 +251,7 @@ try {
     exit 1
 }
 
-# Only the post-review exit matters (not scan Start-Process or earlier natives).
-# Null LASTEXITCODE is fail-closed: a review that did not exit is not a pass.
+# Reached only after & grok-ai-review (empty-range / delete-ref already exit 0 above).
 $reviewEc = if ($null -eq $LASTEXITCODE) { 1 } else { [int]$LASTEXITCODE }
 if ($reviewEc -ne 0) {
     Write-Host ""
