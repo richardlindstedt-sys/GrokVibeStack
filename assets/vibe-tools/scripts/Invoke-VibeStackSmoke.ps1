@@ -88,6 +88,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Invoke-VibeStackSmoke.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\keep-headroom-proxy.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\GrokToml.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'),
@@ -413,10 +414,10 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
 }
-if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 45' -and $watchNow -match '\$sawLive' -and $watchNow -match 'Do not idle until a live gate' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor') {
-    Ok 'gate monitor: leftover GATE DONE does not arm idle; 45s linger after live gate'
+if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 600' -and $watchNow -match '\$ProgressSec = 60' -and $watchNow -match 'PROGRESS ' -and $watchNow -match '\$sawLive' -and $watchNow -match 'Do not idle until a live gate' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor') {
+    Ok 'gate monitor: leftover GATE DONE does not arm idle; 600s linger + PROGRESS pulse'
 } else {
-    Bad 'watch-gate-now missing sawLive arm / 45s linger / Heartbeat-only exit'
+    Bad 'watch-gate-now missing sawLive arm / 600s linger / PROGRESS pulse / Heartbeat-only exit'
 }
 if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function Get-GateSnapshot' -and $watchNow -notmatch 'function Get-GateHead' -and $watchNow -match "EVT " -and $watchNow -match "'VOTE'" -and $watchNow -match 'seenEventsRun' -and $watchNow -match 'seenEvents.Clear' -and $promptCtx -match 'VOTES \(verdict' -and $promptCtx -notmatch '-Tail 80' -and $rawReview -match 'Publish-ReviewerVoteNow' -and $rawReview -match 'VoteNowPublished\[\$Role\] = \$evt' -and $rawReview -match 'Set-GateWaitNow' -and $progSrc -match 'function Set-GateVote' -and $progSrc -match 'VOTE:') {
     Ok 'gate chat: sticky VOTE lines + full-file snapshot + inject VOTES block'
@@ -439,6 +440,14 @@ if ($scanSrc -match 'explicit TreeIsh' -and $scanSrc -match 'must not authorize 
     Ok 'scan-pass cache: Full without TreeIsh does not write'
 } else {
     Bad 'scan-pass cache still writes write-tree hash for worktree Full'
+}
+$binReview = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\bin-shims\vibe-review.ps1') -Raw
+$binHooks = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\bin-shims\install-vibe-hooks.ps1') -Raw
+$preHookShim = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-pre-commit-hook.ps1') -Raw
+if ($binReview -match 'exit \$LASTEXITCODE' -and $binHooks -match 'exit \$LASTEXITCODE' -and $preHookShim -match 'exit \$LASTEXITCODE' -and $preHookShim -match '@args') {
+    Ok 'shims: vibe-review / install-vibe-hooks / pre-commit wrapper preserve exit'
+} else {
+    Bad 'shims drop LASTEXITCODE or pre-commit wrapper drops @args'
 }
 if ($rawReview -match 'StagedOnly' -and $hooksInstSrc -match '-StagedOnly') {
     Ok 'pre-commit AI: staged-only (no WT / whole-project fallback)'
@@ -465,10 +474,10 @@ if ($watchNow -match 'ELAPSED-only must not wake' -and $rawReview -match 'OnPuls
 } else {
     Bad 'gate chat missing speak-on-new / fixer pulse / 0-copy fail-closed'
 }
-if ($chatLibSrc -match 'function Test-IsGateWaitNow' -and $chatLibSrc -match 'function Get-GateFileRun' -and $chatLibSrc -match 'function Format-GateOpenAdvisoriesInject' -and $watchNow -match 'gate-chat-lib.ps1 missing' -and $stopSrc -match 'gate-chat-lib.ps1 missing' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $stopSrc -match 'write zero chat' -and $promptCtx -match 'write zero chat' -and $progSrc -match 'LastWaitNow' -and $progSrc -match 'function Set-GateWaitNow' -and $rawReview -match 'Set-GateWaitNow') {
-    Ok 'gate chat: shared tick lib + Set-GateWaitNow (no (~Ns) NOW)'
+if ($chatLibSrc -match 'function Test-IsGateWaitNow' -and $chatLibSrc -match 'function Get-GateFileRun' -and $chatLibSrc -match 'function Format-GateOpenAdvisoriesInject' -and $watchNow -match 'gate-chat-lib.ps1 missing' -and $stopSrc -match 'gate-chat-lib.ps1 missing' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $stopSrc -match 'PROGRESS' -and $promptCtx -match 'PROGRESS' -and $progSrc -match 'LastWaitNow' -and $progSrc -match 'function Set-GateWaitNow' -and $rawReview -match 'Set-GateWaitNow') {
+    Ok 'gate chat: shared tick lib + Set-GateWaitNow + PROGRESS speak'
 } else {
-    Bad 'gate chat missing gate-chat-lib / Set-GateWaitNow / zero-chat'
+    Bad 'gate chat missing gate-chat-lib / Set-GateWaitNow / PROGRESS speak'
 }
 $watchScript = Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1'
 $idleDir = Join-Path $env:TEMP ("vibe-watch-idle-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -671,10 +680,26 @@ if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'Get-ProxySt
 } else {
     Bad 'start-grok missing proxy fingerprint / loose stop match'
 }
-if ($startSrc -match 'function Get-HeadroomCliVersion' -and $startSrc -match 'function Test-ProxyHttpReady' -and $startSrc -match 'function Resolve-HeadroomUpstream' -and $startSrc -match 'cli-chat-proxy\.grok\.com' -and $startSrc -match 'v3\|hr=' -and $startSrc -match '--no-http2' -and $startSrc -match '--no-rate-limit' -and $startSrc -match '/readyz' -and $startSrc -match 'Remove-Item Env:HEADROOM_READ_MATURATION') {
+if ($startSrc -match 'function Get-HeadroomCliVersion' -and $startSrc -match 'function Test-ProxyHttpReady' -and $startSrc -match 'function Resolve-HeadroomUpstream' -and $startSrc -match 'function Test-HeadroomUrlIsXai' -and $startSrc -match 'Stale OPENAI_TARGET_API_URL' -and $startSrc -match 'function Start-HeadroomKeeper' -and $startSrc -match 'keep-headroom-proxy' -and $startSrc -match 'cli-chat-proxy\.grok\.com' -and $startSrc -match 'v3\|hr=' -and $startSrc -match '--no-http2' -and $startSrc -match '--no-rate-limit' -and $startSrc -match '/readyz' -and $startSrc -match 'Remove-Item Env:HEADROOM_READ_MATURATION') {
     Ok 'start-grok: headroom version fingerprint + /readyz + clear read-maturation env'
 } else {
     Bad 'start-grok missing hr version fingerprint / readyz / read-maturation env clear'
+}
+$keepSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\keep-headroom-proxy.ps1') -Raw
+if ($keepSrc -match 'Start-Process' -and $keepSrc -match 'AbandonedMutexException' -and $keepSrc -match '-ProxyOnly' -and $keepSrc -match 'failStreak' -and $keepSrc -notmatch '& \$StartPs1') {
+    Ok 'keeper: child start-grok + abandoned mutex + two-fail debounce (no & exit suicide)'
+} else {
+    Bad 'keeper still & start-grok (exit kills keeper) or missing mutex/debounce'
+}
+if ($startSrc -match 'Disable-ScheduledTask' -and $startSrc -match "KeepPs1, '-Port'" -and $unSrc -match 'Unregister-ScheduledTask' -and $startSrc -match 'waiting to recover' -and $startSrc -match 'Enable-ScheduledTask') {
+    Ok 'keeper stop disables logon task; -Port passed; readyz recover wait'
+} else {
+    Bad 'keeper stop/task/port/recover wiring missing'
+}
+if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-ProxyOnly' -and $instSrc -match '-Quiet' -and $instSrc -notmatch '& \$startPs1 -ProxyOnly' -and $unSrc -notmatch '& \$startPs1 -StopProxy' -and $unSrc -match '-File., \$startPs1, .-StopProxy') {
+    Ok 'install/uninstall: start-grok via powershell -File child (no & exit suicide)'
+} else {
+    Bad 'install/uninstall still & start-grok (exit kills parent)'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
 if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv') {
@@ -687,10 +712,10 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry') {
-    Ok 'review: proxy HTTP ready + hatch retry on stream fail'
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4\.6-direct'" -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
+    Ok 'review: HTTP usable + hatch on sequential and Start-Job + ProxyPort + bucket + patch-length bump'
 } else {
-    Bad 'review missing proxy HTTP ready / hatch retry'
+    Bad 'review missing proxy HTTP ready / parallel hatch / ProxyPort / bucket / patch-length bump'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
@@ -736,6 +761,13 @@ base_url = "http://127.0.0.1:8787/v1"
 default = "grok-4.6"
 "@
     $snippetText = Get-VibeManagedSnippet -SnippetPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true
+    $cvt = @(Convert-VibeToArray 'base_url')
+    $cvtHash = @(Convert-VibeToArray @{ k = 'v' })
+    if ($cvt.Length -eq 1 -and $cvt[0] -eq 'base_url' -and $cvtHash.Length -eq 1) {
+        Ok 'Convert-VibeToArray: string is one item; hashtable is one item'
+    } else {
+        Bad ("Convert-VibeToArray still enumerates string/hashtable len={0} first={1}" -f $cvt.Length, $cvt[0])
+    }
     $merged = Merge-VibeToml -Raw $pre -Snippet $snippetText
     $mergedCheck = Test-VibeToml -Raw $merged
     if ($mergedCheck.Ok -and ($merged -match 'command = ''C:\\hr\.cmd''') -and ($merged -notmatch "command = 'old'")) {
@@ -1018,7 +1050,7 @@ if ($progSrc -match 'PID:' -and $progSrc -match 'CWD:' -and $progSrc -match 'ado
     Bad 'gate adopt/tail/popup still stale'
 }
 $startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
-if ($startSrc -match 'Test-ProxyProcessOk' -and $startSrc -match 'TCP owner is not Headroom PID' -and $startSrc -match 'recordedPid is a hint only' -and $startSrc -match 'Test-IsDescendantOf' -and $startSrc -match 'Get-ListenOwnerPids' -and $startSrc -notmatch 'recordedPid -and \$op -ne \$recordedPid' -and $startSrc -notmatch "ProcessName -match 'headroom\|python'") {
+if ($startSrc -match 'Test-ProxyProcessOk' -and $startSrc -match 'CIM parent lag' -and $startSrc -match 'recordedPid is a hint only' -and $startSrc -match 'Test-IsDescendantOf' -and $startSrc -match 'Get-ListenOwnerPids' -and $startSrc -notmatch 'recordedPid -and \$op -ne \$recordedPid' -and $startSrc -notmatch "ProcessName -match 'headroom\|python'") {
     Ok 'proxy stop/start: Headroom argv + TCP owner PID; adopt child listener; stale pid file does not veto live owner'
 } else {
     Bad 'proxy still force-kills by name/stale PID or rejects live owner / child bind on pid mismatch'

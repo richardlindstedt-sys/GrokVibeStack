@@ -10,12 +10,14 @@
     exit. Leftover GATE DONE at startup does not start the idle clock (that
     printed DONE and killed the Grok monitor before the next gate). Idle arms
     only after this process has seen a live (non-DONE) NOW, then lingers
-    IdleSec (default 45s) after that RUN becomes GATE DONE. After the last
-    gate of a pair the agent kills the watch; if the next gate starts later,
-    start a new monitor. IdleSec 0 keeps the 2h-only deadline.
+    IdleSec (default 600s) after that RUN becomes GATE DONE so commit-then-push
+    reuses this watch. IdleSec 0 keeps the 2h-only deadline.
 .PARAMETER IdleSec
     Seconds of stale GATE DONE (same RUN) before Monitor prints DONE and exits.
-    Default 45. 0 = never idle-exit.
+    Default 600. 0 = never idle-exit.
+.PARAMETER ProgressSec
+    During a live gate, print PROGRESS elapsed|phase this often (wakes chat).
+    0 = off. Default 60. Not a wait-tick: no 'still waiting' / 'no new votes'.
 .PARAMETER IntervalSec
     Poll interval. Default 15.
 .PARAMETER NowFile
@@ -24,7 +26,8 @@
 param(
     [switch]$Heartbeat,
     [switch]$Monitor,
-    [int]$IdleSec = 45,
+    [int]$IdleSec = 600,
+    [int]$ProgressSec = 60,
     [int]$IntervalSec = 15,
     [string]$NowFile = ''
 )
@@ -50,6 +53,7 @@ $idleRun = $null
 $sawLive = $false
 $seenEvents = New-Object 'System.Collections.Generic.HashSet[string]'
 $seenEventsRun = $null
+$lastProgress = $null
 
 function Get-InterestingGateEvents([object[]]$Snap) {
     return @($Snap | Where-Object {
@@ -164,8 +168,10 @@ while ((Get-Date) -lt $deadline) {
         if ($runId -and $runId -ne $seenEventsRun) {
             $seenEvents.Clear()
             $seenEventsRun = $runId
+            $lastProgress = $null
         }
         # ELAPSED-only must not wake. Wait ticks must not print. Every stdout line wakes chat.
+        # PROGRESS pulses (PHASE + ELAPSED, never NOW wait text) do wake long stretches.
         $tick = ('{0} | {1}' -f $runLine, (Get-GateNowTickKey $nowLine))
         if (-not (Test-IsGateWaitNow $nowLine) -and $tick -ne $lastPrint) {
             $elapsed = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
@@ -178,6 +184,16 @@ while ((Get-Date) -lt $deadline) {
             if ($seenEvents.Add([string]$evt)) {
                 $tag = if ([string]$evt -match '(?i)^VOTE:|correctness:|security:|simplicity:') { 'VOTE' } else { 'EVT' }
                 [Console]::Out.WriteLine(('{0} {1}' -f $tag, $evt))
+            }
+        }
+        if (-not $done -and $ProgressSec -gt 0) {
+            $nowTs = Get-Date
+            if ($null -eq $lastProgress -or ($nowTs - $lastProgress).TotalSeconds -ge $ProgressSec) {
+                $elapsedLn = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
+                $phaseLn = ($snap | Where-Object { $_ -match '^PHASE:' } | Select-Object -First 1)
+                if (-not $phaseLn) { $phaseLn = 'PHASE: live' }
+                [Console]::Out.WriteLine(('PROGRESS {0} | {1}' -f $elapsedLn, $phaseLn))
+                $lastProgress = $nowTs
             }
         }
         if ($IdleSec -gt 0 -and $null -ne $idleSince -and ((Get-Date) - $idleSince).TotalSeconds -ge $IdleSec) {

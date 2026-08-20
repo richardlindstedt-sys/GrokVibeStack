@@ -448,12 +448,25 @@ function Test-PipFileLockText {
     return [bool]($Text -match '(?i)(WinError\s*32|WinError\s*5|sharing violation|being used by another process|cannot access the file|kan inte komma |g.r inte att komma |det g.r inte att komma)')
 }
 
+function Invoke-StartGrokChild {
+    param(
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [string[]]$GrokArgs
+    )
+    # start-grok uses `exit`; `&` / dot-source kills this installer runspace.
+    if (-not (Test-Path -LiteralPath $ScriptPath)) { return 1 }
+    $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($GrokArgs)
+    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden
+    if ($p) { return [int]$p.ExitCode }
+    return 1
+}
+
 function Stop-HeadroomServices {
     $startPs1 = Join-Path $TokenRoot 'scripts\start-grok.ps1'
     $stopShim = Join-Path $GrokBin 'stop-grok-proxy.cmd'
     if (Test-Path -LiteralPath $startPs1) {
         Write-Info "Stopping Headroom proxy (unlock venv for pip)"
-        try { & $startPs1 -StopProxy 2>$null | Out-Null } catch {}
+        try { Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-StopProxy') | Out-Null } catch {}
     } elseif (Test-Path -LiteralPath $stopShim) {
         try { & $stopShim 2>$null | Out-Null } catch {}
     }
@@ -1427,6 +1440,22 @@ Save-Manifest
 $healthy = $true
 if (-not $DryRun) {
     $healthy = Test-StackHealth
+}
+if (-not $DryRun -and $hrOk) {
+    Write-Step "Headroom proxy + keeper"
+    $startPs1 = Join-Path $TokenRoot 'scripts\start-grok.ps1'
+    if (Test-Path -LiteralPath $startPs1) {
+        try {
+            $proxyCode = Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-ProxyOnly', '-Quiet')
+            if ($proxyCode -eq 0) {
+                Write-Ok "Headroom proxy + keeper started"
+            } else {
+                Write-Warn2 ("proxy/keeper start exit {0}" -f $proxyCode)
+            }
+        } catch {
+            Write-Warn2 "proxy/keeper start: $_"
+        }
+    }
 }
 
 if (-not $DryRun -and (Test-Path (Join-Path $TokenRoot 'scripts\doctor.ps1'))) {

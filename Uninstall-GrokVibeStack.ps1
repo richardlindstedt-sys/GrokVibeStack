@@ -156,10 +156,16 @@ function Stop-HeadroomProxy {
     $startPs1 = Join-Path $GrokHome 'token-saving\scripts\start-grok.ps1'
     if ($DryRun) { Write-Info "DRY stop proxy"; return }
     if (Test-Path -LiteralPath $startPs1) {
-        try { & $startPs1 -StopProxy 2>$null | Out-Null } catch {}
+        try {
+            $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startPs1, '-StopProxy')
+            $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden
+        } catch {}
     } elseif (Test-Path -LiteralPath $stopShim) {
         try { & $stopShim 2>$null | Out-Null } catch {}
     }
+    try {
+        Unregister-ScheduledTask -TaskName 'GrokVibeStack-HeadroomKeeper' -Confirm:$false -ErrorAction SilentlyContinue
+    } catch {}
     # Never Stop-Process by raw PID file — Windows may have reused it.
     # start-grok -StopProxy already verified image/cmdline; just drop a leftover marker.
     $pidFile = Join-Path $GrokHome 'token-saving\state\headroom-proxy.pid'

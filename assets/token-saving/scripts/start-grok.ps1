@@ -10,7 +10,7 @@
     start-grok -m grok-4.6-direct     # vanilla Grok 4.6, no Headroom proxy
     start-grok -NoProxy               # skip Headroom proxy (MCP + rtk + caveman only)
     start-grok -ProxyOnly             # only ensure proxy is up, do not launch grok
-    start-grok -StopProxy             # stop background Headroom proxy and exit
+    start-grok -StopProxy             # stop keeper + Headroom proxy and exit
     start-grok -Status                # print stack status and exit
 #>
 [CmdletBinding()]
@@ -19,6 +19,7 @@ param(
     [switch]$ProxyOnly,
     [switch]$StopProxy,
     [switch]$Status,
+    [switch]$Quiet,
     [switch]$NoOutputShaper,   # deprecated/ignored (kept for compat)
     [switch]$UseOutputShaper,  # opt-in: enables HEADROOM_OUTPUT_SHAPER (can cause repeats)
     [switch]$SkipRtk,          # skip ensure-rtk (not recommended)
@@ -42,14 +43,18 @@ $StateDir      = Join-Path $TokenRoot 'state'
 $LogDir        = Join-Path $TokenRoot 'logs'
 $ProxyPidFile  = Join-Path $StateDir 'headroom-proxy.pid'
 $ProxyFpFile   = Join-Path $StateDir 'headroom-proxy.fingerprint'
+$KeeperPidFile = Join-Path $StateDir 'headroom-keeper.pid'
+$KeepPs1       = Join-Path $TokenRoot 'scripts\keep-headroom-proxy.ps1'
 $ProxyLog      = Join-Path $LogDir 'headroom-proxy.log'
 $ProxyErrLog   = Join-Path $LogDir 'headroom-proxy.err.log'
+$KeeperTask    = 'GrokVibeStack-HeadroomKeeper'
 $CavemanFlag   = Join-Path $GrokHome '.caveman-active'
 $GrokTomlPs1   = Join-Path $TokenRoot 'scripts\GrokToml.ps1'
 if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
 # Upstream: session login (auth.json) uses cli-chat-proxy.grok.com.
 # api.x.ai needs XAI_API_KEY — without it the proxy 401s and the TUI sits on
-# "waiting for response". OPENAI_TARGET_API_URL is an explicit override.
+# "waiting for response". OPENAI_TARGET_API_URL is an explicit override only
+# when it is NOT leftover api.x.ai (old start-grok wrote that onto the grok child).
 # Bump fingerprint prefix when stack CLI flags change so stale proxies restart.
 # hr=<version> forces restart after pip upgrade. Headroom 0.35 502'd Grok
 # /v1/responses SSE (TUI "Retrying"); 0.36 adapts those 200 streams.
@@ -58,13 +63,21 @@ if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
 # --no-http2: Grok SSE cancel + HTTP/2 can hang. --no-rate-limit: default 60rpm
 # stalls a tool-heavy agent (TUI "waiting for response").
 
-function Write-Info([string]$msg)  { Write-Host "[start-grok] $msg" -ForegroundColor Cyan }
-function Write-Ok([string]$msg)    { Write-Host "[start-grok] $msg" -ForegroundColor Green }
-function Write-Warn([string]$msg)  { Write-Host "[start-grok] $msg" -ForegroundColor Yellow }
+function Write-Info([string]$msg)  { if ($Quiet) { return }; Write-Host "[start-grok] $msg" -ForegroundColor Cyan }
+function Write-Ok([string]$msg)    { if ($Quiet) { return }; Write-Host "[start-grok] $msg" -ForegroundColor Green }
+function Write-Warn([string]$msg)  { if ($Quiet) { return }; Write-Host "[start-grok] $msg" -ForegroundColor Yellow }
 function Write-Err([string]$msg)   { Write-Host "[start-grok] $msg" -ForegroundColor Red }
 
+function Test-HeadroomUrlIsXai([string]$url) {
+    if (-not $url) { return $false }
+    return [bool]($url -match '(?i)api\.x\.ai')
+}
+
 function Resolve-HeadroomUpstream {
-    if ($env:OPENAI_TARGET_API_URL) { return $env:OPENAI_TARGET_API_URL.Trim().TrimEnd('/') }
+    $raw = $env:OPENAI_TARGET_API_URL
+    if ($raw) { $raw = $raw.Trim().TrimEnd('/') }
+    # Stale OPENAI_TARGET_API_URL=api.x.ai without XAI_API_KEY is not an override (401 hang).
+    if ($raw -and -not (Test-HeadroomUrlIsXai $raw)) { return $raw }
     if ($env:XAI_API_KEY) { return 'https://api.x.ai/v1' }
     return 'https://cli-chat-proxy.grok.com/v1'
 }
@@ -339,6 +352,87 @@ function Test-ProxyMatchesStack {
     return $false
 }
 
+function Test-HeadroomKeeperRunning {
+    if (-not (Test-Path -LiteralPath $KeeperPidFile)) { return $false }
+    $raw = (Get-Content $KeeperPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    $kid = 0
+    if (-not [int]::TryParse($raw, [ref]$kid) -or $kid -le 0) { return $false }
+    $proc = Get-Process -Id $kid -ErrorAction SilentlyContinue
+    if (-not $proc) { return $false }
+    $cl = Get-ProcessCommandLine $kid
+    return ($cl -and $cl -match 'keep-headroom-proxy')
+}
+
+function Stop-HeadroomKeeper {
+    try {
+        Disable-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+    if (Test-Path -LiteralPath $KeeperPidFile) {
+        $raw = (Get-Content $KeeperPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+        $kid = 0
+        if ([int]::TryParse($raw, [ref]$kid) -and $kid -gt 0) {
+            $cl = Get-ProcessCommandLine $kid
+            if ($cl -and $cl -match 'keep-headroom-proxy') {
+                Write-Info "Stopping Headroom keeper PID $kid ..."
+                Stop-Process -Id $kid -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Remove-Item $KeeperPidFile -Force -ErrorAction SilentlyContinue
+    }
+    try {
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -match 'keep-headroom-proxy\.ps1' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+}
+
+function Register-HeadroomKeeperTask {
+    if (-not (Test-Path -LiteralPath $KeepPs1)) { return }
+    try {
+        $arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Port {1}' -f $KeepPs1, $Port
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+        $existing = Get-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue
+        if ($existing) {
+            Set-ScheduledTask -TaskName $KeeperTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
+            try { Enable-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue | Out-Null } catch {}
+        } else {
+            Register-ScheduledTask -TaskName $KeeperTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
+        }
+    } catch {
+        Write-Warn ("keeper scheduled task: {0}" -f $_.Exception.Message)
+    }
+}
+
+function Start-HeadroomKeeper {
+    if (-not (Test-Path -LiteralPath $KeepPs1)) {
+        Write-Warn "keep-headroom-proxy.ps1 missing — proxy will not auto-restart"
+        return
+    }
+    Register-HeadroomKeeperTask
+    if (Test-HeadroomKeeperRunning) {
+        Write-Ok "Headroom keeper already running."
+        return
+    }
+    Write-Info "Starting Headroom keeper (auto-restart on death)..."
+    $null = Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', $KeepPs1, '-Port', "$Port") `
+        -WorkingDirectory $TokenRoot `
+        -WindowStyle Hidden `
+        -PassThru
+    $deadline = (Get-Date).AddSeconds(8)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-HeadroomKeeperRunning) {
+            Write-Ok "Headroom keeper up (pid $(Get-Content $KeeperPidFile -Raw -ErrorAction SilentlyContinue))"
+            return
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    Write-Warn "Headroom keeper did not publish a pid in 8s (proxy still started)."
+}
+
 function Stop-HeadroomProxy {
     Ensure-Dirs
     $stopped = $false
@@ -406,6 +500,7 @@ function Show-Status {
     Write-Host "model:        grok-4.6 (Headroom override) -> http://127.0.0.1:$Port/v1"
     Write-Host "upstream:     $(Resolve-HeadroomUpstream)"
     Write-Host "proxy flags:  token + lossless + code-aware + ratio 0.35 + no-http2 + no-rate-limit"
+    Write-Host "keeper:       $(if (Test-HeadroomKeeperRunning) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })"
     Write-Host "context tool: rtk (auto-enforce hook + HEADROOM_CONTEXT_TOOL=rtk)"
     Write-Host "XAI_API_KEY:  $(if ($env:XAI_API_KEY) { 'set (api.x.ai)' } else { 'not set — session auth via cli-chat-proxy.grok.com' })"
     Write-Host ""
@@ -426,7 +521,17 @@ function Start-HeadroomProxyIfNeeded {
                 Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" }) [fingerprint ok]."
                 return
             }
-            Write-Warn "Port $Port matches stack but /readyz failed — restarting proxy."
+            Write-Warn "Port $Port matches stack but /readyz failed — waiting to recover..."
+            $recoverUntil = (Get-Date).AddSeconds(8)
+            while ((Get-Date) -lt $recoverUntil) {
+                if (Test-ProxyHttpReady $Port) {
+                    $proxyPid = Get-ProxyPid
+                    Write-Ok "Headroom proxy recovered on port $Port$(if ($proxyPid) { " (pid $proxyPid)" })."
+                    return
+                }
+                Start-Sleep -Milliseconds 400
+            }
+            Write-Warn "Port $Port matches stack but /readyz still failed — restarting proxy."
         } else {
             Write-Warn "Port $Port is up but fingerprint/process does not match this stack — restarting proxy."
         }
@@ -550,10 +655,20 @@ function Start-HeadroomProxyIfNeeded {
                 }
             }
             if ($null -eq $adopted) {
-                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-                Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
-                $ownerList = if ($owners.Count) { $owners -join ',' } else { 'unknown' }
-                throw "Port $Port is listening but TCP owner is not Headroom PID $($proc.Id) (owners=$ownerList)."
+                foreach ($op in $owners) {
+                    $cl = Get-ProcessCommandLine $op
+                    if (-not (Test-ProxyCommandLineIsHeadroom $cl)) { continue }
+                    if (Test-ProxyHttpReady $Port) {
+                        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                        $adopted = $op
+                        break
+                    }
+                }
+            }
+            if ($null -eq $adopted) {
+                # CIM parent lag / leftover listener: wait, do not kill the new process yet.
+                Start-Sleep -Milliseconds 400
+                continue
             }
             Set-Content -Path $ProxyPidFile -Value $adopted -Encoding ascii -NoNewline
             if (Test-ProxyHttpReady $Port) {
@@ -630,7 +745,7 @@ $rtkVer = Ensure-Rtk
 $env:HEADROOM_CONTEXT_TOOL = if ($env:HEADROOM_CONTEXT_TOOL) { $env:HEADROOM_CONTEXT_TOOL } else { 'rtk' }
 
 if ($Status) { Show-Status; exit 0 }
-if ($StopProxy) { Stop-HeadroomProxy; exit 0 }
+if ($StopProxy) { Stop-HeadroomKeeper; Stop-HeadroomProxy; exit 0 }
 
 Write-Info "Caveman level: $cavemanLevel (rules + skills auto-load)"
 Write-Info "RTK:           $(if ($rtkVer) { $rtkVer } else { 'not found — shell compression limited' })"
@@ -641,13 +756,16 @@ Assert-GrokConfig
 
 if (-not $NoProxy) {
     Start-HeadroomProxyIfNeeded
+    Start-HeadroomKeeper
 } else {
     Write-Warn "Skipping Headroom proxy (-NoProxy). Caveman + rtk + MCP still apply when Grok starts."
 }
 
 if ($ProxyOnly) {
-    Show-Status
-    Write-Ok "Proxy-only done. Run: start-grok   (or grok -m grok-4.6)"
+    if (-not $Quiet) {
+        Show-Status
+        Write-Ok "Proxy-only done. Run: start-grok   (or grok -m grok-4.6)"
+    }
     exit 0
 }
 

@@ -96,7 +96,7 @@ if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
         $spokeKey = Get-GateNowTickKey $spokeNow
         if (-not $spoke -and $spokeKey -and $nowKey -eq $spokeKey) { $spoke = $true }
         $snap = @"
-GATE LIVE — If nothing new: write zero chat. Never 'still waiting' or 'no new votes'. Speak only a new vote / arbiter / fixer file / GATE DONE.
+GATE LIVE — Speak scan/vote/arbiter/fixer/DONE and PROGRESS (phase + elapsed). Never 'still waiting' or 'no new votes'.
 $run
 $now
 $elapsed

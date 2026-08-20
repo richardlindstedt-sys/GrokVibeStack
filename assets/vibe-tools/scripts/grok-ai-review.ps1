@@ -26,7 +26,7 @@
 param(
     [switch]$NoScans,
     [string]$DiffOverride,
-    [string]$Model = 'grok-via-headroom',
+    [string]$Model = 'grok-4.6-direct',
     # Empty = use profile default (fast=medium, standard/strict=high)
     [string]$ReasoningEffort = '',
     [int]$ProxyPort = 8787,
@@ -253,7 +253,7 @@ if (-not $PSBoundParameters.ContainsKey('ReviewerMaxTurns')) {
     try {
         $probe = git diff --cached --no-color 2>$null
         if (-not $probe) { $probe = git diff --no-color 2>$null }
-        $n = if ($probe) { $probe.Length } else { 0 }
+        $n = if ($probe) { (ConvertTo-SinglePatchText $probe).Length } else { 0 }
         if ($n -gt 60000 -and $ReviewerMaxTurns -lt 16) { $ReviewerMaxTurns = 16 }
         if ($n -gt 60000 -and $ArbiterMaxTurns -lt 10) { $ArbiterMaxTurns = 10 }
     } catch {}
@@ -349,7 +349,9 @@ function Test-ProxyHttpReady([int]$p) {
 }
 
 function Test-ProxyUsable([int]$p) {
-    return (Test-PortListening $p) -and (Test-ProxyHttpReady $p)
+    # HTTP is the source of truth. Listen-only is not "up" (502 hang era).
+    # Listen AND HTTP was wrong when Get-NetTCPConnection is empty but /readyz is 200.
+    return [bool](Test-ProxyHttpReady $p)
 }
 
 function Resolve-GrokExe {
@@ -636,7 +638,7 @@ function Invoke-GrokHeadless {
     )
 
     $needsProxy = ($ModelName -match 'headroom|8787') -or ($ModelName -eq 'grok-4.6')
-    if ($needsProxy -and -not $NoHatchRetry -and -not (Test-ProxyUsable 8787) -and (Test-VanillaHatchEndpoint)) {
+    if ($needsProxy -and -not $NoHatchRetry -and -not (Test-ProxyUsable $ProxyPort) -and (Test-VanillaHatchEndpoint)) {
         Write-Host ("  proxy down - {0} using grok-4.6-direct" -f $Label) -ForegroundColor Yellow
         return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
     }
@@ -743,7 +745,7 @@ function Invoke-GrokHeadless {
         $script:GateRun.tokenEstimate = [int][math]::Round(($script:GateRun.promptChars + $script:GateRun.outputChars) / 4.0)
     } catch {}
     $ok = ($code -eq 0 -or $null -eq $code) -and -not [string]::IsNullOrWhiteSpace($text)
-    $proxyStreamFail = ($text -match '127\.0\.0\.1:8787' -and $text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
+    $proxyStreamFail = ($text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
     if ((-not $ok -or $proxyStreamFail) -and -not $NoHatchRetry -and $needsProxy -and (Test-VanillaHatchEndpoint)) {
         Write-Host ("  proxy stream failed - retry {0} on grok-4.6-direct" -f $Label) -ForegroundColor Yellow
         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
@@ -1200,34 +1202,44 @@ function Invoke-ReviewerPanel {
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers)
             $jobs += Start-Job -Name "vibe-$role" -ScriptBlock {
-                param($Exe, $Model, $PromptFile, $LogFile, $Effort, $MaxTurns, $Role)
-                $argList = @(
-                    '--prompt-file', $PromptFile,
-                    '-m', $Model,
-                    '--reasoning-effort', $Effort,
-                    '--max-turns', "$MaxTurns",
-                    '--permission-mode', 'bypassPermissions',
-                    '--disallowed-tools', 'search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash'
-                )
-                $sw = [System.Diagnostics.Stopwatch]::StartNew()
-                try {
+                param($Exe, $Model, $PromptFile, $LogFile, $Effort, $MaxTurns, $Role, $ProxyPort)
+                function Invoke-One([string]$UseModel) {
+                    $argList = @(
+                        '--prompt-file', $PromptFile,
+                        '-m', $UseModel,
+                        '--reasoning-effort', $Effort,
+                        '--max-turns', "$MaxTurns",
+                        '--permission-mode', 'bypassPermissions',
+                        '--disallowed-tools', 'search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash'
+                    )
                     $output = & $Exe @argList 2>&1
                     $code = $LASTEXITCODE
+                    $text = if ($output) { ($output | ForEach-Object { "$_" }) -join "`n" } else { '' }
+                    return @{ Text = $text; ExitCode = $code }
+                }
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                try {
+                    $r = Invoke-One $Model
+                    $needsProxy = ($Model -match 'headroom|8787') -or ($Model -eq 'grok-4.6')
+                    $ok = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
+                    $proxyStreamFail = ($r.Text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $r.Text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
+                    if ((-not $ok -or $proxyStreamFail) -and $needsProxy) {
+                        $r = Invoke-One 'grok-4.6-direct'
+                    }
                 } catch {
                     $sw.Stop()
                     return @{ Role = $Role; Ok = $false; Text = "$_"; ExitCode = -1; Seconds = $sw.Elapsed.TotalSeconds }
                 }
                 $sw.Stop()
-                $text = if ($output) { ($output | ForEach-Object { "$_" }) -join "`n" } else { '' }
-                [System.IO.File]::WriteAllText($LogFile, $text)
+                [System.IO.File]::WriteAllText($LogFile, $r.Text)
                 @{
                     Role     = $Role
-                    Ok       = (($code -eq 0 -or $null -eq $code) -and $text.Trim().Length -gt 0)
-                    Text     = $text
-                    ExitCode = $code
+                    Ok       = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
+                    Text     = $r.Text
+                    ExitCode = $r.ExitCode
                     Seconds  = [math]::Round($sw.Elapsed.TotalSeconds, 1)
                 }
-            } -ArgumentList $GrokExe, $ModelName, $pf, $lf, $Effort, $MaxTurns, $role
+            } -ArgumentList $GrokExe, $ModelName, $pf, $lf, $Effort, $MaxTurns, $role, $ProxyPort
         }
         Write-Host "  ... waiting for $($jobs.Count) reviewer jobs (votes publish as each finishes)" -ForegroundColor DarkGray
         $script:VoteNowPublished = @{}
@@ -1319,11 +1331,13 @@ function Invoke-ReviewerPanel {
 
 function Get-FindingSeverity([object]$finding) {
     if (-not $finding) { return '' }
-    try {
-        return ("$($finding.severity)").ToLowerInvariant().Trim()
-    } catch {
-        return ''
+    foreach ($prop in @('bucket', 'severity')) {
+        try {
+            $v = ("$($finding.$prop)").ToLowerInvariant().Trim()
+            if ($v) { return $v }
+        } catch {}
     }
+    return ''
 }
 
 function Get-FindingBucket([object]$finding) {

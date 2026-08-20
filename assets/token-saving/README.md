@@ -24,8 +24,8 @@ That will:
 
 ```text
 start-grok -Status          # show stack status
-start-grok -ProxyOnly       # only ensure proxy is up
-start-grok -StopProxy       # stop background proxy
+start-grok -ProxyOnly       # proxy + keeper (auto-restart if Headroom dies)
+start-grok -StopProxy       # stop keeper + proxy (disables logon task)
 start-grok -NoProxy         # skip proxy; caveman + rtk + MCP only
 start-grok -SkipRtk         # skip ensure-rtk (not recommended)
 start-grok --help           # whatever you pass after still goes to grok if not a start-grok switch

@@ -86,7 +86,7 @@ GATE DONE (must post RUN + every VOTE + arbiter + this DONE line in chat before 
 '@
     } else {
         @'
-GATE LIVE (if nothing new: write zero chat. Never 'no new votes' or 'still waiting'. Speak only a new scan/vote/arbiter/fixer/DONE event):
+GATE LIVE (speak scan/vote/arbiter/fixer/DONE and PROGRESS one-liners. Never 'no new votes' or 'still waiting'):
 '@
     }
     Add-GateSnapshotChunk -Path $nowFile -Banner $liveBanner

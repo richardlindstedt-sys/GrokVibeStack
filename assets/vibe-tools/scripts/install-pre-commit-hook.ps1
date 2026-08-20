@@ -4,9 +4,5 @@
 .DESCRIPTION
     Compatibility entrypoint. Delegates to install-vibe-hooks.ps1.
 #>
-param(
-    [Parameter(Mandatory = $false)]
-    [string]$RepoPath = '.'
-)
-
-& "$PSScriptRoot\install-vibe-hooks.ps1" -RepoPath $RepoPath
+& "$PSScriptRoot\install-vibe-hooks.ps1" @args
+exit $LASTEXITCODE

@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-08-20
+
+### Fixed
+
+- Headroom **keeper**: hidden process + logon scheduled task (`GrokVibeStack-HeadroomKeeper`) restarts the proxy within ~5s if it dies. Chat no longer stays dead after a gate SSE crash. Keeper launches `start-grok -ProxyOnly` as a **child** (dot-source/`&` hit that script's `exit 0` and killed the keeper). Abandoned mutex is taken, not treated as "already running". `-StopProxy` **disables** the logon task so reinstall pip is not locked a minute later. Custom `-Port` is passed through. Installer/uninstall also spawn `start-grok` via `powershell -File` so `exit 0` cannot abort the install runspace or skip doctor.
+- Stale `OPENAI_TARGET_API_URL=https://api.x.ai/v1` (old start-grok wrote this onto the grok child) is no longer treated as an override when `XAI_API_KEY` is unset. That leftover sent every chat to api.x.ai → 401 → TUI "waiting for response"
+- AI gates default to `grok-4.6-direct` so 3 parallel reviewers cannot kill the chat proxy. Hatch retry still applies if someone passes `-Model grok-via-headroom` — including the **parallel Start-Job** reviewers (was sequential/arbiter only). Hatch uses `-ProxyPort`, not hardcoded 8787
+- `Convert-VibeToArray` no longer walks strings by character or hashtables by entry (would corrupt `config.toml`)
+- Gate finding buckets honor JSON `bucket` then `severity`. Large-diff turn bump uses flattened patch length, not `string[]` line count
+- Gate watch linger after DONE is **10 min** (commit+push reuse). **PROGRESS** every 60s (phase + elapsed) so chat is not silent unless you ask
+
 ## [1.5.0] - 2026-08-20
 
 ### Fixed

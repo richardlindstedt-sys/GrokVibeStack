@@ -138,8 +138,11 @@ $proxyPidFile = Join-Path $grokHome 'token-saving\state\headroom-proxy.pid'
 $proxyFpFile = Join-Path $grokHome 'token-saving\state\headroom-proxy.fingerprint'
 $hrVer = Get-HeadroomCliVersion $headroom
 $upHost = 'cli-chat-proxy.grok.com'
-if ($env:OPENAI_TARGET_API_URL) {
-    try { $upHost = ([Uri]$env:OPENAI_TARGET_API_URL).Host } catch { $upHost = 'unknown' }
+$rawUp = $env:OPENAI_TARGET_API_URL
+if ($rawUp) { $rawUp = $rawUp.Trim().TrimEnd('/') }
+$staleXai = $rawUp -and ($rawUp -match '(?i)api\.x\.ai') -and -not $env:XAI_API_KEY
+if ($rawUp -and -not $staleXai) {
+    try { $upHost = ([Uri]$rawUp).Host } catch { $upHost = 'unknown' }
 } elseif ($env:XAI_API_KEY) {
     $upHost = 'api.x.ai'
 }
@@ -225,6 +228,18 @@ if ($proxyUp) {
     Write-Host "  fix:    start-grok   (or start-headroom-proxy.ps1)" -ForegroundColor Yellow
     Write-Host "  note:   default grok-4.6 is overridden to Headroom; needs proxy up" -ForegroundColor DarkGray
 }
+$keepPidFile = Join-Path $grokHome 'token-saving\state\headroom-keeper.pid'
+$keepUp = $false
+if (Test-Path -LiteralPath $keepPidFile) {
+    $kr = (Get-Content -LiteralPath $keepPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    $kid = 0
+    if ([int]::TryParse($kr, [ref]$kid) -and $kid -gt 0) {
+        $kp = Get-Process -Id $kid -ErrorAction SilentlyContinue
+        $kcl = Get-ProcessCommandLine $kid
+        $keepUp = [bool]($kp -and $kcl -and $kcl -match 'keep-headroom-proxy')
+    }
+}
+Write-Host ("  keeper: {0}" -f $(if ($keepUp) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })) -ForegroundColor (Get-StatusColor $keepUp)
 
 # --- Session hooks ---
 Write-Host ""

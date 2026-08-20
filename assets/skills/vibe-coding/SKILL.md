@@ -63,7 +63,7 @@ If `.git` exists and hooks missing `Vibe pre-`:
 - **pre-commit** — scans (staged-first) + AI (`-AutoProfile`, default base standard)
 - **pre-push** — scans (full / cache) + AI fast (version tags → strict, parent..tip)
 - **on-edit** — global PostToolUse fast checks; findings injected on next `UserPromptSubmit`
-- **watch** — `monitor` on `watch-gate-now.ps1 -Monitor` is the only wake. **If nothing new: write zero chat.** Never "still waiting" or "no new votes". Monitor prints votes/EVT/DONE only — never wait (~Ns) ticks. Recap votes+arbiter+DONE before next git. Latch new `RUN:`. Kill watch after last gate of the pair. Stop does not nag on wait ticks. Inject includes `gate-last-done.txt`. Popup only if `VIBE_GATE_POPUP=1`.
+- **watch** — `monitor` on `watch-gate-now.ps1 -Monitor` is the only wake. Keep it through the commit+push pair (10 min linger after GATE DONE). Speak: scan/vote/arbiter/fixer/DONE and **PROGRESS** (phase + elapsed). Never "still waiting" or "no new votes". Recap votes+arbiter+DONE before next git. Latch new `RUN:`. Kill watch after last gate of the pair. Inject includes `gate-last-done.txt`. Popup only if `VIBE_GATE_POPUP=1`.
 
 After install: if Grok was already open → `/hooks` then `r`, or restart.
 

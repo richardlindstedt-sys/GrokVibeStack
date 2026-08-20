@@ -79,10 +79,12 @@ function ConvertFrom-TomlTableLine {
 
 function Convert-VibeToArray {
     param($Value)
+    if ($null -eq $Value) { return ,@() }
+    # String foreach walks chars; hashtable foreach walks DictionaryEntry.
+    if ($Value -is [string]) { return ,@($Value) }
+    if ($Value -is [System.Collections.IDictionary]) { return ,@($Value) }
     $a = New-Object System.Collections.ArrayList
-    if ($null -ne $Value) {
-        foreach ($i in $Value) { [void]$a.Add($i) }
-    }
+    foreach ($i in @($Value)) { [void]$a.Add($i) }
     return ,$a.ToArray()
 }
 
