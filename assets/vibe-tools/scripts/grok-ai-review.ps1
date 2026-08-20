@@ -329,33 +329,37 @@ function Write-Phase([string]$msg) {
 }
 
 function Test-PortListening([int]$p) {
+    # TcpClient 400ms only. Get-NetTCPConnection can block for minutes (this
+    # preflight hung the 1.5.4 commit). Do not call it on the gate hot path.
+    $client = $null
     try {
-        $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-        return $null -ne $c
-    } catch {
-        try {
-            $client = New-Object System.Net.Sockets.TcpClient
-            $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-            $ok = $iar.AsyncWaitHandle.WaitOne(400)
-            if ($ok -and $client.Connected) { $client.Close(); return $true }
-            $client.Close(); return $false
-        } catch { return $false }
-    }
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
+        $ok = $iar.AsyncWaitHandle.WaitOne(400)
+        return [bool]($ok -and $client.Connected)
+    } catch { return $false }
+    finally { if ($client) { try { $client.Close() } catch {} } }
 }
 
 function Test-ProxyHttpReady([int]$p) {
+    try { Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue } catch {}
     foreach ($path in @('/readyz', '/health', '/livez')) {
+        $client = $null
         try {
-            $resp = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}{1}" -f $p, $path) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { return $true }
+            $client = New-Object System.Net.Http.HttpClient
+            $client.Timeout = [TimeSpan]::FromSeconds(1)
+            $resp = $client.GetAsync(('http://127.0.0.1:{0}{1}' -f $p, $path)).GetAwaiter().GetResult()
+            if ($resp -and [int]$resp.StatusCode -ge 200 -and [int]$resp.StatusCode -lt 300) { return $true }
         } catch {}
+        finally { if ($client) { try { $client.Dispose() } catch {} } }
     }
     return $false
 }
 
 function Test-ProxyUsable([int]$p) {
-    # HTTP is the source of truth. Listen-only is not "up" (502 hang era).
-    # Listen AND HTTP was wrong when Get-NetTCPConnection is empty but /readyz is 200.
+    # Listen is enough. /readyz blocks while Headroom compresses SSE; treating
+    # that as down spawned start-grok -ProxyOnly which KILLED the busy proxy.
+    if (Test-PortListening $p) { return $true }
     return [bool](Test-ProxyHttpReady $p)
 }
 

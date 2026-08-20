@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-08-20
+
+### Fixed
+
+- Gate Headroom was not crashing. `/readyz` **blocks** while the proxy compresses concurrent `/v1/responses` SSE. The keeper and `start-grok -ProxyOnly` treated that as dead and **killed the live process**, which hung reviewers. Liveness is TCP connect (400ms). `/readyz` fail on a stack-matched proxy is left alone. Gate preflight treats listen as up. **Do not call `Get-NetTCPConnection` on the hot path** — it can block for minutes and freeze preflight.
+
 ## [1.5.3] - 2026-08-20
 
 ### Added

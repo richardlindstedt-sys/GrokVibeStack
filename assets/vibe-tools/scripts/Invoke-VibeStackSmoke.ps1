@@ -686,15 +686,15 @@ if ($startSrc -match 'function Get-HeadroomCliVersion' -and $startSrc -match 'fu
     Bad 'start-grok missing hr version fingerprint / readyz / read-maturation env clear'
 }
 $keepSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\keep-headroom-proxy.ps1') -Raw
-if ($keepSrc -match 'Start-Process' -and $keepSrc -match 'AbandonedMutexException' -and $keepSrc -match '-ProxyOnly' -and $keepSrc -match 'failStreak' -and $keepSrc -notmatch '& \$StartPs1') {
-    Ok 'keeper: child start-grok + abandoned mutex + two-fail debounce (no & exit suicide)'
+if ($keepSrc -match 'Start-Process' -and $keepSrc -match 'AbandonedMutexException' -and $keepSrc -match '-ProxyOnly' -and $keepSrc -match 'failStreak' -and $keepSrc -match 'Test-ProxyAlive' -and $keepSrc -match 'proxy not listening' -and $keepSrc -notmatch '& \$StartPs1') {
+    Ok 'keeper: child start-grok + mutex + listen/argv liveness (no /readyz kill)'
 } else {
-    Bad 'keeper still & start-grok (exit kills keeper) or missing mutex/debounce'
+    Bad 'keeper still & start-grok or still restarts on hung /readyz'
 }
-if ($startSrc -match 'Disable-ScheduledTask' -and $startSrc -match "KeepPs1, '-Port'" -and $unSrc -match 'Unregister-ScheduledTask' -and $startSrc -match 'waiting to recover' -and $startSrc -match 'Enable-ScheduledTask') {
-    Ok 'keeper stop disables logon task; -Port passed; readyz recover wait'
+if ($startSrc -match 'Disable-ScheduledTask' -and $startSrc -match "KeepPs1, '-Port'" -and $unSrc -match 'Unregister-ScheduledTask' -and $startSrc -match 'leaving live proxy' -and $startSrc -match 'busy SSE must not be killed' -and $startSrc -match 'Enable-ScheduledTask') {
+    Ok 'keeper stop disables logon task; -Port passed; busy SSE is not killed on /readyz fail'
 } else {
-    Bad 'keeper stop/task/port/recover wiring missing'
+    Bad 'keeper stop/task/port/busy-SSE leave-alive wiring missing'
 }
 if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$portTag' -and $startSrc -match 'Test-KeeperCommandLineForThisPort' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $startSrc -match 'Port -ne 8787') {
     Ok 'start-grok: port-scoped pid/fp/keeper + NoLogonKeeper for gate :8788'
@@ -717,10 +717,10 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
-    Ok 'review: grok-gate :8788 parallel + sequential only on chat proxy + hatch to direct'
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'TcpClient' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
+    Ok 'review: grok-gate :8788 + listen=usable (no /readyz-kill) + hatch to direct'
 } else {
-    Bad 'review missing grok-gate default / sharesChatProxy / hatch / ProxyPort 8788'
+    Bad 'review missing grok-gate / listen-usable / hatch / ProxyPort 8788'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {

@@ -93,18 +93,15 @@ function Get-HeadroomUpstreamHost {
 }
 
 function Test-PortListening([int]$p) {
+    # TcpClient 400ms. Get-NetTCPConnection can block for minutes on this box.
+    $client = $null
     try {
-        $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-        return $null -ne $c
-    } catch {
-        try {
-            $client = New-Object System.Net.Sockets.TcpClient
-            $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-            $ok = $iar.AsyncWaitHandle.WaitOne(400)
-            if ($ok -and $client.Connected) { $client.Close(); return $true }
-            $client.Close(); return $false
-        } catch { return $false }
-    }
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
+        $ok = $iar.AsyncWaitHandle.WaitOne(400)
+        return [bool]($ok -and $client.Connected)
+    } catch { return $false }
+    finally { if ($client) { try { $client.Close() } catch {} } }
 }
 
 function Get-ProxyPid {
@@ -198,11 +195,18 @@ function Get-ExpectedProxyFingerprint {
 }
 
 function Test-ProxyHttpReady([int]$p) {
+    # HttpClient honors Timeout. PS 5.1 Invoke-WebRequest -TimeoutSec can hang
+    # for minutes while Headroom is busy on SSE (that froze gate preflight).
+    try { Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue } catch {}
     foreach ($path in @('/readyz', '/health', '/livez')) {
+        $client = $null
         try {
-            $resp = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}{1}" -f $p, $path) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { return $true }
+            $client = New-Object System.Net.Http.HttpClient
+            $client.Timeout = [TimeSpan]::FromSeconds(1)
+            $resp = $client.GetAsync(('http://127.0.0.1:{0}{1}' -f $p, $path)).GetAwaiter().GetResult()
+            if ($resp -and [int]$resp.StatusCode -ge 200 -and [int]$resp.StatusCode -lt 300) { return $true }
         } catch {}
+        finally { if ($client) { try { $client.Dispose() } catch {} } }
     }
     return $false
 }
@@ -532,22 +536,14 @@ function Start-HeadroomProxyIfNeeded {
 
     if (Test-PortListening $Port) {
         if (Test-ProxyMatchesStack) {
+            $proxyPid = Get-ProxyPid
             if (Test-ProxyHttpReady $Port) {
-                $proxyPid = Get-ProxyPid
                 Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" }) [fingerprint ok]."
                 return
             }
-            Write-Warn "Port $Port matches stack but /readyz failed — waiting to recover..."
-            $recoverUntil = (Get-Date).AddSeconds(8)
-            while ((Get-Date) -lt $recoverUntil) {
-                if (Test-ProxyHttpReady $Port) {
-                    $proxyPid = Get-ProxyPid
-                    Write-Ok "Headroom proxy recovered on port $Port$(if ($proxyPid) { " (pid $proxyPid)" })."
-                    return
-                }
-                Start-Sleep -Milliseconds 400
-            }
-            Write-Warn "Port $Port matches stack but /readyz still failed — restarting proxy."
+            # Busy SSE makes /readyz block. Killing this process is what hung the gate.
+            Write-Warn "Port $Port matches stack but /readyz failed — leaving live proxy (busy SSE must not be killed)."
+            return
         } else {
             Write-Warn "Port $Port is up but fingerprint/process does not match this stack — restarting proxy."
         }

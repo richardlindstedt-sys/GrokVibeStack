@@ -42,14 +42,17 @@ function Write-KeepLog([string]$msg) {
     } catch {}
 }
 
-function Test-ProxyReady([int]$p) {
-    foreach ($path in @('/readyz', '/health', '/livez')) {
-        try {
-            $resp = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}{1}" -f $p, $path) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { return $true }
-        } catch {}
-    }
-    return $false
+function Test-ProxyAlive([int]$p) {
+    # TCP accept = up. /readyz blocks during SSE. Get-NetTCPConnection can hang
+    # for minutes and must not be the liveness check (that froze gate preflight).
+    $client = $null
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
+        return [bool]$client.Connected
+    } catch { return $false }
+    finally { if ($client) { try { $client.Close() } catch {} } }
 }
 
 function Start-ProxyChild([int]$p) {
@@ -116,23 +119,23 @@ try {
 
     $failStreak = 0
     while ($true) {
-        if (Test-ProxyReady $Port) {
+        if (Test-ProxyAlive $Port) {
             $failStreak = 0
             if ($Once) { exit 0 }
             Start-Sleep -Seconds $IntervalSec
             continue
         }
         $failStreak++
-        # One HTTP blip must not kill a live proxy (start-grok -ProxyOnly restarts).
+        # Process gone / port free. Two misses before restart. Never probe /readyz here.
         if ($failStreak -lt 2 -and -not $Once) {
-            Write-KeepLog ("proxy not ready ({0}) - retry" -f $failStreak)
+            Write-KeepLog ("proxy not listening ({0}) - retry" -f $failStreak)
             Start-Sleep -Seconds $IntervalSec
             continue
         }
-        Write-KeepLog 'proxy not ready - start-grok -ProxyOnly -Quiet (child)'
+        Write-KeepLog 'proxy not listening - start-grok -ProxyOnly -Quiet (child)'
         $null = Start-ProxyChild $Port
         if ($Once) {
-            if (Test-ProxyReady $Port) { exit 0 } else { exit 1 }
+            if (Test-ProxyAlive $Port) { exit 0 } else { exit 1 }
         }
         $failStreak = 0
         Start-Sleep -Seconds $IntervalSec
