@@ -341,10 +341,9 @@ function Test-PortListening([int]$p) {
         return [bool]$client.Connected
     } catch { return $false }
     finally {
-        if ($client) {
-            try { $client.LingerState = New-Object System.Net.Sockets.LingerOption($true, 0) } catch {}
-            try { if ($client.Client) { $client.Client.Close(0) } } catch {}
-            try { $client.Close() } catch {}
+        # Do not call TcpClient.Close() — it can hang even after Close(0).
+        if ($client -and $client.Client) {
+            try { $client.Client.Close(0) } catch {}
         }
     }
 }
@@ -365,10 +364,9 @@ function Test-ProxyHttpReady([int]$p) {
 }
 
 function Test-ProxyUsable([int]$p) {
-    # Listen is enough. /readyz blocks while Headroom compresses SSE; treating
-    # that as down spawned start-grok -ProxyOnly which KILLED the busy proxy.
-    if (Test-PortListening $p) { return $true }
-    return [bool](Test-ProxyHttpReady $p)
+    # Listen is enough. Never call /readyz here: HttpClient.Timeout does not
+    # abort a blocked SSE, which froze preflight for minutes.
+    return [bool](Test-PortListening $p)
 }
 
 function Resolve-GrokExe {

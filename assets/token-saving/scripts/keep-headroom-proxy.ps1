@@ -54,10 +54,9 @@ function Test-ProxyAlive([int]$p) {
         return [bool]$client.Connected
     } catch { return $false }
     finally {
-        if ($client) {
-            try { $client.LingerState = New-Object System.Net.Sockets.LingerOption($true, 0) } catch {}
-            try { if ($client.Client) { $client.Client.Close(0) } } catch {}
-            try { $client.Close() } catch {}
+        # Do not call TcpClient.Close() — it can hang even after Close(0).
+        if ($client -and $client.Client) {
+            try { $client.Client.Close(0) } catch {}
         }
     }
 }

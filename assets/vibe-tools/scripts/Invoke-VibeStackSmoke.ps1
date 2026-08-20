@@ -732,10 +732,10 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'TcpClient' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
-    Ok 'review: grok-gate :8788 + listen=usable (no /readyz-kill) + hatch to direct'
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'TcpClient' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never call /readyz here' -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+    Ok 'review: grok-gate :8788 + listen-only usable (no /readyz in preflight) + hatch to direct'
 } else {
-    Bad 'review missing grok-gate / listen-usable / hatch / ProxyPort 8788'
+    Bad 'review missing grok-gate / listen-only preflight / hatch / ProxyPort 8788'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
