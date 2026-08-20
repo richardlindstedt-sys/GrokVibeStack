@@ -187,16 +187,40 @@ function Get-PriorOpenAdvisoriesBlock {
             return $ocn -eq $cwd
         })
     if ($open.Count -eq 0) { return '' }
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('## PRIOR OPEN ADVISORIES')
-    [void]$sb.AppendLine('These shipped last gate (APPROVE_WITH_CHANGES). Re-evaluate each. If still present, keep as advisory or promote to blocker. Omit from advisories ONLY if the diff actually fixed it — do not drop by silence.')
-    foreach ($a in $open) {
-        $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
-        $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
-        $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
-        [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
+    $isLater = {
+        param($a)
+        $b = [string]$a.bucket
+        if (-not $b) { $b = [string]$a.severity }
+        return ($b -eq 'later')
     }
-    [void]$sb.AppendLine('')
+    $next = @($open | Where-Object { -not (& $isLater $_) })
+    $later = @($open | Where-Object { & $isLater $_ })
+    $sb = New-Object System.Text.StringBuilder
+    if ($next.Count -gt 0) {
+        [void]$sb.AppendLine('## PRIOR OPEN NEXT')
+        [void]$sb.AppendLine('These shipped last gate as next-commit debt. Re-evaluate each. If still present, keep as next or promote to blocker. Omit ONLY if the diff actually fixed it — do not drop by silence.')
+        foreach ($a in $next) {
+            $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
+            $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
+            $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
+            [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
+        }
+        [void]$sb.AppendLine('')
+    }
+    if ($later.Count -gt 0) {
+        [void]$sb.AppendLine('## PRIOR LATER BACKLOG')
+        [void]$sb.AppendLine('Ledger only. Stay later unless the diff made it worse (then promote to next or blocker). Do not require a fix to pass.')
+        foreach ($a in @($later | Select-Object -First 8)) {
+            $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
+            $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
+            $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
+            [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
+        }
+        if ($later.Count -gt 8) {
+            [void]$sb.AppendLine(('- ... {0} more later' -f ($later.Count - 8)))
+        }
+        [void]$sb.AppendLine('')
+    }
     return $sb.ToString()
 }
 
@@ -216,7 +240,7 @@ function Add-ReviewContext {
         [void]$sb.AppendLine('(none — infer from the diff; do not invent a product goal)')
     }
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Intent check: advisory if staged diff clearly does not match this intent (extra unrelated files, missing promised change). Blocker if the message claims a security/correctness fix but the diff is unrelated or empty of that fix.')
+    [void]$sb.AppendLine('Intent check: next if staged diff clearly does not match this intent (extra unrelated files, missing promised change). Blocker if the message claims a security/correctness fix but the diff is unrelated or empty of that fix.')
     [void]$sb.AppendLine('')
 
     $priorAdv = Get-PriorOpenAdvisoriesBlock

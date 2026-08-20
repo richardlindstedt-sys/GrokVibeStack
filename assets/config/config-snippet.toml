@@ -34,13 +34,11 @@ startup_timeout_sec = 120
 # Quote dotted ids. Unquoted [model.grok-4.6] is parsed as model.grok-4 + field "6"
 # (Grok 1.0.3 inspect: unknown-field) so the table never registers.
 # Catalog default is grok-4.6 (beats [models].default). Override so default hits Headroom.
+# Do NOT set env_key. Grok then uses auth.json like grok-4.6-direct.
+# env_key = XAI_API_KEY makes the TUI wait forever when that env is unset.
 [model."grok-4.6"]
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
-env_key = [
-    "XAI_API_KEY",
-    "OPENAI_API_KEY",
-]
 name = "Grok 4.6 + Headroom proxy (max savings)"
 description = "Grok 4.6 via local Headroom proxy port 8787 - max token compression profile"
 
@@ -49,10 +47,6 @@ description = "Grok 4.6 via local Headroom proxy port 8787 - max token compressi
 model = "grok-4.6"
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
-env_key = [
-    "XAI_API_KEY",
-    "OPENAI_API_KEY",
-]
 name = "Grok 4.6 + Headroom proxy (alias)"
 description = "Same Headroom proxy as the grok-4.6 override; kept for -m grok-via-headroom"
 context_window = 500000

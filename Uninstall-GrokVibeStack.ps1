@@ -212,14 +212,12 @@ function Remove-ManagedConfigBlock {
     }
     $hadMarkers = $raw.Contains($begin)
 
-    if ($hadMarkers) {
-        if (Get-Command Remove-VibeManagedTomlBlock -ErrorAction SilentlyContinue) {
-            $newRaw = Remove-VibeManagedTomlBlock -Raw $raw
-        } else {
-            $end = '# --- grok-vibe-stack managed block (end) ---'
-            $pattern = '(?s)' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-            $newRaw = [regex]::Replace($raw, $pattern, '').TrimEnd()
-        }
+    # Always key-level strip: drop stack-only tables + stack keys, keep user
+    # [ui]/[marketplace] and extra keys in [session]/[features]/[mcp]/[models].
+    if (Get-Command Remove-VibeStackFromToml -ErrorAction SilentlyContinue) {
+        $newRaw = Remove-VibeStackFromToml -Raw $raw
+    } elseif ($hadMarkers -and (Get-Command Remove-VibeManagedTomlBlock -ErrorAction SilentlyContinue)) {
+        $newRaw = Remove-VibeManagedTomlBlock -Raw $raw
     } else {
         # Grok rewrite drops markers. Strip stack MCP/model tables only — never
         # whole [session]/[features]/[mcp]/[models] (user + Grok share those).

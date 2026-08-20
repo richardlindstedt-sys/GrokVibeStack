@@ -4,7 +4,7 @@ Save context and tokens without losing correctness.
 
 ## Stack (this machine)
 
-- **Headroom proxy** via `start-grok` / built-in `grok-4.6` override (target keep-ratio **0.35**, lossless + code-aware + tool intercept + read-maturation)
+- **Headroom proxy** via `start-grok` / built-in `grok-4.6` override (target keep-ratio **0.35**, lossless + code-aware)
 - **RTK** on noisy shell — enforced by PreToolUse hook (`run-rtk-enforce.ps1`)
 - **Caveman ultra** for chat output
 - **Compact** at **55%** context + two-pass

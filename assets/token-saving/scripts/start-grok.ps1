@@ -47,14 +47,32 @@ $ProxyErrLog   = Join-Path $LogDir 'headroom-proxy.err.log'
 $CavemanFlag   = Join-Path $GrokHome '.caveman-active'
 $GrokTomlPs1   = Join-Path $TokenRoot 'scripts\GrokToml.ps1'
 if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
-$XaiUpstream   = if ($env:OPENAI_TARGET_API_URL) { $env:OPENAI_TARGET_API_URL } else { 'https://api.x.ai/v1' }
-# Bump when stack CLI flags change so stale proxies restart
-$ProxyStackFingerprint = 'v1|mode=token|ratio=0.35|lossless|code-aware|intercept|read-maturation|no-ccr'
+# Upstream: session login (auth.json) uses cli-chat-proxy.grok.com.
+# api.x.ai needs XAI_API_KEY — without it the proxy 401s and the TUI sits on
+# "waiting for response". OPENAI_TARGET_API_URL is an explicit override.
+# Bump fingerprint prefix when stack CLI flags change so stale proxies restart.
+# hr=<version> forces restart after pip upgrade. Headroom 0.35 502'd Grok
+# /v1/responses SSE (TUI "Retrying"); 0.36 adapts those 200 streams.
+# --read-maturation (beta) and --intercept-tool-results (canary) dropped:
+# 0.36 stable aborts if those flags are set.
+# --no-http2: Grok SSE cancel + HTTP/2 can hang. --no-rate-limit: default 60rpm
+# stalls a tool-heavy agent (TUI "waiting for response").
 
 function Write-Info([string]$msg)  { Write-Host "[start-grok] $msg" -ForegroundColor Cyan }
 function Write-Ok([string]$msg)    { Write-Host "[start-grok] $msg" -ForegroundColor Green }
 function Write-Warn([string]$msg)  { Write-Host "[start-grok] $msg" -ForegroundColor Yellow }
 function Write-Err([string]$msg)   { Write-Host "[start-grok] $msg" -ForegroundColor Red }
+
+function Resolve-HeadroomUpstream {
+    if ($env:OPENAI_TARGET_API_URL) { return $env:OPENAI_TARGET_API_URL.Trim().TrimEnd('/') }
+    if ($env:XAI_API_KEY) { return 'https://api.x.ai/v1' }
+    return 'https://cli-chat-proxy.grok.com/v1'
+}
+
+function Get-HeadroomUpstreamHost {
+    $u = Resolve-HeadroomUpstream
+    try { return ([Uri]$u).Host } catch { return 'unknown' }
+}
 
 function Test-PortListening([int]$p) {
     try {
@@ -144,8 +162,31 @@ function Ensure-Rtk {
     return $null
 }
 
+function Get-HeadroomCliVersion {
+    if (-not (Test-Path -LiteralPath $HeadroomExe)) { return 'unknown' }
+    try {
+        $raw = & $HeadroomExe -v 2>&1 | Out-String
+        if ($raw -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+    } catch {}
+    return 'unknown'
+}
+
+function Get-ProxyStackFingerprintBase {
+    return ('v3|hr={0}|mode=token|ratio=0.35|lossless|code-aware|no-ccr|no-http2|no-rl|up={1}' -f (Get-HeadroomCliVersion), (Get-HeadroomUpstreamHost))
+}
+
 function Get-ExpectedProxyFingerprint {
-    return ("{0}|port={1}" -f $ProxyStackFingerprint, $Port)
+    return ("{0}|port={1}" -f (Get-ProxyStackFingerprintBase), $Port)
+}
+
+function Test-ProxyHttpReady([int]$p) {
+    foreach ($path in @('/readyz', '/health', '/livez')) {
+        try {
+            $resp = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}{1}" -f $p, $path) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { return $true }
+        } catch {}
+    }
+    return $false
 }
 
 function Save-ProxyFingerprint {
@@ -190,6 +231,15 @@ function Test-IsDescendantOf([int]$ancestorId, [int]$procId) {
     return $false
 }
 
+function Test-ProxyCommandLineIsHeadroom([string]$cmdLine) {
+    # Loose: our Headroom proxy on this port (any flag generation). Used to stop stale stacks.
+    if ([string]::IsNullOrWhiteSpace($cmdLine)) { return $false }
+    if ($cmdLine -notmatch '(?i)headroom') { return $false }
+    if ($cmdLine -notmatch '(?i)(\s|^)proxy(\s|$)') { return $false }
+    if ($cmdLine -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $Port)) { return $false }
+    return $true
+}
+
 function Test-ProxyCommandLineMatchesStack([string]$cmdLine) {
     # Live argv must look like our headroom proxy stack (not any python on the port).
     if ([string]::IsNullOrWhiteSpace($cmdLine)) { return $false }
@@ -200,11 +250,12 @@ function Test-ProxyCommandLineMatchesStack([string]$cmdLine) {
     $needles = @(
         '--lossless',
         '--code-aware',
-        '--intercept-tool-results',
         '--target-ratio',
         '0.35',
         '--no-ccr-proactive-expansion',
-        '--read-maturation'
+        '--no-http2',
+        '--no-rate-limit',
+        '--openai-api-url'
     )
     foreach ($n in $needles) {
         if ($cmdLine -notlike "*$n*") { return $false }
@@ -302,8 +353,9 @@ function Stop-HeadroomProxy {
         foreach ($c in $conns) {
             if (-not $c.OwningProcess) { continue }
             $op = [int]$c.OwningProcess
-            # Require Headroom argv — never kill a random python on this port.
-            if (Test-ProxyProcessOk $op) {
+            # Loose Headroom argv — never kill a random python. Flag generation may be stale.
+            $cl = Get-ProcessCommandLine $op
+            if (Test-ProxyCommandLineIsHeadroom $cl) {
                 Stop-Process -Id $op -Force -ErrorAction SilentlyContinue
                 $stopped = $true
             }
@@ -352,9 +404,10 @@ function Show-Status {
     Write-Host "config.toml:  $cfgLine"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
     Write-Host "model:        grok-4.6 (Headroom override) -> http://127.0.0.1:$Port/v1"
-    Write-Host "proxy flags:  MAX savings profile (token + lossless + code-aware + intercept + ratio 0.35)"
+    Write-Host "upstream:     $(Resolve-HeadroomUpstream)"
+    Write-Host "proxy flags:  token + lossless + code-aware + ratio 0.35 + no-http2 + no-rate-limit"
     Write-Host "context tool: rtk (auto-enforce hook + HEADROOM_CONTEXT_TOOL=rtk)"
-    Write-Host "XAI_API_KEY:  $(if ($env:XAI_API_KEY) { 'set' } else { 'not set (session login / auth.json may still work)' })"
+    Write-Host "XAI_API_KEY:  $(if ($env:XAI_API_KEY) { 'set (api.x.ai)' } else { 'not set — session auth via cli-chat-proxy.grok.com' })"
     Write-Host ""
 }
 
@@ -368,11 +421,15 @@ function Start-HeadroomProxyIfNeeded {
 
     if (Test-PortListening $Port) {
         if (Test-ProxyMatchesStack) {
-            $proxyPid = Get-ProxyPid
-            Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" }) [fingerprint ok]."
-            return
+            if (Test-ProxyHttpReady $Port) {
+                $proxyPid = Get-ProxyPid
+                Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" }) [fingerprint ok]."
+                return
+            }
+            Write-Warn "Port $Port matches stack but /readyz failed — restarting proxy."
+        } else {
+            Write-Warn "Port $Port is up but fingerprint/process does not match this stack — restarting proxy."
         }
-        Write-Warn "Port $Port is up but fingerprint/process does not match this stack — restarting proxy."
         Stop-HeadroomProxy
         Start-Sleep -Milliseconds 500
         if (Test-PortListening $Port) {
@@ -380,6 +437,7 @@ function Start-HeadroomProxyIfNeeded {
         }
     }
 
+    $XaiUpstream = Resolve-HeadroomUpstream
     Write-Info "Starting Headroom proxy on 127.0.0.1:$Port ..."
     Write-Info "Upstream: $XaiUpstream"
 
@@ -413,8 +471,12 @@ function Start-HeadroomProxyIfNeeded {
     $env:HEADROOM_LOSSLESS = '1'
     $env:HEADROOM_EFFORT_ROUTER = '0'
     $env:HEADROOM_CONTEXT_TOOL = 'rtk'
-    # Hold large file reads then crush once quiet (extra savings on long sessions)
-    $env:HEADROOM_READ_MATURATION = '1'
+    # --read-maturation is beta in Headroom 0.36 stable and aborts proxy start.
+    # Old start-grok left HEADROOM_READ_MATURATION=1 in the parent env; that
+    # still trips the gate. Clear unless the user opted into beta.
+    if ($env:HEADROOM_ROLLOUT_CHANNEL -notmatch '^(beta|dev)$' -and $env:HEADROOM_UNSAFE_ALLOW_UNSTABLE_FEATURES -ne '1') {
+        Remove-Item Env:HEADROOM_READ_MATURATION -ErrorAction SilentlyContinue
+    }
 
     foreach ($f in @($ProxyLog, $ProxyErrLog)) {
         if ((Test-Path $f) -and ((Get-Item $f).Length -gt 5MB)) {
@@ -423,10 +485,9 @@ function Start-HeadroomProxyIfNeeded {
     }
 
     # --memory / --learn off: re-injection loops with caveman.
-    # --lossless + code-aware + intercept: keep code/tool fidelity while crushing bulk.
+    # --lossless + code-aware: keep code fidelity while crushing bulk.
     # --target-ratio 0.35: keep ~35% of crushable prose (was 0.55).
     # --no-ccr-proactive-expansion: do not re-inflate compressed history.
-    # --read-maturation: delay/crush stale Read payloads.
     $argList = @(
         'proxy',
         '--host', '127.0.0.1',
@@ -435,10 +496,10 @@ function Start-HeadroomProxyIfNeeded {
         '--mode', 'token',
         '--lossless',
         '--code-aware',
-        '--intercept-tool-results',
         '--target-ratio', '0.35',
         '--no-ccr-proactive-expansion',
-        '--read-maturation'
+        '--no-http2',
+        '--no-rate-limit'
     )
 
     $proc = Start-Process -FilePath $HeadroomExe `
@@ -495,9 +556,12 @@ function Start-HeadroomProxyIfNeeded {
                 throw "Port $Port is listening but TCP owner is not Headroom PID $($proc.Id) (owners=$ownerList)."
             }
             Set-Content -Path $ProxyPidFile -Value $adopted -Encoding ascii -NoNewline
-            Save-ProxyFingerprint
-            Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port (pid $adopted)"
-            return
+            if (Test-ProxyHttpReady $Port) {
+                Save-ProxyFingerprint
+                Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port (pid $adopted)"
+                return
+            }
+            # Bound and owned, but /readyz not up yet — keep waiting.
         }
         Start-Sleep -Milliseconds 400
     }
@@ -539,11 +603,21 @@ function Assert-GrokConfig {
     $hr = Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'
     $serena = Join-Path $env:USERPROFILE '.local\bin\serena.exe'
     $serenaOn = Test-Path -LiteralPath $serena
-    $result = Repair-GrokConfigFile -ConfigPath $cfg -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn -BackupSuffix ("startgrok-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-    if ($result.Quarantined) {
-        Write-Ok ("Repaired ~/.grok/config.toml (source {0}). Sidecar moved to {1}" -f $result.SourcePath, $result.Quarantined)
-    } else {
-        Write-Ok "Repaired ~/.grok/config.toml (Headroom override restored). Backup under ~/.grok/relocations/"
+    try {
+        $result = Repair-GrokConfigFile -ConfigPath $cfg -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn -BackupSuffix ("startgrok-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        if ($result.Quarantined) {
+            Write-Ok ("Repaired ~/.grok/config.toml (source {0}). Sidecar moved to {1}" -f $result.SourcePath, $result.Quarantined)
+        } else {
+            Write-Ok "Repaired ~/.grok/config.toml (Headroom override restored, user settings kept). Backup under ~/.grok/relocations/"
+        }
+    } catch {
+        $after = if (Test-Path -LiteralPath $cfg) { Test-VibeToml -Raw (Read-Utf8NoBomFile -Path $cfg) } else { @{ Ok = $false } }
+        if ($after.Ok) {
+            Write-Warn ("config repair warning: {0}" -f $_.Exception.Message)
+            Write-Ok "config.toml is valid after retry; launching."
+            return
+        }
+        throw ("config.toml still invalid after repair (grok would not start): {0}" -f $_.Exception.Message)
     }
 }
 

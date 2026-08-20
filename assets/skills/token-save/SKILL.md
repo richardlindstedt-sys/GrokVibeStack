@@ -16,7 +16,7 @@ user-invocable: true
 3. **Always-on rules** - `token-efficiency.md` + `caveman.md` + `rtk.md`.
 4. **Context hygiene** - grep before read; subagents for explore; no full-file dumps.
 5. **MCP cap** - large MCP results truncated (`[mcp] max_output_bytes=20000`).
-6. **Headroom proxy** (built-in `grok-4.6` override) - `--mode token --lossless --code-aware --intercept-tool-results --target-ratio 0.35` + `--no-ccr-proactive-expansion` + `--read-maturation`.
+6. **Headroom proxy** (built-in `grok-4.6` override) - `--mode token --lossless --code-aware --target-ratio 0.35` + `--no-ccr-proactive-expansion`.
 7. **Headroom MCP** - `headroom__*` tools for on-demand compress/retrieve. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
 8. **Compaction** - **55%** auto + two-pass.
 

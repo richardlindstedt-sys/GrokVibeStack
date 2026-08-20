@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.4.12** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **1.5.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -184,7 +184,7 @@ $env:VIBE_REQUIRE_SCANNERS = '0'   # default is require trivy+gitleaks; 0 = soft
 
 - **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, leftover blockers → block commit/push  
 - **Critical scanners** (`trivy`, `gitleaks`) required by default; `VIBE_REQUIRE_SCANNERS=0` soft-warns only  
-- **Advisories** do not block; **blockers** do (panel `severity=blocker` forces BLOCK even if vote disagrees)  
+- **Buckets:** `blocker` fails this SHA; `next` ships then must be fixed in the next commit; `later` is ledger-only (doctor lists, cap 40, no auto-fail). Panel `severity=blocker` forces BLOCK even if vote disagrees.  
 - Reports: `~\.grok\vibe-tools\reports\latest.md` (wall-time + token estimate + schema)  
 - Scanners in gates are **read-only** (Biome does not auto-write)  
 - **Serena MCP** installs by default (`ensure-serena.ps1`: PyPI `serena-agent`, verify `--version`, infer/repair `.serena/project.yml` language servers — empty list breaks symbol tools). **Remind hooks stay off**. Opt-in: `Enable-SerenaRemindHooks.ps1`  
@@ -195,7 +195,7 @@ Configured defaults (not a promise of one fixed % on your whole bill):
 
 | Layer | Configured value | What that means in practice |
 |-------|------------------|-----------------------------|
-| **Headroom proxy** | keep-ratio **target 0.35** (lossless + code-aware + tool-result intercept + read-maturation) | On traffic the proxy compresses, aim to **keep ~35%** of tokens → up to **~65% cut** on that path. Best on long sessions, big tool dumps, log/JSON-heavy turns. Does not shrink every prompt the same way. |
+| **Headroom proxy** | keep-ratio **target 0.35** (lossless + code-aware) | On traffic the proxy compresses, aim to **keep ~35%** of tokens → up to **~65% cut** on that path. Best on long sessions, big tool dumps, log/JSON-heavy turns. Does not shrink every prompt the same way. |
 | **RTK** | enforce prefix on **each** noisy shell segment (`&&`/`||`/`;`/newline/bare `&`) | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` when every noisy leg uses `rtk …` (see `rtk gain`). One `rtk` does not unlock the rest of a chain. Residual: `\|` pipelines, `2>&1`/`&>` redirects, leading `&` call operator, backticks/heredocs. |
 | **Caveman** | chat style **ultra** | Shorter model **replies** day-to-day (output tokens), not input context. |
 | **Compact** | fire at **55%** context, two-pass | Compacts earlier than a high threshold → fewer giant multi-hour contexts. |
@@ -288,7 +288,7 @@ Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-now.txt
 Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-status.txt -Wait   # append-only events
 ```
 
-Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md` (overwritten each gate). Open advisories persist in `reports/gate-open-advisories.json` and must be fixed in the next commit.
+Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md` (overwritten each gate). Ledger: `reports/gate-open-advisories.json` — **next** must be fixed in the next commit; **later** is backlog (doctor lists).
 
 **Headroom MCP** (`headroom__*` tools) is **on by default**. Optional off: set `enabled = false` under `[mcp_servers.headroom]` in `~/.grok/config.toml`. Proxy + RTK stay on. Re-run installer to restore the managed block, or edit that key only.
 
@@ -312,7 +312,7 @@ RTK_BYPASS=1 <command>
   vibe-tools/               scanners, grok-ai-review, hook installer
     reports/                latest.md / .html / .json
     cache/                  gate pass cache
-  config.toml               managed block
+  config.toml               stack keys/tables merged; user /settings kept
   vibe-stack-manifest.json  uninstall inventory
 ```
 

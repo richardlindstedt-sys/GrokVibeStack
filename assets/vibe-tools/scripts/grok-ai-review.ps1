@@ -8,6 +8,7 @@
       1) Static scans (optional)
       2) Reviewer panel (profile-dependent) + arbiter
       3) On blockers: implementer fixes (unless -NoFix) then re-review
+      3b) next findings ship this SHA and persist as next-commit debt; later is ledger-only
       4) Writes MD+HTML report under ~/.grok/vibe-tools/reports/
       5) Diff-hash cache: identical diff+profile+model+schema that already PASSED can skip AI
 
@@ -337,6 +338,20 @@ function Test-PortListening([int]$p) {
     }
 }
 
+function Test-ProxyHttpReady([int]$p) {
+    foreach ($path in @('/readyz', '/health', '/livez')) {
+        try {
+            $resp = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}{1}" -f $p, $path) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { return $true }
+        } catch {}
+    }
+    return $false
+}
+
+function Test-ProxyUsable([int]$p) {
+    return (Test-PortListening $p) -and (Test-ProxyHttpReady $p)
+}
+
 function Resolve-GrokExe {
     $cmd = Get-Command grok -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) { return $cmd.Source }
@@ -369,14 +384,14 @@ function Test-ReviewPreflight {
     $hatch = 'grok-4.6-direct'
     $needsProxy = ($ModelName -match 'headroom|8787') -or ($ModelName -eq 'grok-4.6')
     if ($needsProxy) {
-        if (-not (Test-PortListening $Port)) {
+        if (-not (Test-ProxyUsable $Port)) {
             $startGrok = Join-Path $env:USERPROFILE '.grok\token-saving\scripts\start-grok.ps1'
             if (Test-Path -LiteralPath $startGrok) {
-                Write-Host "Headroom proxy not on :$Port - starting via start-grok -ProxyOnly ..." -ForegroundColor Yellow
+                Write-Host "Headroom proxy not ready on :$Port - starting via start-grok -ProxyOnly ..." -ForegroundColor Yellow
                 try { & $startGrok -ProxyOnly 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } } catch {}
             }
         }
-        if (-not (Test-PortListening $Port)) {
+        if (-not (Test-ProxyUsable $Port)) {
             # Unquoted [model.grok-4.6-direct] never registers (TOML nest).
             # Require quoted table with its own official https base_url (not loopback).
             if (-not (Test-VanillaHatchEndpoint)) {
@@ -616,8 +631,15 @@ function Invoke-GrokHeadless {
         [string]$OutLog,
         [string]$WorkingDirectory = '',
         [scriptblock]$OnPulse = $null,
-        [int]$PulseSec = 8
+        [int]$PulseSec = 8,
+        [switch]$NoHatchRetry
     )
+
+    $needsProxy = ($ModelName -match 'headroom|8787') -or ($ModelName -eq 'grok-4.6')
+    if ($needsProxy -and -not $NoHatchRetry -and -not (Test-ProxyUsable 8787) -and (Test-VanillaHatchEndpoint)) {
+        Write-Host ("  proxy down - {0} using grok-4.6-direct" -f $Label) -ForegroundColor Yellow
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+    }
 
     $argList = [System.Collections.Generic.List[string]]::new()
     [void]$argList.Add('--prompt-file')
@@ -721,6 +743,14 @@ function Invoke-GrokHeadless {
         $script:GateRun.tokenEstimate = [int][math]::Round(($script:GateRun.promptChars + $script:GateRun.outputChars) / 4.0)
     } catch {}
     $ok = ($code -eq 0 -or $null -eq $code) -and -not [string]::IsNullOrWhiteSpace($text)
+    $proxyStreamFail = ($text -match '127\.0\.0\.1:8787' -and $text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
+    if ((-not $ok -or $proxyStreamFail) -and -not $NoHatchRetry -and $needsProxy -and (Test-VanillaHatchEndpoint)) {
+        Write-Host ("  proxy stream failed - retry {0} on grok-4.6-direct" -f $Label) -ForegroundColor Yellow
+        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+            Write-GateProgress ("proxy stream fail - retry {0} on grok-4.6-direct" -f $Label)
+        }
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+    }
     return @{ Ok = $ok; Text = $text; ExitCode = $code; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
 }
 
@@ -729,16 +759,20 @@ function New-ReviewerPrompt {
     $focusCorrectness = @(
         'ROLE: CORRECTNESS reviewer (bugs, logic, edge cases, races, error handling, tests).',
         'You vote BLOCK only for real correctness defects that would break behavior or corrupt data.',
-        'Style/nits = advisory. Missing nice-to-have tests for trivial changes = advisory unless risk is high.'
+        'Hunt: null/empty paths, off-by-one, races, swallowed errors, fail-open vs fail-closed, encoding/round-trip loss, Windows vs Unix paths, tests that do not assert, $LASTEXITCODE/$ErrorActionPreference fail-open, resource leaks.',
+        'Missing nice-to-have tests for trivial changes = later. Missing tests for new non-trivial behavior = next (or blocker if the change is security/data-critical).'
     ) -join "`n"
     $focusSecurity = @(
         'ROLE: SECURITY reviewer (secrets, injection, authz, path traversal, unsafe deserialization, SSRF, supply chain).',
-        'You vote BLOCK for exploitable or secret-leak issues. Theoretical hardening without exploit path = advisory.'
+        'You vote BLOCK for exploitable or secret-leak issues.',
+        'Hunt: secrets in the diff, command/SQL/XSS injection, path traversal, missing authz, SSRF, unsafe deser, weak RNG for security, open redirect, installing unsigned binaries, logging credentials.',
+        'Theoretical hardening with no exploit path = later. Likely-but-unproven issues = next.'
     ) -join "`n"
     $focusSimplicity = @(
         'ROLE: SIMPLICITY / QUALITY reviewer (duplication, dead code, unwired features, complexity, naming, incomplete stubs).',
         'You vote BLOCK for unwired/half-implemented features, dead dangerous paths, or complexity that hides bugs.',
-        'Pure style preference = advisory.'
+        'Hunt: unwired/stub features, new TODOs left in shipped paths, dead dangerous code, duplicate security-sensitive logic, half-migrated APIs, catch-all that swallows errors.',
+        'Pure style preference = later.'
     ) -join "`n"
     $focus = switch ($Role) {
         'correctness' { $focusCorrectness }
@@ -756,17 +790,23 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine("You are one member of a 3-reviewer quality panel for a git gate (round $Round).")
     [void]$sb.AppendLine($focus)
     [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Buckets (severity must be exactly one of these):')
+    [void]$sb.AppendLine('- blocker: this SHA must not ship (break, exploit, data loss, fail-closed bypass).')
+    [void]$sb.AppendLine('- next: real defect or missing coverage for non-trivial risk. Ship this SHA; must fix in the next commit.')
+    [void]$sb.AppendLine('- later: nits, style, optional refactors, speculative hardening. Ledger only — do not block this or the next commit.')
+    [void]$sb.AppendLine('Legacy "advisory" is not valid; use next or later.')
+    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Rules:')
     [void]$sb.AppendLine('- Be specific: file path + line when possible.')
-    [void]$sb.AppendLine('- severity must be exactly "blocker" or "advisory".')
     [void]$sb.AppendLine('- Do NOT edit files. Tools that write or run shell are disabled.')
     [void]$sb.AppendLine('- Do NOT spend turns chunking, grepping, or re-reading the diff. The brief below is complete.')
     [void]$sb.AppendLine('- Emit the JSON object as your FIRST substantive response (ideally only response).')
     [void]$sb.AppendLine('- Independent judgment - do not soften blockers to be nice.')
     [void]$sb.AppendLine('- vote must be one of: STRONG_APPROVE | APPROVE | APPROVE_WITH_CHANGES | BLOCK')
     [void]$sb.AppendLine('  - BLOCK if you have any blocker findings')
-    [void]$sb.AppendLine('  - APPROVE_WITH_CHANGES if only advisories')
-    [void]$sb.AppendLine('  - APPROVE / STRONG_APPROVE if clean')
+    [void]$sb.AppendLine('  - APPROVE_WITH_CHANGES if you have any next findings (later-only is not AWC)')
+    [void]$sb.AppendLine('  - APPROVE if only later findings')
+    [void]$sb.AppendLine('  - STRONG_APPROVE if findings is empty')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Return ONLY a single JSON object (no markdown fences if possible) with this shape:')
     [void]$sb.AppendLine('{')
@@ -776,7 +816,7 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine('  "findings": [')
     [void]$sb.AppendLine('    {')
     [void]$sb.AppendLine("      `"id`": `"$Role-1`",")
-    [void]$sb.AppendLine('      "severity": "blocker|advisory",')
+    [void]$sb.AppendLine('      "severity": "blocker|next|later",')
     [void]$sb.AppendLine('      "file": "path or empty",')
     [void]$sb.AppendLine('      "line": 0,')
     [void]$sb.AppendLine('      "title": "short",')
@@ -799,10 +839,11 @@ function New-ArbiterPrompt {
     [void]$sb.AppendLine('Three specialized reviewers (correctness, security, simplicity) submitted independent findings and votes.')
     [void]$sb.AppendLine('Your job:')
     [void]$sb.AppendLine('1) Merge duplicate findings.')
-    [void]$sb.AppendLine('2) RESOLVE DISPUTES on severity: when reviewers disagree blocker vs advisory, decide with explicit rationale.')
-    [void]$sb.AppendLine('   - Prefer BLOCKER when a plausible production break or security issue exists.')
-    [void]$sb.AppendLine('   - Never downgrade in-support data corruption, encoding/round-trip loss, or a fail-closed bypass to advisory.')
-    [void]$sb.AppendLine('   - Prefer ADVISORY for style, optional refactors, or speculative issues without a clear failure mode.')
+    [void]$sb.AppendLine('2) RESOLVE DISPUTES on bucket: blocker vs next vs later, with explicit rationale.')
+    [void]$sb.AppendLine('   - Prefer blocker when a plausible production break or security issue exists.')
+    [void]$sb.AppendLine('   - Never downgrade in-support data corruption, encoding/round-trip loss, or a fail-closed bypass to next or later.')
+    [void]$sb.AppendLine('   - next: real defect that can ship this SHA but must be fixed in the next commit.')
+    [void]$sb.AppendLine('   - later: style, optional refactors, speculative issues without a clear failure mode. Ledger only.')
     [void]$sb.AppendLine('   - Panels may have 1-3 reviewers (fast can be correctness+security). Do not require three votes.')
     [void]$sb.AppendLine('3) Produce a final gate verdict.')
     [void]$sb.AppendLine('')
@@ -811,22 +852,26 @@ function New-ArbiterPrompt {
     [void]$sb.AppendLine('  "verdict": "STRONG_APPROVE|APPROVE|APPROVE_WITH_CHANGES|BLOCK",')
     [void]$sb.AppendLine('  "rationale": "short explanation of the consensus",')
     [void]$sb.AppendLine('  "disputes_resolved": [')
-    [void]$sb.AppendLine('    {"topic": "...", "resolution": "blocker|advisory", "rationale": "..."}')
+    [void]$sb.AppendLine('    {"topic": "...", "resolution": "blocker|next|later", "rationale": "..."}')
     [void]$sb.AppendLine('  ],')
     [void]$sb.AppendLine('  "blockers": [')
     [void]$sb.AppendLine('    {"id": "...", "file": "...", "line": 0, "title": "...", "detail": "...", "fix_hint": "...", "sources": ["correctness","security"]}')
     [void]$sb.AppendLine('  ],')
-    [void]$sb.AppendLine('  "advisories": [')
+    [void]$sb.AppendLine('  "next": [')
+    [void]$sb.AppendLine('    {"id": "...", "file": "...", "line": 0, "title": "...", "detail": "...", "fix_hint": "...", "sources": ["simplicity"]}')
+    [void]$sb.AppendLine('  ],')
+    [void]$sb.AppendLine('  "later": [')
     [void]$sb.AppendLine('    {"id": "...", "file": "...", "line": 0, "title": "...", "detail": "...", "fix_hint": "...", "sources": ["simplicity"]}')
     [void]$sb.AppendLine('  ]')
     [void]$sb.AppendLine('}')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Rules:')
     [void]$sb.AppendLine('- verdict MUST be BLOCK if blockers is non-empty.')
-    [void]$sb.AppendLine('- verdict APPROVE_WITH_CHANGES if only advisories.')
-    [void]$sb.AppendLine('- STRONG_APPROVE only if all three votes were approve-class and no advisories worth tracking.')
+    [void]$sb.AppendLine('- verdict APPROVE_WITH_CHANGES if next is non-empty and blockers is empty.')
+    [void]$sb.AppendLine('- verdict APPROVE if only later (or later + no next). STRONG_APPROVE only if next and later are both empty.')
     [void]$sb.AppendLine('- Do not invent issues not grounded in reviewer findings or the diff brief.')
     [void]$sb.AppendLine('- Do not edit files or run shell. Emit JSON immediately; do not re-chunk the brief.')
+    [void]$sb.AppendLine('- Legacy "advisories" array is invalid; put items in next or later.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('PANEL OUTPUTS:')
     [void]$sb.AppendLine($PanelJson)
@@ -1006,10 +1051,17 @@ function Write-GateReport {
                     if ($b.fix_hint) { [void]$md.AppendLine(("  - fix: {0}" -f $b.fix_hint)) }
                 }
             }
-            if ($round.advisories) {
+            if ($round.next) {
                 [void]$md.AppendLine('')
-                [void]$md.AppendLine('### Advisories')
-                foreach ($a in @($round.advisories)) {
+                [void]$md.AppendLine('### Next (must fix next commit)')
+                foreach ($a in @($round.next)) {
+                    [void]$md.AppendLine(('- `{0}` - {1}' -f $a.id, $a.title))
+                }
+            }
+            if ($round.later) {
+                [void]$md.AppendLine('')
+                [void]$md.AppendLine('### Later (backlog)')
+                foreach ($a in @($round.later)) {
                     [void]$md.AppendLine(('- `{0}` - {1}' -f $a.id, $a.title))
                 }
             }
@@ -1274,9 +1326,22 @@ function Get-FindingSeverity([object]$finding) {
     }
 }
 
+function Get-FindingBucket([object]$finding) {
+    $s = Get-FindingSeverity $finding
+    switch ($s) {
+        'blocker' { return 'blocker' }
+        'later' { return 'later' }
+        'next' { return 'next' }
+        'advisory' { return 'next' }
+        default { return 'next' }
+    }
+}
+
 function Normalize-ReviewerVote {
     # Any severity=blocker forces vote=BLOCK. Unknown votes fail-closed.
     # BLOCK with zero findings fails. BLOCK with only non-blocker findings promotes them to blocker.
+    # next findings force AWC if the vote was APPROVE/STRONG_APPROVE. later-only stays APPROVE.
+    # Legacy advisory maps to next.
     param($obj)
     if (-not $obj) { return $null }
     $findings = @()
@@ -1288,9 +1353,32 @@ function Normalize-ReviewerVote {
         Write-Host ("    normalize: {0} invalid/missing vote '{1}' (fail-closed)" -f $obj.reviewer_id, $vote) -ForegroundColor Yellow
         return $null
     }
+    $mapped = foreach ($f in $findings) {
+        if (-not $f) { continue }
+        $s = Get-FindingSeverity $f
+        $bucket = switch ($s) {
+            'blocker' { 'blocker' }
+            'later' { 'later' }
+            'next' { 'next' }
+            'advisory' { 'next' }
+            default { if ($vote -eq 'BLOCK') { 'blocker' } else { 'next' } }
+        }
+        if ($s -ne $bucket) {
+            try { $f | Add-Member -NotePropertyName severity -NotePropertyValue $bucket -Force } catch {}
+        }
+        $f
+    }
+    $findings = @($mapped)
+    $obj | Add-Member -NotePropertyName findings -NotePropertyValue $findings -Force
     $blockerCount = 0
+    $nextCount = 0
+    $laterCount = 0
     foreach ($f in $findings) {
-        if ((Get-FindingSeverity $f) -eq 'blocker') { $blockerCount++ }
+        switch (Get-FindingBucket $f) {
+            'blocker' { $blockerCount++ }
+            'later' { $laterCount++ }
+            default { $nextCount++ }
+        }
     }
     if ($blockerCount -gt 0 -and $vote -ne 'BLOCK') {
         Write-Host ("    normalize: {0} vote {1} -> BLOCK ({2} blocker finding(s))" -f $obj.reviewer_id, $vote, $blockerCount) -ForegroundColor DarkYellow
@@ -1301,7 +1389,6 @@ function Normalize-ReviewerVote {
         if ($findings.Count -eq 0) {
             return $null
         }
-        # Model said BLOCK but labeled findings advisory/unknown — promote so harvest cannot drop them
         Write-Host ("    normalize: {0} BLOCK with non-blocker findings -> promote severity=blocker" -f $obj.reviewer_id) -ForegroundColor DarkYellow
         $promoted = foreach ($f in $findings) {
             if (-not $f) { continue }
@@ -1309,6 +1396,15 @@ function Normalize-ReviewerVote {
             $f
         }
         $obj | Add-Member -NotePropertyName findings -NotePropertyValue @($promoted) -Force
+        return $obj
+    }
+    if ($nextCount -gt 0 -and $vote -in @('APPROVE', 'STRONG_APPROVE')) {
+        Write-Host ("    normalize: {0} vote {1} -> APPROVE_WITH_CHANGES ({2} next finding(s))" -f $obj.reviewer_id, $vote, $nextCount) -ForegroundColor DarkYellow
+        $obj | Add-Member -NotePropertyName vote -NotePropertyValue 'APPROVE_WITH_CHANGES' -Force
+    }
+    if ($nextCount -eq 0 -and $blockerCount -eq 0 -and $laterCount -gt 0 -and $vote -eq 'APPROVE_WITH_CHANGES') {
+        Write-Host ("    normalize: {0} AWC with only later -> APPROVE" -f $obj.reviewer_id) -ForegroundColor DarkYellow
+        $obj | Add-Member -NotePropertyName vote -NotePropertyValue 'APPROVE' -Force
     }
     return $obj
 }
@@ -1342,6 +1438,43 @@ function Get-PanelBlockerFindings {
                     detail    = $(try { [string]$f.detail } catch { '' })
                     fix_hint  = $(try { [string]$f.fix_hint } catch { '' })
                     sources   = @($role)
+                })
+        }
+    }
+    return @($out)
+}
+
+function Get-PanelBucketFindings {
+    param($Panel, [string]$Bucket)
+    $want = $Bucket.ToLowerInvariant()
+    $out = [System.Collections.Generic.List[object]]::new()
+    $seen = @{}
+    foreach ($p in @($Panel)) {
+        $role = 'reviewer'
+        try { if ($p.reviewer_id) { $role = [string]$p.reviewer_id } } catch {}
+        foreach ($f in @($p.findings)) {
+            if (-not $f) { continue }
+            if ((Get-FindingBucket $f) -ne $want) { continue }
+            $id = $null
+            try { $id = [string]$f.id } catch {}
+            if (-not $id) {
+                $title = ''
+                $file = ''
+                try { $title = [string]$f.title } catch {}
+                try { $file = [string]$f.file } catch {}
+                $id = 'panel-{0}-{1}-{2}' -f $want, $role, (($file + '|' + $title).GetHashCode())
+            }
+            if ($seen.ContainsKey($id)) { continue }
+            $seen[$id] = $true
+            $out.Add([pscustomobject]@{
+                    id       = $id
+                    file     = $(try { [string]$f.file } catch { '' })
+                    line     = $(try { [int]$f.line } catch { 0 })
+                    title    = $(try { [string]$f.title } catch { $want })
+                    detail   = $(try { [string]$f.detail } catch { '' })
+                    fix_hint = $(try { [string]$f.fix_hint } catch { '' })
+                    sources  = @($role)
+                    bucket   = $want
                 })
         }
     }
@@ -1385,8 +1518,58 @@ function Invoke-Arbiter {
         if ($bid) { $seenIds[$bid] = $true }
         $blockers.Add($pb)
     }
-    if ($blockers.Count -gt 0) { $verdict = 'BLOCK' }
-    return @{ Ok = $true; Verdict = $verdict; Result = $obj; Text = $r.Text; Blockers = @($blockers); Seconds = $r.Seconds }
+    $next = [System.Collections.Generic.List[object]]::new()
+    $later = [System.Collections.Generic.List[object]]::new()
+    $seenNext = @{}
+    $seenLater = @{}
+    $legacyAdv = @()
+    if ($obj -and $obj.next) { $legacyAdv = @($obj.next) }
+    elseif ($obj -and $obj.advisories) { $legacyAdv = @($obj.advisories) }
+    foreach ($n in $legacyAdv) {
+        if (-not $n) { continue }
+        $nid = $(try { [string]$n.id } catch { '' })
+        if ($nid -and $seenNext.ContainsKey($nid)) { continue }
+        if ($nid) { $seenNext[$nid] = $true }
+        try { $n | Add-Member -NotePropertyName bucket -NotePropertyValue 'next' -Force } catch {}
+        $next.Add($n)
+    }
+    if ($obj -and $obj.later) {
+        foreach ($n in @($obj.later)) {
+            if (-not $n) { continue }
+            $nid = $(try { [string]$n.id } catch { '' })
+            if ($nid -and $seenLater.ContainsKey($nid)) { continue }
+            if ($nid) { $seenLater[$nid] = $true }
+            try { $n | Add-Member -NotePropertyName bucket -NotePropertyValue 'later' -Force } catch {}
+            $later.Add($n)
+        }
+    }
+    foreach ($pb in @(Get-PanelBucketFindings -Panel $Panel -Bucket 'next')) {
+        $nid = [string]$pb.id
+        if ($nid -and ($seenNext.ContainsKey($nid) -or $seenIds.ContainsKey($nid))) { continue }
+        if ($nid) { $seenNext[$nid] = $true }
+        $next.Add($pb)
+    }
+    foreach ($pb in @(Get-PanelBucketFindings -Panel $Panel -Bucket 'later')) {
+        $nid = [string]$pb.id
+        if ($nid -and ($seenLater.ContainsKey($nid) -or $seenNext.ContainsKey($nid) -or $seenIds.ContainsKey($nid))) { continue }
+        if ($nid) { $seenLater[$nid] = $true }
+        $later.Add($pb)
+    }
+    if ($blockers.Count -gt 0) {
+        $verdict = 'BLOCK'
+    } elseif ($next.Count -gt 0) {
+        $verdict = 'APPROVE_WITH_CHANGES'
+    } elseif ($later.Count -gt 0 -and $verdict -eq 'STRONG_APPROVE') {
+        $verdict = 'APPROVE'
+    } elseif ($next.Count -eq 0 -and $blockers.Count -eq 0 -and $verdict -eq 'APPROVE_WITH_CHANGES') {
+        $verdict = 'APPROVE'
+    }
+    if ($obj) {
+        try { $obj | Add-Member -NotePropertyName next -NotePropertyValue @($next) -Force } catch {}
+        try { $obj | Add-Member -NotePropertyName later -NotePropertyValue @($later) -Force } catch {}
+        try { $obj | Add-Member -NotePropertyName advisories -NotePropertyValue @($next) -Force } catch {}
+    }
+    return @{ Ok = $true; Verdict = $verdict; Result = $obj; Text = $r.Text; Blockers = @($blockers); Next = @($next); Later = @($later); Seconds = $r.Seconds }
 }
 
 function Invoke-Fixer {
@@ -1549,17 +1732,25 @@ function Write-ArbiterSummary($arb) {
         Write-Host "Rationale: $($arb.Result.rationale)" -ForegroundColor Gray
     }
     $bs = @($arb.Blockers)
-    $as = @()
-    if ($arb.Result -and $arb.Result.advisories) { $as = @($arb.Result.advisories) }
-    Write-Host "Blockers: $($bs.Count)  Advisories: $($as.Count)" -ForegroundColor Cyan
+    $ns = @()
+    $ls = @()
+    if ($arb.Next) { $ns = @($arb.Next) }
+    elseif ($arb.Result -and $arb.Result.next) { $ns = @($arb.Result.next) }
+    elseif ($arb.Result -and $arb.Result.advisories) { $ns = @($arb.Result.advisories) }
+    if ($arb.Later) { $ls = @($arb.Later) }
+    elseif ($arb.Result -and $arb.Result.later) { $ls = @($arb.Result.later) }
+    Write-Host "Blockers: $($bs.Count)  Next: $($ns.Count)  Later: $($ls.Count)" -ForegroundColor Cyan
     if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-        $arbNow = 'Arbiter: {0} - {1} blocker(s), {2} advisory(ies)' -f $arb.Verdict, $bs.Count, $as.Count
-        Write-GateProgress ('arbiter {0}: {1} blocker(s), {2} advisory(ies)' -f $arb.Verdict, $bs.Count, $as.Count) -Now $arbNow -Phase 'arbiter'
+        $arbNow = 'Arbiter: {0} - {1} blocker(s), {2} next, {3} later' -f $arb.Verdict, $bs.Count, $ns.Count, $ls.Count
+        Write-GateProgress ('arbiter {0}: {1} blocker(s), {2} next, {3} later' -f $arb.Verdict, $bs.Count, $ns.Count, $ls.Count) -Now $arbNow -Phase 'arbiter'
         foreach ($b in $bs) {
             Write-GateProgress ("  BLOCKER $($b.id) $($b.title)")
         }
-        foreach ($a in @($as | Select-Object -First 6)) {
-            Write-GateProgress ("  advisory $($a.id) $($a.title)")
+        foreach ($a in @($ns | Select-Object -First 6)) {
+            Write-GateProgress ("  NEXT $($a.id) $($a.title)")
+        }
+        foreach ($a in @($ls | Select-Object -First 4)) {
+            Write-GateProgress ("  LATER $($a.id) $($a.title)")
         }
     }
     foreach ($b in $bs) {
@@ -1568,8 +1759,11 @@ function Write-ArbiterSummary($arb) {
         if ($b.detail) { Write-Host "            $($b.detail)" -ForegroundColor DarkRed }
         if ($b.fix_hint) { Write-Host "            fix: $($b.fix_hint)" -ForegroundColor Yellow }
     }
-    foreach ($a in $as) {
-        Write-Host "  [advisory] $($a.id) - $($a.title)" -ForegroundColor DarkYellow
+    foreach ($a in $ns) {
+        Write-Host "  [next] $($a.id) - $($a.title)" -ForegroundColor Yellow
+    }
+    foreach ($a in $ls) {
+        Write-Host "  [later] $($a.id) - $($a.title)" -ForegroundColor DarkYellow
     }
     if ($arb.Result -and $arb.Result.disputes_resolved) {
         foreach ($d in @($arb.Result.disputes_resolved)) {
@@ -1722,6 +1916,8 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
         verdict     = ''
         rationale   = ''
         blockers    = @()
+        next        = @()
+        later       = @()
         advisories  = @()
         disputes    = @()
         fixerOk     = $null
@@ -1758,7 +1954,12 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     $roundRec.verdict = $arb.Verdict
     if ($arb.Result -and $arb.Result.rationale) { $roundRec.rationale = [string]$arb.Result.rationale }
     $roundRec.blockers = @($arb.Blockers)
-    if ($arb.Result -and $arb.Result.advisories) { $roundRec.advisories = @($arb.Result.advisories) }
+    if ($arb.Next) { $roundRec.next = @($arb.Next) }
+    elseif ($arb.Result -and $arb.Result.next) { $roundRec.next = @($arb.Result.next) }
+    elseif ($arb.Result -and $arb.Result.advisories) { $roundRec.next = @($arb.Result.advisories) }
+    if ($arb.Later) { $roundRec.later = @($arb.Later) }
+    elseif ($arb.Result -and $arb.Result.later) { $roundRec.later = @($arb.Result.later) }
+    $roundRec.advisories = @($roundRec.next)
     if ($arb.Result -and $arb.Result.disputes_resolved) { $roundRec.disputes = @($arb.Result.disputes_resolved) }
 
     $passVotes = @('STRONG_APPROVE', 'APPROVE', 'APPROVE_WITH_CHANGES')
@@ -1774,19 +1975,27 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
         $cwdNow = ''
         try { $cwdNow = (Get-Location).Path } catch { $cwdNow = [string]$script:GateCwd }
         if (Get-Command Save-GateOpenAdvisories -ErrorAction SilentlyContinue) {
-            $advNow = @()
-            if ($arb.Result -and $arb.Result.advisories) { $advNow = @($arb.Result.advisories) }
-            Save-GateOpenAdvisories -Items $advNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow
+            $ledgerNow = @()
+            if ($arb.Next) { $ledgerNow += @($arb.Next) }
+            elseif ($arb.Result -and $arb.Result.next) { $ledgerNow += @($arb.Result.next) }
+            elseif ($arb.Result -and $arb.Result.advisories) { $ledgerNow += @($arb.Result.advisories) }
+            if ($arb.Later) { $ledgerNow += @($arb.Later) }
+            elseif ($arb.Result -and $arb.Result.later) { $ledgerNow += @($arb.Result.later) }
+            Save-GateOpenAdvisories -Items $ledgerNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow
         }
-        if ($arb.Result -and @($arb.Result.advisories).Count -gt 0) {
-            Write-Host "Advisories remain (non-blocking). Persisted for the next commit - not forgotten." -ForegroundColor Yellow
+        $nNext = @($(if ($arb.Next) { $arb.Next } else { @() })).Count
+        $nLater = @($(if ($arb.Later) { $arb.Later } else { @() })).Count
+        if ($nNext -gt 0) {
+            Write-Host "Next remain (non-blocking this SHA). Must fix in the next commit." -ForegroundColor Yellow
+        }
+        if ($nLater -gt 0) {
+            Write-Host ("Later backlog: {0} (not blocking; doctor lists)." -f $nLater) -ForegroundColor DarkYellow
         }
         Write-Host "Artifacts: $WorkDir" -ForegroundColor DarkGray
-        $nAdv = @($arb.Result.advisories).Count
         $nBlk = @($arb.Blockers).Count
         $fixNote = if ($round -gt 1) { 'after auto-fix + re-review' } else { 'no auto-fix needed' }
         if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
-            Write-GateDone -Passed -Summary ("{0} in {1}s; {2} blocker(s), {3} advisory(ies); {4}" -f $arb.Verdict, $elapsed, $nBlk, $nAdv, $fixNote)
+            Write-GateDone -Passed -Summary ("{0} in {1}s; {2} blocker(s), {3} next, {4} later; {5}" -f $arb.Verdict, $elapsed, $nBlk, $nNext, $nLater, $fixNote)
         }
         Exit-Gate -Code 0
     }

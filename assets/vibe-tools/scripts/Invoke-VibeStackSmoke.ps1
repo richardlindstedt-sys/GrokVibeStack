@@ -425,10 +425,10 @@ if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function
 }
 $chatLibSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-chat-lib.ps1') -Raw -ErrorAction SilentlyContinue
 $ctxSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-review-context.ps1') -Raw -ErrorAction SilentlyContinue
-if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN ADVISORIES' -and $chatLibSrc -match 'must fix in the next commit' -and $ctxSrc -match 'PRIOR OPEN ADVISORIES' -and $ctxSrc -match 'function Get-PriorOpenAdvisoriesBlock') {
-    Ok 'gate advisories: persist + inject + next-review brief (not forgotten)'
+if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'function Get-GateFindingBucket' -and $progSrc -match 'later-cap' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $rawReview -match 'blocker\|next\|later' -and $rawReview -match 'Get-FindingBucket' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN NEXT' -and $chatLibSrc -match 'LATER backlog' -and $ctxSrc -match 'PRIOR OPEN NEXT' -and $ctxSrc -match 'PRIOR LATER BACKLOG' -and $ctxSrc -match 'function Get-PriorOpenAdvisoriesBlock') {
+    Ok 'gate ledger: blocker/next/later persist + inject + next-review brief'
 } else {
-    Bad 'gate advisories missing persist/inject/review-brief'
+    Bad 'gate ledger missing three-bucket persist/inject/review-brief'
 }
 if ($progSrc -match 'Pre-commit inherit' -and $progSrc -match '\$script:GatePid = \$PID') {
     Ok 'gate inherit: review process takes RUN PID (Stop keep-alive)'
@@ -621,10 +621,11 @@ try {
         Remove-Item -LiteralPath $waitDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree') {
-    Ok 'review: schema cache + intent/blast + token estimate + worktree fixer'
+$schemaSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-schema.ps1') -Raw
+if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree' -and $schemaSrc -match 'GATE_SCHEMA_VERSION = 4') {
+    Ok 'review: schema 4 cache + intent/blast + token estimate + worktree fixer'
 } else {
-    Bad 'review missing schema/intent/tokens/worktree wiring'
+    Bad 'review missing schema 4 / intent / tokens / worktree wiring'
 }
 if ($prePushSrc -match 'Get-VibePushReviewPlan' -and $prePushSrc -match 'TAG:' -and $prePushSrc -match 'Get-TagCommitDiff') {
     Ok 'pre-push: version-tag strict + single-commit tag diff'
@@ -665,10 +666,15 @@ if ($instSrc -notmatch 'maxSavingsProfile') {
     Bad 'installer still has unused maxSavingsProfile'
 }
 $startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
-if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'ProxyStackFingerprint' -and $startSrc -match 'Save-ProxyFingerprint' -and $startSrc -match 'require the flag pair') {
-    Ok 'start-grok: proxy fingerprint / stale restart'
+if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'Get-ProxyStackFingerprintBase' -and $startSrc -match 'Save-ProxyFingerprint' -and $startSrc -match 'require the flag pair' -and $startSrc -match 'function Test-ProxyCommandLineIsHeadroom') {
+    Ok 'start-grok: proxy fingerprint / stale restart (loose stop match)'
 } else {
-    Bad 'start-grok missing proxy fingerprint checks'
+    Bad 'start-grok missing proxy fingerprint / loose stop match'
+}
+if ($startSrc -match 'function Get-HeadroomCliVersion' -and $startSrc -match 'function Test-ProxyHttpReady' -and $startSrc -match 'function Resolve-HeadroomUpstream' -and $startSrc -match 'cli-chat-proxy\.grok\.com' -and $startSrc -match 'v3\|hr=' -and $startSrc -match '--no-http2' -and $startSrc -match '--no-rate-limit' -and $startSrc -match '/readyz' -and $startSrc -match 'Remove-Item Env:HEADROOM_READ_MATURATION') {
+    Ok 'start-grok: headroom version fingerprint + /readyz + clear read-maturation env'
+} else {
+    Bad 'start-grok missing hr version fingerprint / readyz / read-maturation env clear'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
 if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv') {
@@ -676,11 +682,27 @@ if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'head
 } else {
     Bad 'doctor missing live proxy cmdline/fingerprint'
 }
-$snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
-if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6') {
-    Ok 'config: quoted grok-4.6 / grok-4.6-direct tables'
+if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '0\.36' -and $docSrc -match '--no-http2' -and $docSrc -match 'env_key') {
+    Ok 'doctor: hr v3 fingerprint + readyz + env_key warn'
 } else {
-    Bad 'config-snippet missing quoted model tables (unquoted dotted ids are ignored)'
+    Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
+}
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry') {
+    Ok 'review: proxy HTTP ready + hatch retry on stream fail'
+} else {
+    Bad 'review missing proxy HTTP ready / hatch retry'
+}
+$hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
+if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
+    Ok 'reqs: headroom-ai[proxy] >= 0.36.0 + tokenizers pin'
+} else {
+    Bad 'reqs missing headroom-ai[proxy] >= 0.36.0 / tokenizers pin'
+}
+$snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
+if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
+    Ok 'config: quoted grok-4.6 tables, no env_key (session auth)'
+} else {
+    Bad 'config-snippet missing quoted model tables or still has env_key'
 }
 if ($snip -match 'Optional off' -and $snip -match 'enabled = true') {
     Ok 'config: Headroom MCP default on, optional off documented'
@@ -735,14 +757,41 @@ default = "grok-4.6"
     # Strip-miss: table not in Get-VibeOwnedTomlSections. Merge must keep last
     # (snippet), not first (stale). Assert snippet command, not only Test-VibeToml.Ok.
     $preMiss = $pre + "`n`n[mcp_servers.untracked]`ncommand = 'stale-stub'`n"
-    $snipMiss = $snippetText.TrimEnd() + "`n`n[mcp_servers.untracked]`ncommand = 'C:\hr.cmd'`n"
-    $mergedMiss = Merge-VibeToml -Raw $preMiss -Snippet $snipMiss
+    $mergedMiss = Merge-VibeToml -Raw $preMiss -Snippet $snippetText
     $missCheck = Test-VibeToml -Raw $mergedMiss
     $untracked = @([regex]::Matches($mergedMiss, '(?m)^\s*\[mcp_servers\.untracked\]\s*$'))
-    if ($missCheck.Ok -and $untracked.Count -eq 1 -and ($mergedMiss -match '(?s)\[mcp_servers\.untracked\].*?command = ''C:\\hr\.cmd''') -and ($mergedMiss -notmatch 'stale-stub')) {
-        Ok 'config merge: snippet wins when strip misses a table'
+    if ($missCheck.Ok -and $untracked.Count -eq 1 -and ($mergedMiss -match 'stale-stub')) {
+        Ok 'config merge: user custom MCP table kept once (not overwritten, not duplicated)'
     } else {
-        Bad ("config merge strip-miss did not keep snippet tables={0} ok={1}" -f $untracked.Count, $missCheck.Ok)
+        Bad ("config merge custom MCP tables={0} ok={1}" -f $untracked.Count, $missCheck.Ok)
+    }
+    $userPre = @"
+[marketplace]
+default_skills_installs_purged = true
+
+[ui]
+permission_mode = "always-approve"
+max_thoughts_width = 120
+
+[features]
+telemetry = false
+two_pass_compaction = false
+
+[mcp_servers]
+headroom = { command = 'stale-inline', enabled = true }
+
+[mcp_servers.headroom]
+command = 'also-stale'
+enabled = true
+"@
+    $mergedUser = Merge-VibeToml -Raw $userPre -Snippet $snippetText
+    $userCheck = Test-VibeToml -Raw $mergedUser
+    $hrHits = @([regex]::Matches($mergedUser, '(?m)^\s*\[mcp_servers\.headroom\]\s*$'))
+    $parentHr = [bool]($mergedUser -match '(?s)\[mcp_servers\][^\[]*headroom\s*=')
+    if ($userCheck.Ok -and ($mergedUser -match 'permission_mode = "always-approve"') -and ($mergedUser -match 'telemetry = false') -and ($mergedUser -match 'default_skills_installs_purged') -and ($mergedUser -match 'two_pass_compaction = true') -and $hrHits.Count -eq 1 -and (-not $parentHr) -and ($mergedUser -notmatch 'stale-inline') -and ($mergedUser -notmatch 'also-stale')) {
+        Ok 'config merge: keeps user ui/marketplace/features; stack keys win; no parent+dotted duplicate key'
+    } else {
+        Bad ("config merge user-preserve/dup-key ok={0} err={1} hrTables={2} parentHr={3}" -f $userCheck.Ok, ($userCheck.Errors -join '; '), $hrHits.Count, $parentHr)
     }
     $stubToml = Test-VibeToml -Raw "[cli]`ninstaller = `"internal`"`n"
     if (-not $stubToml.Ok -and -not $stubToml.HasHeadroomOverride) {
@@ -768,16 +817,16 @@ default = "grok-4.6"
         [System.IO.File]::WriteAllText($livePath, $stack)
         [System.IO.File]::WriteAllText($bakPath, $stack)
         $fromOk = Resolve-VibeConfigMergeSource -ConfigPath $livePath
-        if ($fromOk.SourcePath -eq $livePath -and -not $fromOk.SidecarPath -and (Test-Path -LiteralPath $bakPath)) {
-            Ok 'config source: valid live leaves leftover bak unused'
+        if ($fromOk.SourcePath -eq $livePath -and (Test-Path -LiteralPath $bakPath)) {
+            Ok 'config source: valid live is merge input (leftover bak not read)'
         } else {
-            Bad ("config source valid+bak should keep live and not mark sidecar source={0} sidecar={1}" -f $fromOk.SourcePath, $fromOk.SidecarPath)
+            Bad ("config source valid+bak should keep live source={0}" -f $fromOk.SourcePath)
         }
         $weakBak = "[cli]`nnote = `"see 127.0.0.1:8787`"`n"
         [System.IO.File]::WriteAllText($livePath, $stub)
         [System.IO.File]::WriteAllText($bakPath, $weakBak)
         $fromWeak = Resolve-VibeConfigMergeSource -ConfigPath $livePath
-        if ($fromWeak.SourcePath -eq $livePath -and -not $fromWeak.SidecarPath) {
+        if ($fromWeak.SourcePath -eq $livePath) {
             Ok 'config source: 8787-only bak is not stack'
         } else {
             Bad ("config source weak bak should stay on live got source={0}" -f $fromWeak.SourcePath)
@@ -814,10 +863,25 @@ default = "grok-4.6"
             $threw = $true
         }
         $restored = Read-Utf8NoBomFile -Path $livePath
-        if ($threw -and $restored -match 'keep-me') {
-            Ok 'Confirm-VibeConfigWrite: invalid re-read restores backup then throws'
+        if ($threw -and $restored -notmatch 'keep-me' -and $restored -match 'broken') {
+            Ok 'Confirm-VibeConfigWrite: invalid stub backup is not restored'
         } else {
-            Bad ("restore-on-recheck threw={0} live={1}" -f $threw, $restored)
+            Bad ("no-restore-stub threw={0} live={1}" -f $threw, $restored)
+        }
+        $validExpect = $snippetText
+        Write-Utf8NoBomFile -Path $livePath -Content "[broken`n"
+        $threw2 = $false
+        try {
+            $null = Confirm-VibeConfigWrite -ConfigPath $livePath -BackupPath $restoreBak -ExpectedRaw $validExpect
+        } catch {
+            $threw2 = $true
+        }
+        $rewritten = Read-Utf8NoBomFile -Path $livePath
+        $rewrittenOk = [bool]((Test-VibeToml -Raw $rewritten).Ok)
+        if ($rewrittenOk -and $rewritten -match '127\.0\.0\.1:8787' -and -not $threw2) {
+            Ok 'Confirm-VibeConfigWrite: rewrites ExpectedRaw instead of restoring stub'
+        } else {
+            Bad ("expected-raw rewrite threw={0} ok={1}" -f $threw2, $rewrittenOk)
         }
         if ($restoreBak) { Remove-Item -LiteralPath $restoreBak -Force -ErrorAction SilentlyContinue }
     } finally {
@@ -844,10 +908,10 @@ if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Repair-GrokConfigFile'
     Bad 'installer merge no longer calls Repair-GrokConfigFile'
 }
 $tomlSrc = Get-Content -LiteralPath $tomlHelper -Raw
-if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'SidecarPath = \$null' -and $tomlSrc -match 'Confirm-VibeConfigWrite' -and $tomlSrc -match 'live file restored from backup') {
-    Ok 'GrokToml: repair throws on invalid merge; bak unused unless source; recheck restores backup'
+if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'Confirm-VibeConfigWrite' -and $tomlSrc -match 'ExpectedRaw' -and $tomlSrc -match 'Remove-VibeStackFromToml' -and $tomlSrc -match 'backup was not valid') {
+    Ok 'GrokToml: repair throws on invalid merge; confirm retries ExpectedRaw; no stub restore'
 } else {
-    Bad 'GrokToml missing throw-on-invalid, unused-sidecar, or restore-on-recheck'
+    Bad 'GrokToml missing throw-on-invalid, ExpectedRaw retry, or no-stub-restore'
 }
 if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile' -and $startSrc -match 'GrokToml\.ps1 missing' -and $startSrc -match 'HasHeadroomOverride' -and $startSrc -match 'if \(\$check\.HasHeadroomOverride -and \$check\.Ok\) \{ return \}') {
     Ok 'start-grok: config preflight + auto-repair + fail-closed helper + skip rewrite when Headroom Ok'

@@ -46,11 +46,12 @@ function Test-ProxyCommandLineMatchesStack([string]$cmdLine, [int]$port) {
     $needles = @(
         '--lossless',
         '--code-aware',
-        '--intercept-tool-results',
         '--target-ratio',
         '0.35',
         '--no-ccr-proactive-expansion',
-        '--read-maturation'
+        '--no-http2',
+        '--no-rate-limit',
+        '--openai-api-url'
     )
     foreach ($n in $needles) {
         if ($cmdLine -notlike "*$n*") { return $false }
@@ -122,11 +123,33 @@ Write-Host "HEADROOM_CONTEXT_TOOL: $(if ($env:HEADROOM_CONTEXT_TOOL) { $env:HEAD
 # --- Proxy ---
 Write-Host ""
 Write-Host "--- Proxy (Headroom :8787) ---" -ForegroundColor Cyan
+function Get-HeadroomCliVersion([string]$exe) {
+    if (-not $exe -or -not (Test-Path -LiteralPath $exe)) { return 'unknown' }
+    try {
+        $raw = & $exe -v 2>&1 | Out-String
+        if ($raw -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+    } catch {}
+    return 'unknown'
+}
+
 $proxyPort = 8787
 $proxyUp = Test-Port $proxyPort
 $proxyPidFile = Join-Path $grokHome 'token-saving\state\headroom-proxy.pid'
 $proxyFpFile = Join-Path $grokHome 'token-saving\state\headroom-proxy.fingerprint'
-$expectedFp = 'v1|mode=token|ratio=0.35|lossless|code-aware|intercept|read-maturation|no-ccr|port=8787'
+$hrVer = Get-HeadroomCliVersion $headroom
+$upHost = 'cli-chat-proxy.grok.com'
+if ($env:OPENAI_TARGET_API_URL) {
+    try { $upHost = ([Uri]$env:OPENAI_TARGET_API_URL).Host } catch { $upHost = 'unknown' }
+} elseif ($env:XAI_API_KEY) {
+    $upHost = 'api.x.ai'
+}
+$expectedFp = ('v3|hr={0}|mode=token|ratio=0.35|lossless|code-aware|no-ccr|no-http2|no-rl|up={1}|port=8787' -f $hrVer, $upHost)
+if ($hrVer -match '^0\.(\d+)\.') {
+    $hrMinor = [int]$Matches[1]
+    if ($hrMinor -lt 36) {
+        Write-Host "  WARN: headroom $hrVer 502s Grok /v1/responses SSE (TUI Retrying). Need >= 0.36.0" -ForegroundColor Yellow
+    }
+}
 $fpOnDisk = $null
 if (Test-Path -LiteralPath $proxyFpFile) {
     $fpOnDisk = (Get-Content -LiteralPath $proxyFpFile -Raw -ErrorAction SilentlyContinue).Trim()
@@ -187,6 +210,14 @@ if ($proxyUp) {
         Write-Host "  fix:    start-grok   (restarts mismatched proxy)" -ForegroundColor Yellow
     } else {
         Write-Host "  tip:    start-grok keeps proxy + PATH; stop with stop-grok-proxy" -ForegroundColor DarkGray
+    }
+    $ready = $false
+    try {
+        $h = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}/readyz" -f $proxyPort) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        $ready = ($h.StatusCode -ge 200 -and $h.StatusCode -lt 300)
+        Write-Host ("  http:    {0} /readyz" -f $h.StatusCode) -ForegroundColor (Get-StatusColor $ready)
+    } catch {
+        Write-Host "  http:    /readyz FAILED" -ForegroundColor Yellow
     }
 } else {
     Write-Host "  status: DOWN" -ForegroundColor Yellow
@@ -318,7 +349,7 @@ if (Test-Path -LiteralPath $cfg) {
             $cfgTxt = Read-Utf8NoBomFile -Path $cfg
             $cfgCheck = Test-VibeToml -Raw ([string]$cfgTxt)
             if ($cfgCheck.Ok) {
-                Write-Host '  parse: ok (Headroom grok-4.6 override, no duplicate tables)' -ForegroundColor Green
+                Write-Host '  parse: ok (Headroom grok-4.6 override, no duplicate keys/tables)' -ForegroundColor Green
             } else {
                 Write-Host ('  ERROR: {0}' -f ($cfgCheck.Errors -join '; ')) -ForegroundColor Red
                 Write-Host '        start-grok auto-repairs this; or re-run Install-GrokVibeStack.ps1' -ForegroundColor Yellow
@@ -346,7 +377,13 @@ if (Test-Path -LiteralPath $cfg) {
     }
     $effort = [regex]::Match([string]$cfgTxt, "default_reasoning_effort\s*=\s*`"([^`"]+)`"")
     if ($effort.Success) {
-        Write-Host ("  default_reasoning_effort: {0}" -f $effort.Groups[1].Value)
+        Write-Host ("  default_reasoning_effort: {0} (interactive chat; gates force high)" -f $effort.Groups[1].Value)
+    }
+    if ($cfgTxt -match '(?s)\[model\."grok-4\.6"\].{0,400}env_key') {
+        Write-Host '  WARN: [model."grok-4.6"] still has env_key. Unset XAI_API_KEY => TUI waits forever. Re-run installer or start-grok repair.' -ForegroundColor Yellow
+    }
+    if ($cfgTxt -match '(?m)^\s*default\s*=\s*"grok-4\.6-direct"') {
+        Write-Host '  WARN: [models].default is grok-4.6-direct (proxy bypassed). Switch to grok-4.6 after start-grok.' -ForegroundColor Yellow
     }
     $hrMcp = [regex]::Match([string]$cfgTxt, '(?s)\[mcp_servers\.headroom\].*?enabled\s*=\s*(true|false)')
     if ($hrMcp.Success) {
@@ -379,7 +416,7 @@ Write-Host ""
 Write-Host "Max stack:"
 Write-Host '  caveman: ultra (chat output)'
 Write-Host '  rtk:     prefix noisy shell (git/test/build/docker/gh/...)'
-Write-Host '  proxy:   mode=token lossless code-aware intercept target-ratio=0.35 read-maturation no-ccr'
+Write-Host '  proxy:   mode=token lossless code-aware target-ratio=0.35 no-ccr'
 Write-Host '  mcp:     max_output_bytes=20000 (config)'
 Write-Host '  compact: 55% + two-pass'
 Write-Host '  gates:   profiles fast|standard|strict; AI fail-closed; reports under vibe-tools/reports'
@@ -388,6 +425,29 @@ Write-Host 'Skills: caveman + token-save under ~/.grok/skills'
 Write-Host 'Rules:  caveman.md + token-efficiency.md + rtk.md under ~/.grok/rules'
 Write-Host 'RTK.md: ~/.grok/RTK.md'
 Write-Host 'MCP:    mcp_servers.headroom enabled=true by default; optional off in ~/.grok/config.toml'
+$ledgerPath = Join-Path $reportsRoot 'gate-open-advisories.json'
+if (Test-Path -LiteralPath $ledgerPath) {
+    try {
+        $led = Get-Content -LiteralPath $ledgerPath -Raw -Encoding utf8 | ConvertFrom-Json
+        $open = @($led.items | Where-Object { $_ -and [string]$_.status -ne 'resolved' })
+        $nextN = @($open | Where-Object {
+                $b = [string]$_.bucket
+                if (-not $b) { $b = [string]$_.severity }
+                $b -eq 'next' -or $b -eq 'advisory' -or -not $b
+            }).Count
+        $laterN = @($open | Where-Object { [string]$_.bucket -eq 'later' }).Count
+        Write-Host ("Ledger:  {0} next (must-fix next commit), {1} later (backlog)  {2}" -f $nextN, $laterN, $ledgerPath)
+        foreach ($row in @($open | Select-Object -First 8)) {
+            $bk = [string]$row.bucket
+            if (-not $bk) { $bk = 'next' }
+            Write-Host ("         [{0}] {1}  {2}" -f $bk, $row.id, $row.title)
+        }
+    } catch {
+        Write-Host "Ledger:  unreadable $ledgerPath" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host 'Ledger:  (none)'
+}
 Write-Host 'Launch: start-grok (or start-grok -Status)'
 Write-Host 'Hooks:  new sessions auto-load; reload only if Grok was open during install (/hooks r)'
 Write-Host 'Smoke:  Invoke-VibeStackSmoke.ps1 (no AI spend)'

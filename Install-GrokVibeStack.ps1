@@ -1146,7 +1146,7 @@ function Test-StackHealth {
             $cfgRaw = Read-Utf8NoBomFile -Path $cfgHealth
             $cfgCheck = Test-VibeToml -Raw $cfgRaw
             if ($cfgCheck.Ok) {
-                Write-Ok "check config.toml parse (Headroom override present, no duplicate tables)"
+                Write-Ok "check config.toml parse (Headroom override present, no duplicate keys/tables)"
             } else {
                 Write-Fail ("check config.toml: {0}" -f ($cfgCheck.Errors -join '; '))
                 $bad++

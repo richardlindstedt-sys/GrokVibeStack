@@ -54,7 +54,8 @@ function Format-GateOpenAdvisoriesInject {
             return $ocn -eq $want
         })
     if ($open.Count -eq 0) { return '' }
-    $lines = foreach ($a in $open) {
+    $fmt = {
+        param($a)
         $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
         $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
         if ($id.Length -gt 80) { $id = $id.Substring(0, 80) }
@@ -63,8 +64,26 @@ function Format-GateOpenAdvisoriesInject {
         if ($loc.Length -gt 120) { $loc = $loc.Substring(0, 120) }
         "- $id$loc - $title"
     }
-    return (@(
-            'OPEN ADVISORIES (must fix in the next commit; do not drop or wait for auto-fix - there is none):'
-            $lines
-        ) -join "`n")
+    $isLater = {
+        param($a)
+        $b = [string]$a.bucket
+        if (-not $b) { $b = [string]$a.severity }
+        return ($b -eq 'later')
+    }
+    $next = @($open | Where-Object { -not (& $isLater $_) })
+    $later = @($open | Where-Object { & $isLater $_ })
+    $out = [System.Collections.Generic.List[string]]::new()
+    if ($next.Count -gt 0) {
+        [void]$out.Add('OPEN NEXT (must fix in this commit; do not drop or wait for auto-fix - there is none):')
+        foreach ($a in $next) { [void]$out.Add((& $fmt $a)) }
+    }
+    if ($later.Count -gt 0) {
+        [void]$out.Add(("LATER backlog ({0} items, not blocking; doctor lists; fix when cheap):" -f $later.Count))
+        foreach ($a in @($later | Select-Object -First 5)) { [void]$out.Add((& $fmt $a)) }
+        if ($later.Count -gt 5) {
+            [void]$out.Add(('- ... {0} more later (see doctor / gate-open-advisories.json)' -f ($later.Count - 5)))
+        }
+    }
+    if ($out.Count -eq 0) { return '' }
+    return ($out -join "`n")
 }

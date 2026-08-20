@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-20
+
+### Fixed
+
+- Headroom `grok-4.6` no longer requires `XAI_API_KEY`. Session login (`auth.json`) is forwarded to `cli-chat-proxy.grok.com` like `grok-4.6-direct`. Missing env_key + `api.x.ai` was a 401; the TUI sat on "waiting for response"
+- Proxy starts with `--no-http2` (Grok SSE cancel + HTTP/2 hangs) and `--no-rate-limit` (default 60rpm stalled tool-heavy turns)
+- Fingerprint **v3** includes upstream host so `start-grok` restarts a stale api.x.ai proxy
+- Gate reviewers retry once on `grok-4.6-direct` if Headroom dies mid-stream (`reqwest` to `:8787`). Preflight-up then crash no longer fail-closes the panel with empty votes
+
+### Changed
+
+- Gate findings are three buckets: **blocker** (this SHA), **next** (ledger, must fix next commit), **later** (ledger only, doctor lists, cap 40 per cwd). Legacy `advisory` maps to `next`. Schema **4**
+- Reviewer prompts hunt common agent defects (fail-open, encoding, injection, unwired stubs, tests that do not assert) and vote AWC only for `next`
+
+## [1.4.14] - 2026-08-20
+
+### Fixed
+
+- `config.toml` merge is key-level for tables Grok/user share (`[session]`, `[features]`, `[mcp]`, `[models]`). Only stack keys are written. User `[ui]` / `[marketplace]` / `[privacy]` and extra keys in shared tables are kept. Reinstall no longer wipes `/settings`
+- Duplicate **keys** (not only duplicate table headers) fail validation: parent `[mcp_servers]` + `[mcp_servers.headroom]`, intra-table repeats, and Python `tomllib` when present. That is the parse error that made `grok.exe` refuse to start
+- `Confirm-VibeConfigWrite` rewrites the known-good merge on a raced re-read. It never restores a Headroom-less stub backup (that left grok unstartable and forced deleting every `config.toml`)
+- `start-grok` still auto-repairs after install on a clean home or an existing stack. Repair failure does not leave a file grok cannot parse
+- Uninstall strips stack keys/tables only — not the rest of `[session]` / `[features]` / `[mcp]` / `[models]`
+
+## [1.4.13] - 2026-08-20
+
+### Fixed
+
+- Headroom **0.36.0**: 0.35 returned 502 on buffered Grok `/v1/responses` SSE (TUI showed Retrying; direct model worked). Floor is `headroom-ai[proxy]>=0.36.0` with `tokenizers>=0.22.0,<=0.23.0` (0.36 refuses to start the proxy extra without them)
+- Proxy fingerprint includes the Headroom version so `start-grok` restarts after a pip upgrade instead of keeping the old 0.35 process
+- Dropped `--read-maturation` (beta) and `--intercept-tool-results` (canary) from the default proxy argv. Headroom 0.36 stable aborts on those flags. Also clears leftover `HEADROOM_READ_MATURATION` from the parent env
+- `start-grok` waits for `/readyz` (not just TCP listen). Gate preflight falls back to `grok-4.6-direct` if the proxy is up but not ready
+- `doctor` warns on Headroom < 0.36 and probes `/readyz`
+
 ## [1.4.12] - 2026-08-17
 
 ### Fixed

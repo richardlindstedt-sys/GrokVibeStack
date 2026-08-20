@@ -106,13 +106,31 @@ function Get-GateOpenAdvisoriesFile {
     Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
 }
 
+function Get-GateFindingBucket([object]$item) {
+    $s = ''
+    try { $s = ("$($item.bucket)").ToLowerInvariant().Trim() } catch { $s = '' }
+    if (-not $s) {
+        try { $s = ("$($item.severity)").ToLowerInvariant().Trim() } catch { $s = '' }
+    }
+    switch ($s) {
+        'blocker' { return 'blocker' }
+        'later' { return 'later' }
+        'next' { return 'next' }
+        'advisory' { return 'next' }
+        default { return 'next' }
+    }
+}
+
 function Save-GateOpenAdvisories {
-    # Hashtable merge by cwd+id (no ForEach-Object $hit). This cwd's ids in $Items
-    # stay open; this cwd's ids missing from $Items are marked resolved.
+    # Hashtable merge by cwd+id. This cwd's ids in $Items stay open with their
+    # bucket (next|later). This cwd's ids missing from $Items are marked resolved.
+    # Legacy rows with no bucket (old advisory) map to next.
+    # later is capped per cwd (oldest resolved); next is never capped.
     param(
         [object[]]$Items,
         [string]$RunId,
-        [string]$Cwd
+        [string]$Cwd,
+        [int]$LaterCap = 40
     )
     if (-not $Cwd) {
         try { $Cwd = (Get-Location).Path } catch { $Cwd = '' }
@@ -134,20 +152,32 @@ function Save-GateOpenAdvisories {
         $byKey[('{0}|{1}' -f $oc, $oid)] = $old
     }
     $seen = @{}
+    $nowIso = (Get-Date).ToString('o')
     foreach ($raw in @($Items | Where-Object { $_ })) {
         $id = [string]$raw.id
         if (-not $id) { $id = [string]$raw.title }
         if (-not $id) { continue }
+        $bucket = Get-GateFindingBucket $raw
+        if ($bucket -eq 'blocker') { continue }
+        if ($bucket -ne 'later') { $bucket = 'next' }
         $k = '{0}|{1}' -f $Cwd, $id
         $seen[$k] = $true
+        $opened = $nowIso
+        if ($byKey.ContainsKey($k)) {
+            $prevOpened = [string]$byKey[$k].opened
+            if ($prevOpened) { $opened = $prevOpened }
+        }
         $byKey[$k] = [pscustomobject]@{
-            cwd    = $Cwd
-            id     = $id
-            title  = [string]$raw.title
-            detail = [string]$raw.detail
-            file   = [string]$raw.file
-            run    = $RunId
-            status = 'open'
+            cwd     = $Cwd
+            id      = $id
+            title   = [string]$raw.title
+            detail  = [string]$raw.detail
+            file    = [string]$raw.file
+            run     = $RunId
+            bucket  = $bucket
+            status  = 'open'
+            opened  = $opened
+            updated = $nowIso
         }
     }
     foreach ($k in @($byKey.Keys)) {
@@ -155,6 +185,7 @@ function Save-GateOpenAdvisories {
         if ([string]$row.cwd -ne $Cwd) { continue }
         if ($seen.ContainsKey($k)) { continue }
         if ([string]$row.status -eq 'resolved') { continue }
+        $oldBucket = Get-GateFindingBucket $row
         $byKey[$k] = [pscustomobject]@{
             cwd         = [string]$row.cwd
             id          = [string]$row.id
@@ -162,8 +193,36 @@ function Save-GateOpenAdvisories {
             detail      = [string]$row.detail
             file        = [string]$row.file
             run         = [string]$row.run
+            bucket      = $(if ($oldBucket -eq 'later') { 'later' } else { 'next' })
             status      = 'resolved'
+            opened      = [string]$row.opened
             resolvedRun = $RunId
+            updated     = $nowIso
+        }
+    }
+    if ($LaterCap -gt 0) {
+        $laterOpen = @($byKey.GetEnumerator() | Where-Object {
+                $r = $_.Value
+                ([string]$r.cwd -eq $Cwd) -and ([string]$r.status -ne 'resolved') -and ((Get-GateFindingBucket $r) -eq 'later')
+            } | Sort-Object { [string]$_.Value.opened }, { [string]$_.Value.id })
+        $overflow = $laterOpen.Count - $LaterCap
+        if ($overflow -gt 0) {
+            foreach ($entry in @($laterOpen | Select-Object -First $overflow)) {
+                $r = $entry.Value
+                $byKey[$entry.Key] = [pscustomobject]@{
+                    cwd         = [string]$r.cwd
+                    id          = [string]$r.id
+                    title       = [string]$r.title
+                    detail      = [string]$r.detail
+                    file        = [string]$r.file
+                    run         = [string]$r.run
+                    bucket      = 'later'
+                    status      = 'resolved'
+                    opened      = [string]$r.opened
+                    resolvedRun = 'later-cap'
+                    updated     = $nowIso
+                }
+            }
         }
     }
     $dir = Split-Path $path -Parent
@@ -171,7 +230,7 @@ function Save-GateOpenAdvisories {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
     $doc = [pscustomobject]@{
-        updated = (Get-Date).ToString('o')
+        updated = $nowIso
         items   = @($byKey.Values)
     }
     $json = $doc | ConvertTo-Json -Depth 6

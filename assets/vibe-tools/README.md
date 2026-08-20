@@ -1,6 +1,6 @@
 ﻿# Grok Build - Vibe Coding Tools & Self-Review
 
-High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** argues severity, an **arbiter** decides blockers vs advisories, and a **fix → re-review loop** runs until clean (or max rounds).
+High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** argues bucket (`blocker` / `next` / `later`), an **arbiter** decides, and a **fix → re-review loop** runs until blockers are gone (or max rounds).
 
 ## Installed Tools
 - Trivy           → vulns, secrets, misconfigs, SAST (`trivy fs .`)
@@ -50,7 +50,7 @@ Env: `VIBE_GATE_PROFILE`, `VIBE_GATE_NO_CACHE=1`.
 ```text
 static scans
     → reviewer panel (profile roles; parallel unless Sequential/fast)
-    → arbiter merges findings, resolves blocker vs advisory disputes
+    → arbiter merges findings, resolves blocker vs next vs later
     → if blockers: implementer fixes → re-stage → re-review (until max rounds)
     → pass only on APPROVE / STRONG_APPROVE / APPROVE_WITH_CHANGES
     → write reports/ + update diff-hash pass cache
