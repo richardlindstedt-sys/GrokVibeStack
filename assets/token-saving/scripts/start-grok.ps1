@@ -100,7 +100,6 @@ function Test-PortListening([int]$p) {
         $client = New-Object System.Net.Sockets.TcpClient
         $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
         if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
-        try { $client.EndConnect($iar) } catch { return $false }
         return [bool]$client.Connected
     } catch { return $false }
     finally {
@@ -546,7 +545,7 @@ function Start-HeadroomProxyIfNeeded {
     if (Test-PortListening $Port) {
         if (Test-ProxyMatchesStack) {
             $proxyPid = Get-ProxyPid
-            if (Test-ProxyHttpReady $Port) {
+            if (Test-PortListening $Port) {
                 Write-Ok "Headroom proxy already up on port $Port$(if ($proxyPid) { " (pid $proxyPid)" }) [fingerprint ok]."
                 return
             }
@@ -679,7 +678,7 @@ function Start-HeadroomProxyIfNeeded {
                 foreach ($op in $owners) {
                     $cl = Get-ProcessCommandLine $op
                     if (-not (Test-ProxyCommandLineIsHeadroom $cl)) { continue }
-                    if (Test-ProxyHttpReady $Port) {
+                    if (Test-PortListening $Port) {
                         try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
                         $adopted = $op
                         break
@@ -692,7 +691,7 @@ function Start-HeadroomProxyIfNeeded {
                 continue
             }
             Set-Content -Path $ProxyPidFile -Value $adopted -Encoding ascii -NoNewline
-            if (Test-ProxyHttpReady $Port) {
+            if (Test-PortListening $Port) {
                 Save-ProxyFingerprint
                 Write-Ok "Headroom proxy ready on http://127.0.0.1:$Port (pid $adopted)"
                 return

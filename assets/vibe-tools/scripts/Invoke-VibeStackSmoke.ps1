@@ -706,10 +706,10 @@ if ($startSrc -match 'function Get-ListenOwnerPids' -and $startSrc -match 'CIM H
 } else {
     Bad 'start-grok still uses Get-NetTCPConnection -LocalPort'
 }
-if ($startSrc -match 'Abortive close' -and $startSrc -match 'Client.Close\(0\)' -and $rawReview -match 'Client.Close\(0\)' -and $keepSrc -match 'Client.Close\(0\)') {
-    Ok 'tcp probe: abortive close so Close() cannot hang preflight'
+if ($startSrc -match 'Abortive close' -and $startSrc -match 'Client.Close\(0\)' -and $rawReview -match 'Client.Close\(0\)' -and $keepSrc -match 'Client.Close\(0\)' -and $startSrc -notmatch 'EndConnect' -and $rawReview -notmatch 'EndConnect') {
+    Ok 'tcp probe: abortive Close(0), no EndConnect hang'
 } else {
-    Bad 'tcp probe missing abortive Close(0) in start-grok / review / keeper'
+    Bad 'tcp probe missing Close(0) or still has EndConnect'
 }
 if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-ProxyOnly' -and $instSrc -match '-Quiet' -and $instSrc -notmatch '& \$startPs1 -ProxyOnly' -and $unSrc -notmatch '& \$startPs1 -StopProxy' -and $unSrc -match '-File., \$startPs1, .-StopProxy') {
     Ok 'install/uninstall: start-grok via powershell -File child (no & exit suicide)'

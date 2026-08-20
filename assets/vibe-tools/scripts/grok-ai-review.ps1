@@ -337,7 +337,6 @@ function Test-PortListening([int]$p) {
         $client = New-Object System.Net.Sockets.TcpClient
         $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
         if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
-        try { $client.EndConnect($iar) } catch { return $false }
         return [bool]$client.Connected
     } catch { return $false }
     finally {
