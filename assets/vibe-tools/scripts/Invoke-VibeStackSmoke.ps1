@@ -712,10 +712,10 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4\.6-direct'" -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
-    Ok 'review: HTTP usable + hatch on sequential and Start-Job + ProxyPort + bucket + patch-length bump'
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4\.6'" -and $rawReview -match "usesHeadroom" -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
+    Ok 'review: Headroom grok-4.6 default + sequential on proxy + hatch to direct + ProxyPort + bucket + patch-length bump'
 } else {
-    Bad 'review missing proxy HTTP ready / parallel hatch / ProxyPort / bucket / patch-length bump'
+    Bad 'review missing Headroom default / sequential-on-proxy / hatch / ProxyPort / bucket / patch-length bump'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {

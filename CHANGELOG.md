@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-08-20
+
+### Fixed
+
+- AI gates default back to Headroom (`grok-4.6` on `:8787`). 1.5.1 sent every reviewer/arbiter/fixer to `grok-4.6-direct`, so the expensive path paid full tokens. Multi-role panels run **sequential** on Headroom (one SSE) so they do not kill the chat TUI. Hatch to `grok-4.6-direct` still runs if the proxy dies mid-stream. Pass `-Model grok-4.6-direct` for the old parallel-vanilla path.
+
 ## [1.5.1] - 2026-08-20
 
 ### Fixed

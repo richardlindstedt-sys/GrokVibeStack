@@ -26,7 +26,7 @@
 param(
     [switch]$NoScans,
     [string]$DiffOverride,
-    [string]$Model = 'grok-4.6-direct',
+    [string]$Model = 'grok-4.6',
     # Empty = use profile default (fast=medium, standard/strict=high)
     [string]$ReasoningEffort = '',
     [int]$ProxyPort = 8787,
@@ -261,12 +261,16 @@ if (-not $PSBoundParameters.ContainsKey('ReviewerMaxTurns')) {
 if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.NoFixDefault) {
     $NoFix = $true
 }
-if (-not $PSBoundParameters.ContainsKey('SequentialReviewers') -and $script:ResolvedProfile.SequentialDefault) {
-    $SequentialReviewers = $true
-}
-# Multi-role (e.g. fast + security on hook/install) must not serialize; NOW stays silent.
-if (-not $PSBoundParameters.ContainsKey('SequentialReviewers') -and @($script:ResolvedProfile.Roles).Count -gt 1) {
-    $SequentialReviewers = $false
+if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
+    $usesHeadroom = ($Model -match 'headroom|8787') -or ($Model -eq 'grok-4.6')
+    if ($usesHeadroom) {
+        # One SSE on :8787 so the chat TUI is not triple-hit. Still Headroom-compressed.
+        $SequentialReviewers = $true
+    } elseif ($script:ResolvedProfile.SequentialDefault) {
+        $SequentialReviewers = $true
+    } elseif (@($script:ResolvedProfile.Roles).Count -gt 1) {
+        $SequentialReviewers = $false
+    }
 }
 if ($script:PathAwareSensitive -and [string]$ReasoningEffort -eq 'medium') {
     $ReasoningEffort = 'high'
