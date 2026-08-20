@@ -28,7 +28,7 @@ git-filter-repo==2.47.0
 glom==25.12.0
 googleapis-common-protos==1.75.0
 h11==0.16.0
-h2==4.3.0
+h2==4.4.1
 headroom-ai==0.36.0
 hf-xet==1.6.0
 hpack==4.2.0
