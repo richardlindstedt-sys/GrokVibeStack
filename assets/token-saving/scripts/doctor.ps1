@@ -241,6 +241,42 @@ if (Test-Path -LiteralPath $keepPidFile) {
 }
 Write-Host ("  keeper: {0}" -f $(if ($keepUp) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })) -ForegroundColor (Get-StatusColor $keepUp)
 
+Write-Host ""
+Write-Host "--- Gate proxy (Headroom :8788 / grok-gate) ---" -ForegroundColor Cyan
+$gatePort = 8788
+$gateUp = Test-Port $gatePort
+$gatePidFile = Join-Path $grokHome 'token-saving\state\headroom-proxy-8788.pid'
+$gateKeepFile = Join-Path $grokHome 'token-saving\state\headroom-keeper-8788.pid'
+$gatePid = '-'
+if (Test-Path -LiteralPath $gatePidFile) {
+    $gp = (Get-Content -LiteralPath $gatePidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($gp) { $gatePid = $gp }
+}
+$gateKeepUp = $false
+if (Test-Path -LiteralPath $gateKeepFile) {
+    $gkr = (Get-Content -LiteralPath $gateKeepFile -Raw -ErrorAction SilentlyContinue).Trim()
+    $gkid = 0
+    if ([int]::TryParse($gkr, [ref]$gkid) -and $gkid -gt 0) {
+        $gkp = Get-Process -Id $gkid -ErrorAction SilentlyContinue
+        $gkcl = Get-ProcessCommandLine $gkid
+        $gateKeepUp = [bool]($gkp -and $gkcl -and $gkcl -match 'keep-headroom-proxy')
+    }
+}
+if ($gateUp) {
+    Write-Host "  status: LISTENING" -ForegroundColor Green
+    Write-Host ("  pid:    {0}" -f $gatePid)
+    try {
+        $gh = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}/readyz" -f $gatePort) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        Write-Host ("  http:    {0} /readyz" -f $gh.StatusCode) -ForegroundColor (Get-StatusColor ($gh.StatusCode -ge 200 -and $gh.StatusCode -lt 300))
+    } catch {
+        Write-Host "  http:    /readyz FAILED" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  status: DOWN" -ForegroundColor Yellow
+    Write-Host "  fix:    start-grok -ProxyOnly -Port 8788 -NoLogonKeeper" -ForegroundColor Yellow
+}
+Write-Host ("  keeper: {0} (session only, no logon task)" -f $(if ($gateKeepUp) { 'up' } else { 'DOWN' })) -ForegroundColor (Get-StatusColor $gateKeepUp)
+
 # --- Session hooks ---
 Write-Host ""
 Write-Host "--- Session hooks (~/.grok/hooks) ---" -ForegroundColor Cyan
@@ -364,7 +400,7 @@ if (Test-Path -LiteralPath $cfg) {
             $cfgTxt = Read-Utf8NoBomFile -Path $cfg
             $cfgCheck = Test-VibeToml -Raw ([string]$cfgTxt)
             if ($cfgCheck.Ok) {
-                Write-Host '  parse: ok (Headroom grok-4.6 override, no duplicate keys/tables)' -ForegroundColor Green
+                Write-Host '  parse: ok (Headroom grok-4.6 :8787 + grok-gate :8788, no duplicate keys/tables)' -ForegroundColor Green
             } else {
                 Write-Host ('  ERROR: {0}' -f ($cfgCheck.Errors -join '; ')) -ForegroundColor Red
                 Write-Host '        start-grok auto-repairs this; or re-run Install-GrokVibeStack.ps1' -ForegroundColor Yellow
@@ -382,6 +418,12 @@ if (Test-Path -LiteralPath $cfg) {
     }
     if ($cfgTxt -match '127\.0\.0\.1:8787|grok-via-headroom' -and -not $proxyUp) {
         Write-Host '  WARN: default grok-4.6 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
+    }
+    if ($cfgTxt -match 'grok-gate|127\.0\.0\.1:8788' -and -not $gateUp) {
+        Write-Host '  WARN: grok-gate uses Headroom :8788 but that proxy is down. start-grok -ProxyOnly -Port 8788 -NoLogonKeeper' -ForegroundColor Yellow
+    }
+    if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.6"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-gate"\]') {
+        Write-Host '  WARN: missing [model."grok-gate"] (:8788). Re-run installer or start-grok to repair.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '(?m)^\s*\[model\.grok-4\.6(?:-direct)?\]\s*$') {
         Write-Host '  WARN: unquoted [model.grok-4.6*] is ignored by Grok 1.0.3 (nested table). Use [model."grok-4.6"] / [model."grok-4.6-direct"]. Re-run installer.' -ForegroundColor Yellow

@@ -42,6 +42,16 @@ api_backend = "responses"
 name = "Grok 4.6 + Headroom proxy (max savings)"
 description = "Grok 4.6 via local Headroom proxy port 8787 - max token compression profile"
 
+# Dedicated review proxy. Parallel 3-SSE on :8788 so chat on :8787 stays alive.
+# Hatch if this proxy dies is grok-4.6-direct (not grok-4.6, which is the chat proxy).
+[model."grok-gate"]
+model = "grok-4.6"
+base_url = "http://127.0.0.1:8788/v1"
+api_backend = "responses"
+name = "Grok 4.6 + Headroom (gate / reviews)"
+description = "Dedicated Headroom proxy port 8788 so commit/push reviews do not starve the chat TUI"
+context_window = 500000
+
 # Explicit alias (older sessions / start-grok -m grok-via-headroom)
 [model.grok-via-headroom]
 model = "grok-4.6"

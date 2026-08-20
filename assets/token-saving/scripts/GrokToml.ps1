@@ -19,6 +19,7 @@ function Get-VibeOwnedTomlSections {
         'session', 'features', 'mcp',
         'mcp_servers.headroom', 'mcp_servers.serena',
         'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+        'model."grok-gate"', 'model.grok-gate',
         'model."grok-4.6-direct"', 'model.grok-4.6-direct', 'models'
     )
 }
@@ -31,6 +32,7 @@ function Get-VibeStackOnlyTomlTables {
     return @(
         'mcp_servers.headroom', 'mcp_servers.serena',
         'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+        'model."grok-gate"', 'model.grok-gate',
         'model."grok-4.6-direct"', 'model.grok-4.6-direct'
     )
 }
@@ -38,7 +40,7 @@ function Get-VibeStackOnlyTomlTables {
 function Get-VibeCanonicalStackOnlyTomlTables {
     return @(
         'mcp_servers.headroom', 'mcp_servers.serena',
-        'model."grok-4.6"', 'model.grok-via-headroom', 'model."grok-4.6-direct"'
+        'model."grok-4.6"', 'model.grok-via-headroom', 'model."grok-gate"', 'model."grok-4.6-direct"'
     )
 }
 
@@ -54,7 +56,7 @@ function Get-VibeStackTomlKeys {
 function Get-VibeParentOwnedKeys {
     return @{
         mcp_servers = @('headroom', 'serena')
-        model       = @('grok-4.6', 'grok-via-headroom', 'grok-4.6-direct')
+        model       = @('grok-4.6', 'grok-via-headroom', 'grok-gate', 'grok-4.6-direct')
     }
 }
 
@@ -859,6 +861,7 @@ function Test-VibeToml {
     $collisions = @(Get-TomlPathCollisions -Raw $Raw)
     $strict = Test-TomlStrictParse -Raw $Raw
     $hasHr = [bool]($Raw -match '(?m)^\s*\[model\."grok-4\.6"\]\s*$' -and $Raw -match '127\.0\.0\.1:8787')
+    $hasGate = [bool]($Raw -match '(?m)^\s*\[model\."grok-gate"\]\s*$' -and $Raw -match '127\.0\.0\.1:8788')
     $errors = New-Object System.Collections.Generic.List[string]
     if ($dups.Count -gt 0) {
         [void]$errors.Add(('duplicate TOML tables: {0}' -f ($dups -join ', ')))
@@ -875,10 +878,14 @@ function Test-VibeToml {
     if (-not $hasHr) {
         [void]$errors.Add('missing quoted [model."grok-4.6"] Headroom override (127.0.0.1:8787)')
     }
+    if (-not $hasGate) {
+        [void]$errors.Add('missing quoted [model."grok-gate"] Headroom override (127.0.0.1:8788)')
+    }
     return @{
         Ok                   = ($errors.Count -eq 0)
         Duplicates           = $dups
         HasHeadroomOverride  = $hasHr
+        HasGateOverride      = $hasGate
         Errors               = $errors.ToArray()
     }
 }

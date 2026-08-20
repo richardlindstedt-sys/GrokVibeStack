@@ -696,26 +696,31 @@ if ($startSrc -match 'Disable-ScheduledTask' -and $startSrc -match "KeepPs1, '-P
 } else {
     Bad 'keeper stop/task/port/recover wiring missing'
 }
+if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$portTag' -and $startSrc -match 'Test-KeeperCommandLineForThisPort' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $startSrc -match 'Port -ne 8787') {
+    Ok 'start-grok: port-scoped pid/fp/keeper + NoLogonKeeper for gate :8788'
+} else {
+    Bad 'start-grok missing port-scoped state / NoLogonKeeper / keeper-per-port'
+}
 if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-ProxyOnly' -and $instSrc -match '-Quiet' -and $instSrc -notmatch '& \$startPs1 -ProxyOnly' -and $unSrc -notmatch '& \$startPs1 -StopProxy' -and $unSrc -match '-File., \$startPs1, .-StopProxy') {
     Ok 'install/uninstall: start-grok via powershell -File child (no & exit suicide)'
 } else {
     Bad 'install/uninstall still & start-grok (exit kills parent)'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
-if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv') {
-    Ok 'doctor: live proxy cmdline / fingerprint'
+if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate') {
+    Ok 'doctor: live proxy cmdline / fingerprint + gate :8788'
 } else {
-    Bad 'doctor missing live proxy cmdline/fingerprint'
+    Bad 'doctor missing live proxy cmdline/fingerprint / gate :8788'
 }
 if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '0\.36' -and $docSrc -match '--no-http2' -and $docSrc -match 'env_key') {
     Ok 'doctor: hr v3 fingerprint + readyz + env_key warn'
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4\.6'" -and $rawReview -match "usesHeadroom" -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
-    Ok 'review: Headroom grok-4.6 default + sequential on proxy + hatch to direct + ProxyPort + bucket + patch-length bump'
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'") {
+    Ok 'review: grok-gate :8788 parallel + sequential only on chat proxy + hatch to direct'
 } else {
-    Bad 'review missing Headroom default / sequential-on-proxy / hatch / ProxyPort / bucket / patch-length bump'
+    Bad 'review missing grok-gate default / sharesChatProxy / hatch / ProxyPort 8788'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
@@ -724,10 +729,10 @@ if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizer
     Bad 'reqs missing headroom-ai[proxy] >= 0.36.0 / tokenizers pin'
 }
 $snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
-if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
-    Ok 'config: quoted grok-4.6 tables, no env_key (session auth)'
+if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
+    Ok 'config: quoted grok-4.6 + grok-gate tables, no env_key (session auth)'
 } else {
-    Bad 'config-snippet missing quoted model tables or still has env_key'
+    Bad 'config-snippet missing quoted grok-4.6 / grok-gate tables or still has env_key'
 }
 if ($snip -match 'Optional off' -and $snip -match 'enabled = true') {
     Ok 'config: Headroom MCP default on, optional off documented'

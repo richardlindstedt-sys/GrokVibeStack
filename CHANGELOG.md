@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-08-20
+
+### Added
+
+- Dedicated Headroom for AI gates on **`:8788`** (`grok-gate`). Chat stays on **`:8787`** (`grok-4.6`). Reviews run **parallel** on the gate proxy (compressed + fast wall-clock) without starving the TUI. Hatch if `:8788` dies is still `grok-4.6-direct` (not the chat proxy). Session keeper for `:8788` only — **no logon task**. `start-grok` pid/fingerprint/keeper files are port-scoped (`headroom-proxy-8788.pid`); `:8787` keeps the legacy names.
+
+### Fixed
+
+- Gate preflight no longer `& start-grok` (that script's `exit 0` killed the review process). Spawns `powershell -File` and passes `-Port`.
+- `start-grok -StopProxy -Port 8788` no longer kills the chat keeper. Keeper mutex/task names are per-port.
+
 ## [1.5.2] - 2026-08-20
 
 ### Fixed

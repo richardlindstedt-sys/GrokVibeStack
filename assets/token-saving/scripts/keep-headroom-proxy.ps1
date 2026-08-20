@@ -24,9 +24,10 @@ $TokenRoot = Join-Path $GrokHome 'token-saving'
 $StateDir = Join-Path $TokenRoot 'state'
 $LogDir = Join-Path $TokenRoot 'logs'
 $StartPs1 = Join-Path $TokenRoot 'scripts\start-grok.ps1'
-$PidFile = Join-Path $StateDir 'headroom-keeper.pid'
-$LogFile = Join-Path $LogDir 'headroom-keeper.log'
-$MutexName = 'Local\GrokVibeHeadroomKeeper'
+$portTag = if ($Port -eq 8787) { '' } else { "-$Port" }
+$PidFile = Join-Path $StateDir "headroom-keeper$portTag.pid"
+$LogFile = Join-Path $LogDir "headroom-keeper$portTag.log"
+$MutexName = if ($Port -eq 8787) { 'Local\GrokVibeHeadroomKeeper' } else { "Local\GrokVibeHeadroomKeeper-$Port" }
 
 function Write-KeepLog([string]$msg) {
     $line = '{0} {1}' -f (Get-Date).ToString('o'), $msg

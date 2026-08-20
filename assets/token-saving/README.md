@@ -16,7 +16,7 @@ That will:
 1b. Serena MCP is installed by the stack installer (`ensure-serena.ps1`); Grok starts it from `config.toml`  
 
 2. Ensure caveman flag + PATH for Headroom tools  
-3. Start **Headroom proxy** on `127.0.0.1:8787` if not already running  
+3. Start **Headroom proxy** on `127.0.0.1:8787` (chat) if not already running. Gates use a second proxy on `:8788` (`grok-gate`).  
 4. Launch **Grok** with model `grok-4.6` (overridden to Headroom; traffic compressed)  
 5. Caveman rules + RTK rules + token hygiene + Headroom MCP still load from `~/.grok` as usual  
 
@@ -53,7 +53,7 @@ Shims live on PATH via `~/.grok/bin`:
 | hooks/token-saving.json | SessionStart + PostToolUse logging |
 | Headroom CLI + venv | Compression proxy + tools |
 | Headroom MCP | On-demand `headroom__*` tools. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on). |
-| grok-4.6 Headroom override | In config.toml quoted `[model."grok-4.6"]` (`grok-via-headroom` alias; `[model."grok-4.6-direct"]` = vanilla) |
+| grok-4.6 Headroom override | Chat: quoted `[model."grok-4.6"]` → `:8787`. Gates: `[model."grok-gate"]` → `:8788`. Vanilla: `[model."grok-4.6-direct"]` |
 
 ## Agent shell habit
 

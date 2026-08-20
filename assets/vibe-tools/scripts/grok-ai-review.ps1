@@ -26,10 +26,10 @@
 param(
     [switch]$NoScans,
     [string]$DiffOverride,
-    [string]$Model = 'grok-4.6',
+    [string]$Model = 'grok-gate',
     # Empty = use profile default (fast=medium, standard/strict=high)
     [string]$ReasoningEffort = '',
-    [int]$ProxyPort = 8787,
+    [int]$ProxyPort = 8788,
     # fast | standard | strict (default standard; push hook uses fast)
     # Named GateProfile (not Profile) — $Profile is a PowerShell automatic variable.
     [Alias('Profile')]
@@ -262,9 +262,10 @@ if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.No
     $NoFix = $true
 }
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
-    $usesHeadroom = ($Model -match 'headroom|8787') -or ($Model -eq 'grok-4.6')
-    if ($usesHeadroom) {
-        # One SSE on :8787 so the chat TUI is not triple-hit. Still Headroom-compressed.
+    # Chat Headroom (:8787 / grok-4.6) stays sequential so 3 SSE do not kill the TUI.
+    # Dedicated gate proxy (grok-gate :8788) is parallel + compressed.
+    $sharesChatProxy = ($ProxyPort -eq 8787) -or ($Model -eq 'grok-4.6') -or ($Model -eq 'grok-via-headroom') -or ($Model -match '8787')
+    if ($sharesChatProxy) {
         $SequentialReviewers = $true
     } elseif ($script:ResolvedProfile.SequentialDefault) {
         $SequentialReviewers = $true
@@ -388,13 +389,18 @@ function Test-ReviewPreflight {
     }
     $resolvedModel = $ModelName
     $hatch = 'grok-4.6-direct'
-    $needsProxy = ($ModelName -match 'headroom|8787') -or ($ModelName -eq 'grok-4.6')
+    $needsProxy = ($ModelName -match 'headroom|grok-gate|8787|8788') -or ($ModelName -eq 'grok-4.6')
     if ($needsProxy) {
         if (-not (Test-ProxyUsable $Port)) {
             $startGrok = Join-Path $env:USERPROFILE '.grok\token-saving\scripts\start-grok.ps1'
             if (Test-Path -LiteralPath $startGrok) {
-                Write-Host "Headroom proxy not ready on :$Port - starting via start-grok -ProxyOnly ..." -ForegroundColor Yellow
-                try { & $startGrok -ProxyOnly 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } } catch {}
+                Write-Host "Headroom proxy not ready on :$Port - starting via start-grok -ProxyOnly -Port $Port ..." -ForegroundColor Yellow
+                # start-grok uses `exit`; `&` would kill this gate process.
+                $sg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startGrok, '-ProxyOnly', '-Quiet', '-Port', "$Port")
+                if ($Port -ne 8787) { $sg += '-NoLogonKeeper' }
+                try {
+                    $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $sg -Wait -PassThru -WindowStyle Hidden
+                } catch {}
             }
         }
         if (-not (Test-ProxyUsable $Port)) {
@@ -641,7 +647,7 @@ function Invoke-GrokHeadless {
         [switch]$NoHatchRetry
     )
 
-    $needsProxy = ($ModelName -match 'headroom|8787') -or ($ModelName -eq 'grok-4.6')
+    $needsProxy = ($ModelName -match 'headroom|grok-gate|8787|8788') -or ($ModelName -eq 'grok-4.6')
     if ($needsProxy -and -not $NoHatchRetry -and -not (Test-ProxyUsable $ProxyPort) -and (Test-VanillaHatchEndpoint)) {
         Write-Host ("  proxy down - {0} using grok-4.6-direct" -f $Label) -ForegroundColor Yellow
         return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
@@ -1224,7 +1230,7 @@ function Invoke-ReviewerPanel {
                 $sw = [System.Diagnostics.Stopwatch]::StartNew()
                 try {
                     $r = Invoke-One $Model
-                    $needsProxy = ($Model -match 'headroom|8787') -or ($Model -eq 'grok-4.6')
+                    $needsProxy = ($Model -match 'headroom|grok-gate|8787|8788') -or ($Model -eq 'grok-4.6')
                     $ok = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
                     $proxyStreamFail = ($r.Text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $r.Text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
                     if ((-not $ok -or $proxyStreamFail) -and $needsProxy) {

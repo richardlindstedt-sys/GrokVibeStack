@@ -17,7 +17,7 @@
     npm globals (jscpd, markdownlint-cli, prettier, eslint, typescript)
     PS modules (PSScriptAnalyzer, Pester)
     Serena MCP (uv tool)
-    config.toml managed block (Headroom + Serena MCP, grok-4.6 via proxy + grok-4.6-direct)
+    config.toml managed block (Headroom + Serena MCP, grok-4.6 chat :8787 + grok-gate reviews :8788 + grok-4.6-direct)
     install manifest for Uninstall-GrokVibeStack.ps1
 
   Does NOT install or remove Grok Build itself. Does NOT write API keys.
@@ -467,6 +467,7 @@ function Stop-HeadroomServices {
     if (Test-Path -LiteralPath $startPs1) {
         Write-Info "Stopping Headroom proxy (unlock venv for pip)"
         try { Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-StopProxy') | Out-Null } catch {}
+        try { Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-StopProxy', '-Port', '8788') | Out-Null } catch {}
     } elseif (Test-Path -LiteralPath $stopShim) {
         try { & $stopShim 2>$null | Out-Null } catch {}
     }

@@ -16,7 +16,7 @@ user-invocable: true
 3. **Always-on rules** - `token-efficiency.md` + `caveman.md` + `rtk.md`.
 4. **Context hygiene** - grep before read; subagents for explore; no full-file dumps.
 5. **MCP cap** - large MCP results truncated (`[mcp] max_output_bytes=20000`).
-6. **Headroom proxy** (built-in `grok-4.6` override) - `--mode token --lossless --code-aware --target-ratio 0.35` + `--no-ccr-proactive-expansion`.
+6. **Headroom proxy** - chat `grok-4.6` on `:8787`; gates `grok-gate` on `:8788` (parallel). `--mode token --lossless --code-aware --target-ratio 0.35` + `--no-ccr-proactive-expansion`.
 7. **Headroom MCP** - `headroom__*` tools for on-demand compress/retrieve. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
 8. **Compaction** - **55%** auto + two-pass.
 
@@ -44,7 +44,7 @@ start-grok -StopProxy
 start-grok -NoProxy        # caveman + rtk + MCP only (no proxy)
 ```
 
-Default `grok-4.6` is overridden to the Headroom proxy on `127.0.0.1:8787`. Use `start-grok` (not bare `grok`) for normal sessions. Vanilla: `start-grok -m grok-4.6-direct`.
+Default `grok-4.6` is overridden to the Headroom proxy on `127.0.0.1:8787` (chat). Gates use `grok-gate` on `:8788`. Use `start-grok` (not bare `grok`) for normal sessions. Vanilla: `start-grok -m grok-4.6-direct`.
 
 Proxy logs: `~/.grok/token-saving/logs/headroom-proxy.*`  
 RTK binary: `~/.grok/bin/rtk.exe` (ensure: `token-saving/scripts/ensure-rtk.ps1`)

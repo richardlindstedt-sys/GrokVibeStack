@@ -10,7 +10,9 @@
     start-grok -m grok-4.6-direct     # vanilla Grok 4.6, no Headroom proxy
     start-grok -NoProxy               # skip Headroom proxy (MCP + rtk + caveman only)
     start-grok -ProxyOnly             # only ensure proxy is up, do not launch grok
+    start-grok -ProxyOnly -Port 8788 -NoLogonKeeper  # dedicated review proxy
     start-grok -StopProxy             # stop keeper + Headroom proxy and exit
+    start-grok -StopProxy -Port 8788  # stop the review proxy only (chat :8787 stays)
     start-grok -Status                # print stack status and exit
 #>
 [CmdletBinding()]
@@ -18,6 +20,7 @@ param(
     [switch]$NoProxy,
     [switch]$ProxyOnly,
     [switch]$StopProxy,
+    [switch]$NoLogonKeeper,  # session keeper only (gate :8788 never registers a logon task)
     [switch]$Status,
     [switch]$Quiet,
     [switch]$NoOutputShaper,   # deprecated/ignored (kept for compat)
@@ -41,13 +44,15 @@ $HeadroomBin   = Join-Path $env:USERPROFILE '.headroom\bin'
 $EnsureRtkPs1  = Join-Path $TokenRoot 'scripts\ensure-rtk.ps1'
 $StateDir      = Join-Path $TokenRoot 'state'
 $LogDir        = Join-Path $TokenRoot 'logs'
-$ProxyPidFile  = Join-Path $StateDir 'headroom-proxy.pid'
-$ProxyFpFile   = Join-Path $StateDir 'headroom-proxy.fingerprint'
-$KeeperPidFile = Join-Path $StateDir 'headroom-keeper.pid'
+# :8787 keeps legacy names so existing chat keepers still find the files.
+$portTag = if ($Port -eq 8787) { '' } else { "-$Port" }
+$ProxyPidFile  = Join-Path $StateDir "headroom-proxy$portTag.pid"
+$ProxyFpFile   = Join-Path $StateDir "headroom-proxy$portTag.fingerprint"
+$KeeperPidFile = Join-Path $StateDir "headroom-keeper$portTag.pid"
 $KeepPs1       = Join-Path $TokenRoot 'scripts\keep-headroom-proxy.ps1'
-$ProxyLog      = Join-Path $LogDir 'headroom-proxy.log'
-$ProxyErrLog   = Join-Path $LogDir 'headroom-proxy.err.log'
-$KeeperTask    = 'GrokVibeStack-HeadroomKeeper'
+$ProxyLog      = Join-Path $LogDir "headroom-proxy$portTag.log"
+$ProxyErrLog   = Join-Path $LogDir "headroom-proxy$portTag.err.log"
+$KeeperTask    = if ($Port -eq 8787) { 'GrokVibeStack-HeadroomKeeper' } else { "GrokVibeStack-HeadroomKeeper-$Port" }
 $CavemanFlag   = Join-Path $GrokHome '.caveman-active'
 $GrokTomlPs1   = Join-Path $TokenRoot 'scripts\GrokToml.ps1'
 if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
@@ -352,6 +357,13 @@ function Test-ProxyMatchesStack {
     return $false
 }
 
+function Test-KeeperCommandLineForThisPort([string]$cl) {
+    if (-not $cl -or $cl -notmatch 'keep-headroom-proxy') { return $false }
+    if ($cl -match ("-Port\s+$Port(?!\d)")) { return $true }
+    if ($Port -eq 8787 -and $cl -notmatch '-Port\s+\d+') { return $true }
+    return $false
+}
+
 function Test-HeadroomKeeperRunning {
     if (-not (Test-Path -LiteralPath $KeeperPidFile)) { return $false }
     $raw = (Get-Content $KeeperPidFile -Raw -ErrorAction SilentlyContinue).Trim()
@@ -359,21 +371,22 @@ function Test-HeadroomKeeperRunning {
     if (-not [int]::TryParse($raw, [ref]$kid) -or $kid -le 0) { return $false }
     $proc = Get-Process -Id $kid -ErrorAction SilentlyContinue
     if (-not $proc) { return $false }
-    $cl = Get-ProcessCommandLine $kid
-    return ($cl -and $cl -match 'keep-headroom-proxy')
+    return (Test-KeeperCommandLineForThisPort (Get-ProcessCommandLine $kid))
 }
 
 function Stop-HeadroomKeeper {
-    try {
-        Disable-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue | Out-Null
-    } catch {}
+    # Never disable or kill the other port's keeper (chat :8787 vs gate :8788).
+    if ($Port -eq 8787) {
+        try {
+            Disable-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue | Out-Null
+        } catch {}
+    }
     if (Test-Path -LiteralPath $KeeperPidFile) {
         $raw = (Get-Content $KeeperPidFile -Raw -ErrorAction SilentlyContinue).Trim()
         $kid = 0
         if ([int]::TryParse($raw, [ref]$kid) -and $kid -gt 0) {
-            $cl = Get-ProcessCommandLine $kid
-            if ($cl -and $cl -match 'keep-headroom-proxy') {
-                Write-Info "Stopping Headroom keeper PID $kid ..."
+            if (Test-KeeperCommandLineForThisPort (Get-ProcessCommandLine $kid)) {
+                Write-Info "Stopping Headroom keeper PID $kid (port $Port) ..."
                 Stop-Process -Id $kid -Force -ErrorAction SilentlyContinue
             }
         }
@@ -381,12 +394,14 @@ function Stop-HeadroomKeeper {
     }
     try {
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -and $_.CommandLine -match 'keep-headroom-proxy\.ps1' } |
+            Where-Object { Test-KeeperCommandLineForThisPort $_.CommandLine } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     } catch {}
 }
 
 function Register-HeadroomKeeperTask {
+    # Chat proxy only. A logon task for :8788 would fight the chat keeper and clobber nothing useful.
+    if ($NoLogonKeeper -or $Port -ne 8787) { return }
     if (-not (Test-Path -LiteralPath $KeepPs1)) { return }
     try {
         $arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Port {1}' -f $KeepPs1, $Port
@@ -488,7 +503,7 @@ function Show-Status {
     if ((Test-Path -LiteralPath $cfgPath) -and (Test-GrokTomlHelperLoaded)) {
         $cfgCheck = Test-VibeToml -Raw (Read-Utf8NoBomFile -Path $cfgPath)
         if ($cfgCheck.Ok) {
-            $cfgLine = 'ok (quoted grok-4.6 -> Headroom :8787, no duplicate tables)'
+            $cfgLine = 'ok (quoted grok-4.6 -> :8787, grok-gate -> :8788, no duplicate tables)'
         } else {
             $cfgLine = ('INVALID: {0}' -f ($cfgCheck.Errors -join '; '))
         }
@@ -497,7 +512,8 @@ function Show-Status {
     }
     Write-Host "config.toml:  $cfgLine"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
-    Write-Host "model:        grok-4.6 (Headroom override) -> http://127.0.0.1:$Port/v1"
+    $modelHint = if ($Port -eq 8787) { 'grok-4.6 (chat Headroom)' } else { 'grok-gate (review Headroom)' }
+    Write-Host "model:        $modelHint -> http://127.0.0.1:$Port/v1"
     Write-Host "upstream:     $(Resolve-HeadroomUpstream)"
     Write-Host "proxy flags:  token + lossless + code-aware + ratio 0.35 + no-http2 + no-rate-limit"
     Write-Host "keeper:       $(if (Test-HeadroomKeeperRunning) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })"

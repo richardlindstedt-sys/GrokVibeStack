@@ -157,8 +157,12 @@ function Stop-HeadroomProxy {
     if ($DryRun) { Write-Info "DRY stop proxy"; return }
     if (Test-Path -LiteralPath $startPs1) {
         try {
-            $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startPs1, '-StopProxy')
-            $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden
+            foreach ($stopArg in @(
+                @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startPs1, '-StopProxy'),
+                @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startPs1, '-StopProxy', '-Port', '8788')
+            )) {
+                $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $stopArg -Wait -PassThru -WindowStyle Hidden
+            }
         } catch {}
     } elseif (Test-Path -LiteralPath $stopShim) {
         try { & $stopShim 2>$null | Out-Null } catch {}
@@ -168,9 +172,13 @@ function Stop-HeadroomProxy {
     } catch {}
     # Never Stop-Process by raw PID file — Windows may have reused it.
     # start-grok -StopProxy already verified image/cmdline; just drop a leftover marker.
-    $pidFile = Join-Path $GrokHome 'token-saving\state\headroom-proxy.pid'
-    if (Test-Path -LiteralPath $pidFile) {
-        Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    $stateDir = Join-Path $GrokHome 'token-saving\state'
+    foreach ($name in @('headroom-proxy.pid', 'headroom-proxy.fingerprint', 'headroom-keeper.pid',
+        'headroom-proxy-8788.pid', 'headroom-proxy-8788.fingerprint', 'headroom-keeper-8788.pid')) {
+        $pidFile = Join-Path $stateDir $name
+        if (Test-Path -LiteralPath $pidFile) {
+            Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+        }
     }
     Write-Do "Headroom proxy stop attempted"
 }
@@ -230,6 +238,7 @@ function Remove-ManagedConfigBlock {
         $stackTables = @(
             'mcp_servers.headroom', 'mcp_servers.serena',
             'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+            'model."grok-gate"', 'model.grok-gate',
             'model."grok-4.6-direct"', 'model.grok-4.6-direct'
         )
         if (Get-Command Remove-TomlSections -ErrorAction SilentlyContinue) {
