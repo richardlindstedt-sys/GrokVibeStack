@@ -701,10 +701,25 @@ if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$port
 } else {
     Bad 'start-grok missing port-scoped state / NoLogonKeeper / keeper-per-port'
 }
+if ($startSrc -match 'function Get-ListenOwnerPids' -and $startSrc -match 'CIM Headroom' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
+    Ok 'start-grok: CIM Headroom owners (no Get-NetTCPConnection hang)'
+} else {
+    Bad 'start-grok still uses Get-NetTCPConnection -LocalPort'
+}
+if ($startSrc -match 'Abortive close' -and $startSrc -match 'Client.Close\(0\)' -and $rawReview -match 'Client.Close\(0\)' -and $keepSrc -match 'Client.Close\(0\)') {
+    Ok 'tcp probe: abortive close so Close() cannot hang preflight'
+} else {
+    Bad 'tcp probe missing abortive Close(0) in start-grok / review / keeper'
+}
 if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-ProxyOnly' -and $instSrc -match '-Quiet' -and $instSrc -notmatch '& \$startPs1 -ProxyOnly' -and $unSrc -notmatch '& \$startPs1 -StopProxy' -and $unSrc -match '-File., \$startPs1, .-StopProxy') {
     Ok 'install/uninstall: start-grok via powershell -File child (no & exit suicide)'
 } else {
     Bad 'install/uninstall still & start-grok (exit kills parent)'
+}
+if ($instSrc -match "-Port', '8788', '-NoLogonKeeper'" -and $instSrc -match 'grok-gate on :8788') {
+    Ok 'installer: starts gate :8788 NoLogonKeeper; next-steps document grok-gate'
+} else {
+    Bad 'installer missing gate :8788 start / grok-gate next-steps'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
 if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate') {

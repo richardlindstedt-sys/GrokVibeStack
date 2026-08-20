@@ -8,7 +8,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Gate Headroom was not crashing. `/readyz` **blocks** while the proxy compresses concurrent `/v1/responses` SSE. The keeper and `start-grok -ProxyOnly` treated that as dead and **killed the live process**, which hung reviewers. Liveness is TCP connect (400ms). `/readyz` fail on a stack-matched proxy is left alone. Gate preflight treats listen as up. **Do not call `Get-NetTCPConnection` on the hot path** — it can block for minutes and freeze preflight.
+- Gate Headroom was not crashing. `/readyz` **blocks** while the proxy compresses concurrent `/v1/responses` SSE. The keeper and `start-grok -ProxyOnly` treated that as dead and **killed the live process**, which hung reviewers. Liveness is **TCP connect (400ms)** in keeper, `start-grok`, and `grok-ai-review`. `/readyz` fail on a stack-matched proxy is left alone. Gate preflight treats listen as usable. **Do not call `Get-NetTCPConnection` on the hot path** — it can block for minutes and freeze preflight. `start-grok` finds owners via CIM Headroom `--port N` (headroom/python/pythonw), not TCP-table queries. TcpClient uses **abortive close** (`LingerOption` + `Client.Close(0)`) so `Close()` cannot hang preflight on a half-open connect.
+
+### Changed
+
+- Installer starts chat Headroom `:8787` and gate Headroom `:8788` (`-NoLogonKeeper`). Next-steps document `grok-gate`. Do not restart `:8788` while a panel is streaming.
 
 ## [1.5.3] - 2026-08-20
 

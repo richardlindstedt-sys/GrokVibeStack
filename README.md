@@ -60,9 +60,11 @@ cd GrokVibeStack
 Set-ExecutionPolicy -Scope Process Bypass
 .\Install-GrokVibeStack.ps1
 
-# 3) New terminal (PATH refresh), start proxy + Grok
+# 3) New terminal (PATH refresh), start chat proxy + Grok
 start-grok -Status
 start-grok
+# Gates: grok-ai-review starts :8788 (grok-gate). Manual:
+# start-grok -ProxyOnly -Port 8788 -NoLogonKeeper
 
 # 4) Only if Grok was ALREADY open during install: reload hooks once
 #    In TUI:  /hooks  then press  r
@@ -127,8 +129,8 @@ How the pieces talk after install:
                                                │
                     ┌──────────────────────────┼──────────────────┐
                     ▼                          ▼                  ▼
-             static scanners            Headroom proxy      ~/.grok reports
-             (local CLIs)               → model API         + caches
+             static scanners            Headroom :8787 chat ~/.grok reports
+             (local CLIs)               :8788 grok-gate     + caches
 ```
 
 Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **tokens** (slim rules, RTK, Headroom, caveman, compact).
@@ -243,7 +245,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 ### After install
 
 1. Open a **new** terminal (PATH refresh).  
-2. `start-grok` (starts Headroom; built-in `grok-4.6` is routed through the proxy). Vanilla: `start-grok -m grok-4.6-direct`.  
+2. `start-grok` (chat Headroom `:8787`; built-in `grok-4.6` goes through the proxy). Vanilla: `start-grok -m grok-4.6-direct`.  
+   Gates use **`grok-gate` on `:8788`** (parallel, session keeper only, no logon task). Installer starts both. Manual: `start-grok -ProxyOnly -Port 8788 -NoLogonKeeper`.  
+   Liveness is **TCP connect (400ms)**. `/readyz` blocks during SSE — do **not** restart `:8788` because HTTP looks down.
 3. **Grok session hooks** (`~\.grok\hooks\*.json`) load automatically on **new** Grok sessions.  
    - If Grok was **already running** while you installed or changed hooks: either restart Grok, **or** once run `/hooks` then `r` in that session.  
    - You do **not** need `/hooks` + `r` at the start of every session.
@@ -272,14 +276,15 @@ Optional aggressive flags (read script help first): `-RemoveWingetPackages`, `-R
 ## Day-to-day commands
 
 ```powershell
-start-grok                          # proxy + Grok
+start-grok                          # chat Headroom :8787 + Grok (grok-4.6)
 start-grok -Status
+start-grok -ProxyOnly -Port 8788 -NoLogonKeeper   # review Headroom (grok-gate); gates also start this
 doctor                              # or full path under token-saving\scripts\doctor.ps1
 vibe-review                         # full scans + standard AI gate on current diff
 & ...\scripts\run-vibe-scans.ps1    # scanners only
 ```
 
-Doctor shows: Headroom proxy up/down plus live cmdline + fingerprint vs this stack, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report.
+Doctor shows: chat `:8787` + gate `:8788` up/down plus live cmdline + fingerprint vs this stack, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report. **Do not kill `:8788` while reviewers stream** — `/readyz` hang ≠ crash.
 
 **Watch commit/push gates in this chat.** The agent backgrounds `git commit`/`git push` and starts `watch-gate-now.ps1 -Monitor`. Chat stays quiet until something new happens (scan result, vote, arbiter, fixer file, `GATE DONE`). Waiting ticks and "no new votes" never appear. First line of `gate-now.txt` is `RUN:` — ignore leftover `GATE DONE` until that new RUN appears. After the last gate of the pair the agent kills the watch. No extra window.
 

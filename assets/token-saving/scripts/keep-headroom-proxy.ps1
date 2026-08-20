@@ -50,9 +50,16 @@ function Test-ProxyAlive([int]$p) {
         $client = New-Object System.Net.Sockets.TcpClient
         $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
         if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
+        try { $client.EndConnect($iar) } catch { return $false }
         return [bool]$client.Connected
     } catch { return $false }
-    finally { if ($client) { try { $client.Close() } catch {} } }
+    finally {
+        if ($client) {
+            try { $client.LingerState = New-Object System.Net.Sockets.LingerOption($true, 0) } catch {}
+            try { if ($client.Client) { $client.Client.Close(0) } } catch {}
+            try { $client.Close() } catch {}
+        }
+    }
 }
 
 function Start-ProxyChild([int]$p) {

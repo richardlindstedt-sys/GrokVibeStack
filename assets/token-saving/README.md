@@ -23,15 +23,18 @@ That will:
 ### Useful flags
 
 ```text
-start-grok -Status          # show stack status
-start-grok -ProxyOnly       # proxy + keeper (auto-restart if Headroom dies)
-start-grok -StopProxy       # stop keeper + proxy (disables logon task)
+start-grok -Status          # show stack status (default port :8787)
+start-grok -ProxyOnly       # chat proxy + logon keeper (auto-restart if Headroom dies)
+start-grok -ProxyOnly -Port 8788 -NoLogonKeeper   # gate proxy (grok-gate); no logon task
+start-grok -StopProxy       # stop keeper + proxy on this port (disables logon task on :8787)
 start-grok -NoProxy         # skip proxy; caveman + rtk + MCP only
 start-grok -SkipRtk         # skip ensure-rtk (not recommended)
 start-grok --help           # whatever you pass after still goes to grok if not a start-grok switch
 start-grok -m grok-build    # pass through to grok (skips default model inject if -m present)
 start-grok -m grok-4.6-direct  # vanilla Grok 4.6, no Headroom
 ```
+
+Liveness is TCP connect (400ms). `/readyz` blocks during SSE — do not treat HTTP fail as a dead proxy. Do not restart `:8788` while a review panel is running.
 
 Also: `stop-grok-proxy` (same as `start-grok -StopProxy`).
 

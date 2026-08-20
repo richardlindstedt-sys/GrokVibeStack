@@ -331,14 +331,22 @@ function Write-Phase([string]$msg) {
 function Test-PortListening([int]$p) {
     # TcpClient 400ms only. Get-NetTCPConnection can block for minutes (this
     # preflight hung the 1.5.4 commit). Do not call it on the gate hot path.
+    # Abortive close: TcpClient.Close() can hang forever on a half-open connect.
     $client = $null
     try {
         $client = New-Object System.Net.Sockets.TcpClient
         $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-        $ok = $iar.AsyncWaitHandle.WaitOne(400)
-        return [bool]($ok -and $client.Connected)
+        if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
+        try { $client.EndConnect($iar) } catch { return $false }
+        return [bool]$client.Connected
     } catch { return $false }
-    finally { if ($client) { try { $client.Close() } catch {} } }
+    finally {
+        if ($client) {
+            try { $client.LingerState = New-Object System.Net.Sockets.LingerOption($true, 0) } catch {}
+            try { if ($client.Client) { $client.Client.Close(0) } } catch {}
+            try { $client.Close() } catch {}
+        }
+    }
 }
 
 function Test-ProxyHttpReady([int]$p) {

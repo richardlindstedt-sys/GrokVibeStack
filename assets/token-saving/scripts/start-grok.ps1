@@ -94,14 +94,22 @@ function Get-HeadroomUpstreamHost {
 
 function Test-PortListening([int]$p) {
     # TcpClient 400ms. Get-NetTCPConnection can block for minutes on this box.
+    # Abortive close: TcpClient.Close() can hang forever on a half-open connect.
     $client = $null
     try {
         $client = New-Object System.Net.Sockets.TcpClient
         $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-        $ok = $iar.AsyncWaitHandle.WaitOne(400)
-        return [bool]($ok -and $client.Connected)
+        if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
+        try { $client.EndConnect($iar) } catch { return $false }
+        return [bool]$client.Connected
     } catch { return $false }
-    finally { if ($client) { try { $client.Close() } catch {} } }
+    finally {
+        if ($client) {
+            try { $client.LingerState = New-Object System.Net.Sockets.LingerOption($true, 0) } catch {}
+            try { if ($client.Client) { $client.Client.Close(0) } } catch {}
+            try { $client.Close() } catch {}
+        }
+    }
 }
 
 function Get-ProxyPid {
@@ -225,13 +233,20 @@ function Get-ProcessCommandLine([int]$procId) {
 }
 
 function Get-ListenOwnerPids([int]$p) {
+    # CIM Headroom `--port N` (headroom/python/pythonw). Get-NetTCPConnection
+    # can block for minutes — never on this path.
     $owners = [System.Collections.Generic.List[int]]::new()
     try {
-        $conns = @(Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction Stop)
-        foreach ($c in $conns) {
-            if (-not $c.OwningProcess) { continue }
-            $op = [int]$c.OwningProcess
-            if ($op -gt 0 -and -not $owners.Contains($op)) { [void]$owners.Add($op) }
+        $filter = "Name = 'headroom.exe' OR Name = 'python.exe' OR Name = 'pythonw.exe'"
+        $procs = @(Get-CimInstance Win32_Process -Filter $filter -ErrorAction SilentlyContinue)
+        foreach ($w in $procs) {
+            $cl = [string]$w.CommandLine
+            if ([string]::IsNullOrWhiteSpace($cl)) { continue }
+            if ($cl -notmatch '(?i)headroom') { continue }
+            if ($cl -notmatch '(?i)(\s|^)proxy(\s|$)') { continue }
+            if ($cl -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $p)) { continue }
+            $id = [int]$w.ProcessId
+            if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
         }
     } catch {}
     return $owners
@@ -329,15 +344,14 @@ function Test-ProxyMatchesStack {
     }
 
     $ownerPids = [System.Collections.Generic.List[int]]::new()
-    try {
-        $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-        foreach ($c in $conns) {
-            if ($c.OwningProcess) {
-                $op = [int]$c.OwningProcess
-                if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
-            }
+    foreach ($op in @(Get-ListenOwnerPids $Port)) {
+        if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
+    }
+    if ($null -ne $recordedPid -and (Get-Process -Id $recordedPid -ErrorAction SilentlyContinue)) {
+        if (-not $ownerPids.Contains([int]$recordedPid)) {
+            $ownerPids.Insert(0, [int]$recordedPid)
         }
-    } catch {}
+    }
 
     if ($ownerPids.Count -eq 0) { return $false }
 
@@ -461,19 +475,15 @@ function Stop-HeadroomProxy {
         Stop-Process -Id $proxyPid -Force -ErrorAction SilentlyContinue
         $stopped = $true
     }
-    try {
-        $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-        foreach ($c in $conns) {
-            if (-not $c.OwningProcess) { continue }
-            $op = [int]$c.OwningProcess
-            # Loose Headroom argv — never kill a random python. Flag generation may be stale.
-            $cl = Get-ProcessCommandLine $op
-            if (Test-ProxyCommandLineIsHeadroom $cl) {
-                Stop-Process -Id $op -Force -ErrorAction SilentlyContinue
-                $stopped = $true
-            }
+    foreach ($op in @(Get-ListenOwnerPids $Port)) {
+        if ($proxyPid -and $op -eq [int]$proxyPid) { continue }
+        # Loose Headroom argv — never kill a random python. Flag generation may be stale.
+        $cl = Get-ProcessCommandLine $op
+        if (Test-ProxyCommandLineIsHeadroom $cl) {
+            Stop-Process -Id $op -Force -ErrorAction SilentlyContinue
+            $stopped = $true
         }
-    } catch {}
+    }
     Remove-Item $ProxyPidFile -Force -ErrorAction SilentlyContinue
     Remove-Item $ProxyFpFile -Force -ErrorAction SilentlyContinue
     if ($stopped) { Write-Ok "Proxy stopped." } else { Write-Warn "No Headroom proxy was running." }
