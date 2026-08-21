@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.5.5** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **1.5.6** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -44,7 +44,7 @@ GrokVibeStack/ (this repo)
 | Windows 10/11 | Primary supported OS |
 | Grok Build CLI | Installed and logged in; this repo does **not** ship `grok.exe` |
 | Network | winget / npm / pip / optional Serena on first install; AI gates need model access |
-| Headroom proxy | Chat: built-in `grok-4.6` → `127.0.0.1:8787`. Gates: `grok-gate` → `:8788` (parallel, no logon keeper). Vanilla hatch: `grok-4.6-direct` |
+| Headroom proxy | One proxy: `grok-4.6` → `127.0.0.1:8787`. Gates sequential on the same proxy. `grok-4.6-direct` only if `:8787` is down. |
 | Admin (sometimes) | winget package installs may prompt; user-scope PATH preferred |
 
 ---

@@ -1458,16 +1458,12 @@ if (-not $DryRun -and $hrOk) {
         try {
             $proxyCode = Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-ProxyOnly', '-Quiet')
             if ($proxyCode -eq 0) {
-                Write-Ok "Headroom chat proxy :8787 + keeper started"
+                Write-Ok "Headroom proxy :8787 + keeper started (one proxy; gates use grok-4.6 sequential)"
             } else {
                 Write-Warn2 ("proxy/keeper start exit {0}" -f $proxyCode)
             }
-            $gateCode = Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-ProxyOnly', '-Quiet', '-Port', '8788', '-NoLogonKeeper')
-            if ($gateCode -eq 0) {
-                Write-Ok "Headroom gate proxy :8788 (grok-gate, no logon keeper) started"
-            } else {
-                Write-Warn2 ("gate proxy :8788 start exit {0}" -f $gateCode)
-            }
+            # Dual :8788 fights the chat proxy. Stop a leftover gate instance if present.
+            try { Invoke-StartGrokChild -ScriptPath $startPs1 -GrokArgs @('-StopProxy', '-Port', '8788') -TimeoutSeconds 30 | Out-Null } catch {}
         } catch {
             Write-Warn2 "proxy/keeper start: $_"
         }
@@ -1505,10 +1501,8 @@ Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  1. Open a NEW terminal (PATH refresh)"
 Write-Host "  2. start-grok -Status"
-Write-Host "  3. start-grok   (chat Headroom :8787; grok-4.6). Vanilla: start-grok -m grok-4.6-direct"
-Write-Host "     Gates: grok-gate on :8788 (installer starts it; no logon keeper)."
-Write-Host "     Manual: start-grok -ProxyOnly -Port 8788 -NoLogonKeeper"
-Write-Host "     Do not restart :8788 because /readyz is slow - TCP listen = up."
+Write-Host "  3. start-grok   (one Headroom :8787; grok-4.6). Gates sequential on same proxy."
+Write-Host "     Emergency vanilla only if :8787 is down: start-grok -m grok-4.6-direct"
 Write-Host "  4. If Grok was already running: /hooks then r  (or restart Grok)"
 Write-Host "  5. Other projects:  & `"`$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1`" ."
 Write-Host "  6. Uninstall later:  .\Uninstall-GrokVibeStack.ps1"

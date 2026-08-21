@@ -26,10 +26,10 @@
 param(
     [switch]$NoScans,
     [string]$DiffOverride,
-    [string]$Model = 'grok-gate',
+    [string]$Model = 'grok-4.6',
     # Empty = use profile default (fast=medium, standard/strict=high)
     [string]$ReasoningEffort = '',
-    [int]$ProxyPort = 8788,
+    [int]$ProxyPort = 8787,
     # fast | standard | strict (default standard; push hook uses fast)
     # Named GateProfile (not Profile) — $Profile is a PowerShell automatic variable.
     [Alias('Profile')]
@@ -262,8 +262,7 @@ if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.No
     $NoFix = $true
 }
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
-    # Chat Headroom (:8787 / grok-4.6) stays sequential so 3 SSE do not kill the TUI.
-    # Dedicated gate proxy (grok-gate :8788) is parallel + compressed.
+    # One Headroom (:8787 / grok-4.6). Sequential so 3 SSE do not kill the TUI.
     $sharesChatProxy = ($ProxyPort -eq 8787) -or ($Model -eq 'grok-4.6') -or ($Model -eq 'grok-via-headroom') -or ($Model -match '8787')
     if ($sharesChatProxy) {
         $SequentialReviewers = $true
@@ -767,12 +766,12 @@ function Invoke-GrokHeadless {
     } catch {}
     $ok = ($code -eq 0 -or $null -eq $code) -and -not [string]::IsNullOrWhiteSpace($text)
     $proxyStreamFail = ($text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
-    if ((-not $ok -or $proxyStreamFail) -and -not $NoHatchRetry -and $needsProxy -and (Test-VanillaHatchEndpoint)) {
-        Write-Host ("  proxy stream failed - retry {0} on grok-4.6-direct" -f $Label) -ForegroundColor Yellow
+    if ((-not $ok -or $proxyStreamFail) -and -not $NoHatchRetry -and $needsProxy -and (Test-ProxyUsable $ProxyPort)) {
+        Write-Host ("  proxy stream failed - retry {0} on {1} (same Headroom)" -f $Label, $ModelName) -ForegroundColor Yellow
         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-            Write-GateProgress ("proxy stream fail - retry {0} on grok-4.6-direct" -f $Label)
+            Write-GateProgress ("proxy stream fail - retry {0} on {1}" -f $Label, $ModelName)
         }
-        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
     }
     return @{ Ok = $ok; Text = $text; ExitCode = $code; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
 }
@@ -1245,7 +1244,7 @@ function Invoke-ReviewerPanel {
                     $ok = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
                     $proxyStreamFail = ($r.Text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $r.Text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
                     if ((-not $ok -or $proxyStreamFail) -and $needsProxy) {
-                        $r = Invoke-One 'grok-4.6-direct'
+                        $r = Invoke-One $Model
                     }
                 } catch {
                     $sw.Stop()

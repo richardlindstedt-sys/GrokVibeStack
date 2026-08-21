@@ -716,10 +716,10 @@ if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-Prox
 } else {
     Bad 'install/uninstall still & start-grok or Start-Process -Wait (pwsh descendant hang)'
 }
-if ($instSrc -match "-Port', '8788', '-NoLogonKeeper'" -and $instSrc -match 'grok-gate on :8788') {
-    Ok 'installer: starts gate :8788 NoLogonKeeper; next-steps document grok-gate'
+if ($instSrc -match 'one Headroom' -and $instSrc -match "-StopProxy', '-Port', '8788'" -and $instSrc -notmatch "-ProxyOnly', '-Quiet', '-Port', '8788'") {
+    Ok 'installer: one Headroom :8787; stops leftover :8788; does not start dual gate proxy'
 } else {
-    Bad 'installer missing gate :8788 start / grok-gate next-steps'
+    Bad 'installer still starts :8788 or missing one-proxy next-steps'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
 if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate') {
@@ -732,10 +732,10 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'GetActiveTcpListeners' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never call /readyz here' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
-    Ok 'review: grok-gate :8788 + listen-only usable (no /readyz in preflight) + hatch to direct'
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'GetActiveTcpListeners' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.6'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never call /readyz here' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+    Ok 'review: grok-4.6 :8787 one proxy; stream fail retries Headroom; listen-only preflight'
 } else {
-    Bad 'review missing grok-gate / listen-only preflight / hatch / ProxyPort 8788'
+    Bad 'review missing grok-4.6 :8787 / Headroom retry / listen-only preflight'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
@@ -744,7 +744,7 @@ if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizer
     Bad 'reqs missing headroom-ai[proxy] >= 0.36.0 / tokenizers pin'
 }
 $snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
-if ($snip -match '\[model\."grok-4\.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4\.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
+if ($snip -match '\[model\."grok-4.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8787' -and $snip -notmatch '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
     Ok 'config: quoted grok-4.6 + grok-gate tables, no env_key (session auth)'
 } else {
     Bad 'config-snippet missing quoted grok-4.6 / grok-gate tables or still has env_key'

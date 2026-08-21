@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-08-21
+
+### Fixed
+
+- **One Headroom proxy** (`:8787`). Dual `:8788` (`grok-gate`) fought the chat proxy and gates hatched to `grok-4.6-direct`. Gates now use `grok-4.6` sequential on `:8787`. Stream-fail retries the same Headroom. Direct hatch only if listen is dead. Installer no longer starts `:8788`.
+
 ## [1.5.5] - 2026-08-21
 
 ### Fixed
