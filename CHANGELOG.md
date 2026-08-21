@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.10] - 2026-08-21
+
+### Fixed
+
+- Uninstall TOML fallback assigned `$raw.Split(...)` then `foreach`: a 1-line file unwraps to a string so foreach walks **characters** (same class as 1.5.9). Fallback now uses `List[string]` + Add, matching `Split-VibeTomlLines`.
+- Doctor `Test-Port` only treated loopback/Any/IPv6Any as up after dropping `Get-NetTCPConnection`. A unicast bind on the same port looked **down**. Any local listener on that port counts.
+- Doctor and `start-grok` `Get-ListenOwnerPids` skipped empty CIM `CommandLine`, so a live `headroom.exe` with a blank cmdline was an owner-less "up" port. Empty cmdline still counts `headroom.exe` (Name or ExecutablePath).
+
 ## [1.5.9] - 2026-08-21
 
 ### Fixed

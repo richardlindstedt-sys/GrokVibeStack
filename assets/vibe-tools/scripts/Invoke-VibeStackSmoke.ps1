@@ -727,6 +727,21 @@ if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'head
 } else {
     Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / still Get-NetTCPConnection'
 }
+if ($unSrc -match 'New-Object System.Collections.Generic.List\[string\]' -and $unSrc -notmatch '\$lines = \$raw\.Split\(') {
+    Ok 'uninstall fallback: List[string] (no 1-line Split unwrap)'
+} else {
+    Bad 'uninstall fallback still assigns Split() (1-line character walk)'
+}
+if ($docSrc -match 'if \(\$e\.Port -eq \$p\)' -and $docSrc -notmatch 'IsLoopback') {
+    Ok 'doctor Test-Port: any local bind (unicast not false-down)'
+} else {
+    Bad 'doctor Test-Port still loopback/Any-only'
+}
+if ($docSrc -match 'Blank CIM CommandLine still counts headroom.exe' -and $startSrc -match 'Blank CIM CommandLine still counts headroom.exe' -and $docSrc -match '\$isHeadroomBin' -and $startSrc -match '\$isHeadroomBin') {
+    Ok 'CIM owners: empty CommandLine still counts headroom.exe'
+} else {
+    Bad 'Get-ListenOwnerPids still skip-empty CommandLine with no headroom.exe fallback'
+}
 if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '0\.36' -and $docSrc -match '--no-http2' -and $docSrc -match 'env_key') {
     Ok 'doctor: hr v3 fingerprint + readyz + env_key warn'
 } else {

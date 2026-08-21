@@ -255,7 +255,12 @@ function Remove-ManagedConfigBlock {
             if (Get-Command Split-VibeTomlLines -ErrorAction SilentlyContinue) {
                 $lines = Split-VibeTomlLines $raw
             } else {
-                $lines = $raw.Split([string[]]@("`r`n", "`n"), [System.StringSplitOptions]::None)
+                # Same as Split-VibeTomlLines: List + Add. Assigning Split()
+                # unwraps a 1-element string[] so foreach walks characters.
+                $lines = New-Object System.Collections.Generic.List[string]
+                foreach ($p in $raw.Split([string[]]@("`r`n", "`n"), [System.StringSplitOptions]::None)) {
+                    [void]$lines.Add([string]$p)
+                }
             }
             $out = New-Object System.Collections.Generic.List[string]
             $skip = $false

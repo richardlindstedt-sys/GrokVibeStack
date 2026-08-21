@@ -236,7 +236,16 @@ function Get-ListenOwnerPids([int]$p) {
         $procs = @(Get-CimInstance Win32_Process -Filter $filter -OperationTimeoutSec 3 -ErrorAction SilentlyContinue)
         foreach ($w in $procs) {
             $cl = [string]$w.CommandLine
-            if ([string]::IsNullOrWhiteSpace($cl)) { continue }
+            $name = [string]$w.Name
+            $exe = [string]$w.ExecutablePath
+            $isHeadroomBin = ($name -match '(?i)^headroom(\.exe)?$') -or ($exe -match '(?i)[\\/]headroom(\.exe)?$')
+            if ([string]::IsNullOrWhiteSpace($cl)) {
+                # Blank CIM CommandLine still counts headroom.exe (Name/Path).
+                if (-not $isHeadroomBin) { continue }
+                $id = [int]$w.ProcessId
+                if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
+                continue
+            }
             if ($cl -notmatch '(?i)headroom') { continue }
             if ($cl -notmatch '(?i)(\s|^)proxy(\s|$)') { continue }
             if ($cl -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $p)) { continue }
