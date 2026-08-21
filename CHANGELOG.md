@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Shared `ListenProbe.ps1`: empty-CL `headroom.exe` is an owner only if netstat shows that PID LISTENING on the queried port. Truncated CIM cmdline (headroom, no `--port`) same rule. Full `--port N` still counts. Doctor and `start-grok` thin-wrap the helper (no third CIM copy).
+
 ## [1.5.10] - 2026-08-21
 
 ### Fixed

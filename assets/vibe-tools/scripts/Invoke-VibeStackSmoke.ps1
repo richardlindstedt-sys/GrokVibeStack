@@ -90,6 +90,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\keep-headroom-proxy.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\GrokToml.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\vibe-review.ps1')
@@ -701,10 +702,10 @@ if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$port
 } else {
     Bad 'start-grok missing port-scoped state / NoLogonKeeper / keeper-per-port'
 }
-if ($startSrc -match 'function Get-ListenOwnerPids' -and $startSrc -match 'CIM Headroom' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
-    Ok 'start-grok: CIM Headroom owners (no Get-NetTCPConnection hang)'
+if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwnerPids' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
+    Ok 'start-grok: ListenProbe owners (no Get-NetTCPConnection hang)'
 } else {
-    Bad 'start-grok still uses Get-NetTCPConnection -LocalPort'
+    Bad 'start-grok missing ListenProbe owner helper or still uses Get-NetTCPConnection -LocalPort'
 }
 if ($startSrc -match 'GetActiveTcpListeners' -and $rawReview -match 'GetActiveTcpListeners' -and $keepSrc -match 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $rawReview -match 'Get-NetTCPConnection can block') {
     Ok 'tcp probe: GetActiveTcpListeners (no connect/Close leak, no Get-NetTCPConnection)'
@@ -722,25 +723,53 @@ if ($instSrc -match 'one Headroom' -and $instSrc -match "-StopProxy', '-Port', '
     Bad 'installer still starts :8788 or missing one-proxy next-steps'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
-if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate' -and $docSrc -match '-StopProxy -Port 8788' -and $docSrc -match 'GetActiveTcpListeners' -and $docSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
-    Ok 'doctor: live proxy cmdline / fingerprint + leftover :8788 stop; no Get-NetTCPConnection'
+if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate' -and $docSrc -match '-StopProxy -Port 8788' -and $docSrc -match 'ListenProbe\.ps1' -and $docSrc -match 'Test-VibePortListening' -and $docSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
+    Ok 'doctor: live proxy cmdline / fingerprint + leftover :8788 stop; ListenProbe; no Get-NetTCPConnection'
 } else {
-    Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / still Get-NetTCPConnection'
+    Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / ListenProbe / still Get-NetTCPConnection'
 }
 if ($unSrc -match 'New-Object System.Collections.Generic.List\[string\]' -and $unSrc -notmatch '\$lines = \$raw\.Split\(') {
     Ok 'uninstall fallback: List[string] (no 1-line Split unwrap)'
 } else {
     Bad 'uninstall fallback still assigns Split() (1-line character walk)'
 }
-if ($docSrc -match 'if \(\$e\.Port -eq \$p\)' -and $docSrc -notmatch 'IsLoopback') {
-    Ok 'doctor Test-Port: any local bind (unicast not false-down)'
+$probePs1 = Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1'
+if (Test-Path -LiteralPath $probePs1) {
+    . $probePs1
+    $emptyNoSock = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name 'headroom.exe' -ExecutablePath 'C:\hr\headroom.exe' -Port 8787 -SocketOwnsPort $false
+    $emptySock = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name 'headroom.exe' -ExecutablePath 'C:\hr\headroom.exe' -Port 8787 -SocketOwnsPort $true
+    $fullCl = Test-VibeHeadroomOwnerCandidate -CommandLine 'headroom proxy --port 8787 --mode token' -Name 'python.exe' -ExecutablePath 'C:\py.exe' -Port 8787 -SocketOwnsPort $false
+    $truncNoSock = Test-VibeHeadroomOwnerCandidate -CommandLine 'headroom proxy --mode token' -Name 'headroom.exe' -ExecutablePath 'C:\hr\headroom.exe' -Port 8787 -SocketOwnsPort $false
+    $truncSock = Test-VibeHeadroomOwnerCandidate -CommandLine 'headroom proxy --mode token' -Name 'headroom.exe' -ExecutablePath 'C:\hr\headroom.exe' -Port 8787 -SocketOwnsPort $true
+    $wrongPortCl = Test-VibeHeadroomOwnerCandidate -CommandLine 'headroom proxy --port 9999 --mode token' -Name 'python.exe' -Port 8787 -SocketOwnsPort $false
+    if ((-not $emptyNoSock) -and $emptySock -and $fullCl -and (-not $truncNoSock) -and $truncSock -and (-not $wrongPortCl)) {
+        Ok 'ListenProbe: empty-CL needs socket PID; truncated CL not port-blind; full --port counts'
+    } else {
+        Bad ('ListenProbe candidate matrix emptyNo={0} emptyYes={1} full={2} truncNo={3} truncYes={4} wrongPort={5}' -f $emptyNoSock, $emptySock, $fullCl, $truncNoSock, $truncSock, $wrongPortCl)
+    }
+    $listener = $null
+    try {
+        $listener = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $ep = [System.Net.IPEndPoint]$listener.LocalEndpoint
+        $tp = [int]$ep.Port
+        $up = Test-VibePortListening -Port $tp
+        $sockPids = @(Get-VibeListenSocketPids -Port $tp)
+        $hasUs = $sockPids -contains $PID
+        $listener.Stop(); $listener = $null
+        Start-Sleep -Milliseconds 50
+        $down = Test-VibePortListening -Port $tp
+        if ($up -and $hasUs -and -not $down) {
+            Ok 'ListenProbe: TcpListener bind is up+our PID; stop is down'
+        } else {
+            Bad ('ListenProbe runtime up={0} hasPid={1} downAfter={2} pids={3}' -f $up, $hasUs, $down, ($sockPids -join ','))
+        }
+    } catch {
+        Bad "ListenProbe runtime bind: $_"
+        if ($listener) { try { $listener.Stop() } catch {} }
+    }
 } else {
-    Bad 'doctor Test-Port still loopback/Any-only'
-}
-if ($docSrc -match 'Blank CIM CommandLine still counts headroom.exe' -and $startSrc -match 'Blank CIM CommandLine still counts headroom.exe' -and $docSrc -match '\$isHeadroomBin' -and $startSrc -match '\$isHeadroomBin') {
-    Ok 'CIM owners: empty CommandLine still counts headroom.exe'
-} else {
-    Bad 'Get-ListenOwnerPids still skip-empty CommandLine with no headroom.exe fallback'
+    Bad 'ListenProbe.ps1 missing'
 }
 if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '0\.36' -and $docSrc -match '--no-http2' -and $docSrc -match 'env_key') {
     Ok 'doctor: hr v3 fingerprint + readyz + env_key warn'

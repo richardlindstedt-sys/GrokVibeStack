@@ -18,44 +18,22 @@ if (Test-Path $ensureRtk) {
     & $ensureRtk -Quiet 2>$null | Out-Null
 }
 
+$listenProbe = Join-Path $grokHome 'token-saving\scripts\ListenProbe.ps1'
+if (-not (Test-Path -LiteralPath $listenProbe)) { $listenProbe = Join-Path $PSScriptRoot 'ListenProbe.ps1' }
+if (Test-Path -LiteralPath $listenProbe) { . $listenProbe }
+
 function Test-Port([int]$p) {
-    # Any local bind on $p (unicast included). Loopback/Any-only was false-down.
-    # Get-NetTCPConnection / CIM TCP hangs — never on this path.
-    try {
-        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
-        foreach ($e in $listeners) {
-            if ($e.Port -eq $p) { return $true }
-        }
-    } catch {}
+    if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
+        return [bool](Test-VibePortListening -Port $p)
+    }
     return $false
 }
 
 function Get-ListenOwnerPids([int]$p) {
-    $owners = [System.Collections.Generic.List[int]]::new()
-    try {
-        $filter = "Name = 'headroom.exe' OR Name = 'python.exe' OR Name = 'pythonw.exe'"
-        $procs = @(Get-CimInstance Win32_Process -Filter $filter -OperationTimeoutSec 3 -ErrorAction SilentlyContinue)
-        foreach ($w in $procs) {
-            $cl = [string]$w.CommandLine
-            $name = [string]$w.Name
-            $exe = [string]$w.ExecutablePath
-            $isHeadroomBin = ($name -match '(?i)^headroom(\.exe)?$') -or ($exe -match '(?i)[\\/]headroom(\.exe)?$')
-            if ([string]::IsNullOrWhiteSpace($cl)) {
-                # Blank CIM CommandLine still counts headroom.exe (Name/Path).
-                # Skip-empty made a live proxy an owner-less "up" port.
-                if (-not $isHeadroomBin) { continue }
-                $id = [int]$w.ProcessId
-                if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
-                continue
-            }
-            if ($cl -notmatch '(?i)headroom') { continue }
-            if ($cl -notmatch '(?i)(\s|^)proxy(\s|$)') { continue }
-            if ($cl -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $p)) { continue }
-            $id = [int]$w.ProcessId
-            if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
-        }
-    } catch {}
-    return $owners
+    if (Get-Command Get-VibeListenOwnerPids -ErrorAction SilentlyContinue) {
+        return @(Get-VibeListenOwnerPids -Port $p)
+    }
+    return @()
 }
 
 function Get-StatusColor([bool]$ok) {

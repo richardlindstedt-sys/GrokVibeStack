@@ -56,6 +56,9 @@ $KeeperTask    = if ($Port -eq 8787) { 'GrokVibeStack-HeadroomKeeper' } else { "
 $CavemanFlag   = Join-Path $GrokHome '.caveman-active'
 $GrokTomlPs1   = Join-Path $TokenRoot 'scripts\GrokToml.ps1'
 if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
+$ListenProbePs1 = Join-Path $TokenRoot 'scripts\ListenProbe.ps1'
+if (-not (Test-Path -LiteralPath $ListenProbePs1)) { $ListenProbePs1 = Join-Path $PSScriptRoot 'ListenProbe.ps1' }
+if (Test-Path -LiteralPath $ListenProbePs1) { . $ListenProbePs1 }
 # Upstream: session login (auth.json) uses cli-chat-proxy.grok.com.
 # api.x.ai needs XAI_API_KEY — without it the proxy 401s and the TUI sits on
 # "waiting for response". OPENAI_TARGET_API_URL is an explicit override only
@@ -228,32 +231,12 @@ function Get-ProcessCommandLine([int]$procId) {
 }
 
 function Get-ListenOwnerPids([int]$p) {
-    # CIM Headroom `--port N` (headroom/python/pythonw). Get-NetTCPConnection
-    # can block for minutes — never on this path.
-    $owners = [System.Collections.Generic.List[int]]::new()
-    try {
-        $filter = "Name = 'headroom.exe' OR Name = 'python.exe' OR Name = 'pythonw.exe'"
-        $procs = @(Get-CimInstance Win32_Process -Filter $filter -OperationTimeoutSec 3 -ErrorAction SilentlyContinue)
-        foreach ($w in $procs) {
-            $cl = [string]$w.CommandLine
-            $name = [string]$w.Name
-            $exe = [string]$w.ExecutablePath
-            $isHeadroomBin = ($name -match '(?i)^headroom(\.exe)?$') -or ($exe -match '(?i)[\\/]headroom(\.exe)?$')
-            if ([string]::IsNullOrWhiteSpace($cl)) {
-                # Blank CIM CommandLine still counts headroom.exe (Name/Path).
-                if (-not $isHeadroomBin) { continue }
-                $id = [int]$w.ProcessId
-                if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
-                continue
-            }
-            if ($cl -notmatch '(?i)headroom') { continue }
-            if ($cl -notmatch '(?i)(\s|^)proxy(\s|$)') { continue }
-            if ($cl -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $p)) { continue }
-            $id = [int]$w.ProcessId
-            if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
-        }
-    } catch {}
-    return $owners
+    # CIM Headroom `--port N` plus netstat LISTENING PIDs (ListenProbe.ps1).
+    # Get-NetTCPConnection can block for minutes — never on this path.
+    if (Get-Command Get-VibeListenOwnerPids -ErrorAction SilentlyContinue) {
+        return @(Get-VibeListenOwnerPids -Port $p)
+    }
+    return @()
 }
 
 function Test-IsDescendantOf([int]$ancestorId, [int]$procId) {
