@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.7] - 2026-08-21
+
+### Fixed
+
+- `Test-VibeToml` still required `[model."grok-gate"]` on `:8788` after the one-proxy change. Merge of the `:8787` snippet always threw `config.toml merge still invalid`, so `start-grok` died and Grok rewrote `config.toml` down to marketplace-only. Validator now checks grok-gate **table-local** `base_url` is `:8787`. Smoke asserts the managed snippet itself passes `Test-VibeToml` and rejects a `:8788` grok-gate.
+- `doctor.ps1` still used `Get-NetTCPConnection -LocalPort` and `Invoke-WebRequest /readyz` (both can hang for minutes). Listen table + CIM owners only; `/readyz` is not called.
+
 ## [1.5.6] - 2026-08-21
 
 ### Fixed

@@ -722,10 +722,10 @@ if ($instSrc -match 'one Headroom' -and $instSrc -match "-StopProxy', '-Port', '
     Bad 'installer still starts :8788 or missing one-proxy next-steps'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
-if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate') {
-    Ok 'doctor: live proxy cmdline / fingerprint + gate :8788'
+if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate' -and $docSrc -match '-StopProxy -Port 8788' -and $docSrc -match 'GetActiveTcpListeners' -and $docSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
+    Ok 'doctor: live proxy cmdline / fingerprint + leftover :8788 stop; no Get-NetTCPConnection'
 } else {
-    Bad 'doctor missing live proxy cmdline/fingerprint / gate :8788'
+    Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / still Get-NetTCPConnection'
 }
 if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '0\.36' -and $docSrc -match '--no-http2' -and $docSrc -match 'env_key') {
     Ok 'doctor: hr v3 fingerprint + readyz + env_key warn'
@@ -781,6 +781,25 @@ base_url = "http://127.0.0.1:8787/v1"
 default = "grok-4.6"
 "@
     $snippetText = Get-VibeManagedSnippet -SnippetPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true
+    $snipCheck = Test-VibeToml -Raw $snippetText
+    if ($snipCheck.Ok -and $snipCheck.HasHeadroomOverride -and $snipCheck.HasGateOverride) {
+        Ok 'Test-VibeToml: managed snippet (grok-4.6 + grok-gate on :8787) is Ok'
+    } else {
+        Bad ("Test-VibeToml rejects managed snippet: {0}" -f ($snipCheck.Errors -join '; '))
+    }
+    $staleGate = @"
+[model."grok-4.6"]
+base_url = "http://127.0.0.1:8787/v1"
+
+[model."grok-gate"]
+base_url = "http://127.0.0.1:8788/v1"
+"@
+    $staleGateCheck = Test-VibeToml -Raw $staleGate
+    if (-not $staleGateCheck.Ok -and -not $staleGateCheck.HasGateOverride) {
+        Ok 'Test-VibeToml: grok-gate on :8788 is not Ok (one proxy :8787)'
+    } else {
+        Bad 'Test-VibeToml still accepts grok-gate on :8788'
+    }
     $cvt = @(Convert-VibeToArray 'base_url')
     $cvtHash = @(Convert-VibeToArray @{ k = 'v' })
     if ($cvt.Length -eq 1 -and $cvt[0] -eq 'base_url' -and $cvtHash.Length -eq 1) {
@@ -964,6 +983,11 @@ if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasH
     Ok 'GrokToml: repair throws on invalid merge; confirm retries ExpectedRaw; no stub restore'
 } else {
     Bad 'GrokToml missing throw-on-invalid, ExpectedRaw retry, or no-stub-restore'
+}
+if ($tomlSrc -match 'missing quoted \[model\."grok-gate"\] Headroom override \(127\.0\.0\.1:8787\)' -and $tomlSrc -notmatch 'missing quoted \[model\."grok-gate"\] Headroom override \(127\.0\.0\.1:8788\)' -and $tomlSrc -match 'Test-TomlQuotedModelBaseUrl') {
+    Ok 'GrokToml: grok-gate Headroom is table-local :8787 (not :8788)'
+} else {
+    Bad 'GrokToml still requires grok-gate on :8788 or missing table-local base_url check'
 }
 if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile' -and $startSrc -match 'GrokToml\.ps1 missing' -and $startSrc -match 'HasHeadroomOverride' -and $startSrc -match 'if \(\$check\.HasHeadroomOverride -and \$check\.Ok\) \{ return \}') {
     Ok 'start-grok: config preflight + auto-repair + fail-closed helper + skip rewrite when Headroom Ok'

@@ -512,7 +512,7 @@ function Show-Status {
     if ((Test-Path -LiteralPath $cfgPath) -and (Test-GrokTomlHelperLoaded)) {
         $cfgCheck = Test-VibeToml -Raw (Read-Utf8NoBomFile -Path $cfgPath)
         if ($cfgCheck.Ok) {
-            $cfgLine = 'ok (quoted grok-4.6 -> :8787, grok-gate -> :8788, no duplicate tables)'
+            $cfgLine = 'ok (quoted grok-4.6 + grok-gate alias -> :8787, no duplicate tables)'
         } else {
             $cfgLine = ('INVALID: {0}' -f ($cfgCheck.Errors -join '; '))
         }

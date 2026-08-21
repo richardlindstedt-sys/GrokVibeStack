@@ -17,7 +17,7 @@
     npm globals (jscpd, markdownlint-cli, prettier, eslint, typescript)
     PS modules (PSScriptAnalyzer, Pester)
     Serena MCP (uv tool)
-    config.toml managed block (Headroom + Serena MCP, grok-4.6 chat :8787 + grok-gate reviews :8788 + grok-4.6-direct)
+    config.toml managed block (Headroom + Serena MCP, grok-4.6 + grok-gate alias on :8787 + grok-4.6-direct)
     install manifest for Uninstall-GrokVibeStack.ps1
 
   Does NOT install or remove Grok Build itself. Does NOT write API keys.

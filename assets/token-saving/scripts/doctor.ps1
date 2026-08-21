@@ -19,10 +19,35 @@ if (Test-Path $ensureRtk) {
 }
 
 function Test-Port([int]$p) {
+    # Local listen table. Get-NetTCPConnection / CIM TCP hangs for minutes.
     try {
-        $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-        return $null -ne $c
-    } catch { return $false }
+        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+        foreach ($e in $listeners) {
+            if ($e.Port -ne $p) { continue }
+            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
+        }
+    } catch {}
+    return $false
+}
+
+function Get-ListenOwnerPids([int]$p) {
+    $owners = [System.Collections.Generic.List[int]]::new()
+    try {
+        $filter = "Name = 'headroom.exe' OR Name = 'python.exe' OR Name = 'pythonw.exe'"
+        $procs = @(Get-CimInstance Win32_Process -Filter $filter -OperationTimeoutSec 3 -ErrorAction SilentlyContinue)
+        foreach ($w in $procs) {
+            $cl = [string]$w.CommandLine
+            if ([string]::IsNullOrWhiteSpace($cl)) { continue }
+            if ($cl -notmatch '(?i)headroom') { continue }
+            if ($cl -notmatch '(?i)(\s|^)proxy(\s|$)') { continue }
+            if ($cl -notmatch ("(?i)--port(\s|=)+{0}(\s|$)" -f $p)) { continue }
+            $id = [int]$w.ProcessId
+            if ($id -gt 0 -and -not $owners.Contains($id)) { [void]$owners.Add($id) }
+        }
+    } catch {}
+    return $owners
 }
 
 function Get-StatusColor([bool]$ok) {
@@ -31,7 +56,7 @@ function Get-StatusColor([bool]$ok) {
 
 function Get-ProcessCommandLine([int]$procId) {
     try {
-        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -OperationTimeoutSec 3 -ErrorAction SilentlyContinue
         if ($wmi -and $wmi.CommandLine) { return [string]$wmi.CommandLine }
     } catch {}
     return $null
@@ -170,15 +195,9 @@ if ($proxyUp) {
             [void]$ownerPids.Add($parsedPid)
         }
     }
-    try {
-        $conns = Get-NetTCPConnection -LocalPort $proxyPort -State Listen -ErrorAction SilentlyContinue
-        foreach ($c in $conns) {
-            if ($c.OwningProcess) {
-                $op = [int]$c.OwningProcess
-                if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
-            }
-        }
-    } catch {}
+    foreach ($op in @(Get-ListenOwnerPids $proxyPort)) {
+        if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
+    }
     foreach ($pidCand in $ownerPids) {
         $cl = Get-ProcessCommandLine $pidCand
         if (Test-ProxyCommandLineMatchesStack $cl $proxyPort) {
@@ -214,14 +233,8 @@ if ($proxyUp) {
     } else {
         Write-Host "  tip:    start-grok keeps proxy + PATH; stop with stop-grok-proxy" -ForegroundColor DarkGray
     }
-    $ready = $false
-    try {
-        $h = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}/readyz" -f $proxyPort) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-        $ready = ($h.StatusCode -ge 200 -and $h.StatusCode -lt 300)
-        Write-Host ("  http:    {0} /readyz" -f $h.StatusCode) -ForegroundColor (Get-StatusColor $ready)
-    } catch {
-        Write-Host "  http:    /readyz FAILED" -ForegroundColor Yellow
-    }
+    # /readyz blocks during SSE. PS 5.1 Invoke-WebRequest -TimeoutSec can hang minutes. Listen only.
+    Write-Host "  http:    skipped (/readyz blocks on busy SSE; listen table is liveness)" -ForegroundColor DarkGray
 } else {
     Write-Host "  status: DOWN" -ForegroundColor Yellow
     Write-Host ("  fingerprint file: {0}" -f $(if ($fpOk) { 'ok (stale while down)' } elseif ($fpOnDisk) { 'stale/other' } else { 'missing' })) -ForegroundColor DarkGray
@@ -242,7 +255,7 @@ if (Test-Path -LiteralPath $keepPidFile) {
 Write-Host ("  keeper: {0}" -f $(if ($keepUp) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })) -ForegroundColor (Get-StatusColor $keepUp)
 
 Write-Host ""
-Write-Host "--- Gate proxy (Headroom :8788 / grok-gate) ---" -ForegroundColor Cyan
+Write-Host "--- Leftover gate proxy (:8788; grok-gate is :8787 alias) ---" -ForegroundColor Cyan
 $gatePort = 8788
 $gateUp = Test-Port $gatePort
 $gatePidFile = Join-Path $grokHome 'token-saving\state\headroom-proxy-8788.pid'
@@ -263,19 +276,17 @@ if (Test-Path -LiteralPath $gateKeepFile) {
     }
 }
 if ($gateUp) {
-    Write-Host "  status: LISTENING" -ForegroundColor Green
+    Write-Host "  status: LISTENING (leftover dual proxy - stop it)" -ForegroundColor Yellow
     Write-Host ("  pid:    {0}" -f $gatePid)
-    try {
-        $gh = Invoke-WebRequest -Uri ("http://127.0.0.1:{0}/readyz" -f $gatePort) -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-        Write-Host ("  http:    {0} /readyz" -f $gh.StatusCode) -ForegroundColor (Get-StatusColor ($gh.StatusCode -ge 200 -and $gh.StatusCode -lt 300))
-    } catch {
-        Write-Host "  http:    /readyz FAILED" -ForegroundColor Yellow
-    }
+    Write-Host '  fix:    start-grok -StopProxy -Port 8788' -ForegroundColor Yellow
 } else {
-    Write-Host "  status: DOWN" -ForegroundColor Yellow
-    Write-Host "  fix:    start-grok -ProxyOnly -Port 8788 -NoLogonKeeper" -ForegroundColor Yellow
+    Write-Host "  status: DOWN (expected; grok-gate shares :8787)" -ForegroundColor Green
 }
-Write-Host ("  keeper: {0} (session only, no logon task)" -f $(if ($gateKeepUp) { 'up' } else { 'DOWN' })) -ForegroundColor (Get-StatusColor $gateKeepUp)
+if ($gateKeepUp) {
+    Write-Host '  keeper: up (leftover :8788 session keeper - stop with -StopProxy -Port 8788)' -ForegroundColor Yellow
+} else {
+    Write-Host "  keeper: DOWN (expected)" -ForegroundColor Green
+}
 
 # --- Session hooks ---
 Write-Host ""
@@ -400,7 +411,7 @@ if (Test-Path -LiteralPath $cfg) {
             $cfgTxt = Read-Utf8NoBomFile -Path $cfg
             $cfgCheck = Test-VibeToml -Raw ([string]$cfgTxt)
             if ($cfgCheck.Ok) {
-                Write-Host '  parse: ok (Headroom grok-4.6 :8787 + grok-gate :8788, no duplicate keys/tables)' -ForegroundColor Green
+                Write-Host '  parse: ok (Headroom grok-4.6 + grok-gate alias :8787, no duplicate keys/tables)' -ForegroundColor Green
             } else {
                 Write-Host ('  ERROR: {0}' -f ($cfgCheck.Errors -join '; ')) -ForegroundColor Red
                 Write-Host '        start-grok auto-repairs this; or re-run Install-GrokVibeStack.ps1' -ForegroundColor Yellow
@@ -419,11 +430,11 @@ if (Test-Path -LiteralPath $cfg) {
     if ($cfgTxt -match '127\.0\.0\.1:8787|grok-via-headroom' -and -not $proxyUp) {
         Write-Host '  WARN: default grok-4.6 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match 'grok-gate|127\.0\.0\.1:8788' -and -not $gateUp) {
-        Write-Host '  WARN: grok-gate uses Headroom :8788 but that proxy is down. start-grok -ProxyOnly -Port 8788 -NoLogonKeeper' -ForegroundColor Yellow
+    if ($cfgTxt -match '127\.0\.0\.1:8788') {
+        Write-Host '  WARN: config still points at :8788 (dual-proxy leftover). start-grok repairs to :8787; start-grok -StopProxy -Port 8788' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.6"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-gate"\]') {
-        Write-Host '  WARN: missing [model."grok-gate"] (:8788). Re-run installer or start-grok to repair.' -ForegroundColor Yellow
+        Write-Host '  WARN: missing [model."grok-gate"] (:8787 alias). Re-run installer or start-grok to repair.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '(?m)^\s*\[model\.grok-4\.6(?:-direct)?\]\s*$') {
         Write-Host '  WARN: unquoted [model.grok-4.6*] is ignored by Grok 1.0.3 (nested table). Use [model."grok-4.6"] / [model."grok-4.6-direct"]. Re-run installer.' -ForegroundColor Yellow

@@ -16,7 +16,7 @@ That will:
 1b. Serena MCP is installed by the stack installer (`ensure-serena.ps1`); Grok starts it from `config.toml`  
 
 2. Ensure caveman flag + PATH for Headroom tools  
-3. Start **Headroom proxy** on `127.0.0.1:8787` (chat) if not already running. Gates use a second proxy on `:8788` (`grok-gate`).  
+3. Start **Headroom proxy** on `127.0.0.1:8787` if not already running. `grok-gate` is an alias of the same proxy. Leftover `:8788`: `start-grok -StopProxy -Port 8788`.  
 4. Launch **Grok** with model `grok-4.6` (overridden to Headroom; traffic compressed)  
 5. Caveman rules + RTK rules + token hygiene + Headroom MCP still load from `~/.grok` as usual  
 
@@ -25,7 +25,7 @@ That will:
 ```text
 start-grok -Status          # show stack status (default port :8787)
 start-grok -ProxyOnly       # chat proxy + logon keeper (auto-restart if Headroom dies)
-start-grok -ProxyOnly -Port 8788 -NoLogonKeeper   # gate proxy (grok-gate); no logon task
+start-grok -StopProxy -Port 8788   # leftover dual-proxy cleanup
 start-grok -StopProxy       # stop keeper + proxy on this port (disables logon task on :8787)
 start-grok -NoProxy         # skip proxy; caveman + rtk + MCP only
 start-grok -SkipRtk         # skip ensure-rtk (not recommended)
@@ -34,7 +34,7 @@ start-grok -m grok-build    # pass through to grok (skips default model inject i
 start-grok -m grok-4.6-direct  # vanilla Grok 4.6, no Headroom
 ```
 
-Liveness is TCP connect (400ms). `/readyz` blocks during SSE — do not treat HTTP fail as a dead proxy. Do not restart `:8788` while a review panel is running.
+Liveness is TCP listen (`GetActiveTcpListeners`). `/readyz` blocks during SSE — do not treat HTTP fail as a dead proxy. Do not restart `:8787` while a review panel is running.
 
 Also: `stop-grok-proxy` (same as `start-grok -StopProxy`).
 
@@ -56,7 +56,7 @@ Shims live on PATH via `~/.grok/bin`:
 | hooks/token-saving.json | SessionStart + PostToolUse logging |
 | Headroom CLI + venv | Compression proxy + tools |
 | Headroom MCP | On-demand `headroom__*` tools. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on). |
-| grok-4.6 Headroom override | Chat: quoted `[model."grok-4.6"]` → `:8787`. Gates: `[model."grok-gate"]` → `:8788`. Vanilla: `[model."grok-4.6-direct"]` |
+| grok-4.6 Headroom override | Quoted `[model."grok-4.6"]` and `[model."grok-gate"]` → `:8787`. Vanilla: `[model."grok-4.6-direct"]` |
 
 ## Agent shell habit
 
