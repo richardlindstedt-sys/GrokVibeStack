@@ -4,7 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-- Shared `ListenProbe.ps1`: empty-CL `headroom.exe` is an owner only if netstat shows that PID LISTENING on the queried port. Truncated CIM cmdline (headroom, no `--port`) same rule. Full `--port N` still counts. Doctor and `start-grok` thin-wrap the helper (no third CIM copy).
+## [1.5.11] - 2026-08-21
+
+### Fixed
+
+- Shared `ListenProbe.ps1`: empty-CL or truncated CIM cmdline counts `headroom.exe`/`python.exe` only when that PID is LISTENING on the queried port (`GetExtendedTcpTable`, not `Get-NetTCPConnection`). Full `--port N` still counts. Doctor, `start-grok`, keeper, and gate review thin-wrap the helper.
+- Gate `Test-ProxyUsable` no longer treats any TCP holder as Headroom. A random listener is listen-up, not stack-up. `/readyz` is still never used on the hot path.
+- Removed unused `Test-ProxyHttpReady` (zombie; inner listen was a no-op).
+- `start-grok` writes the proxy PID file only after listen proof. A leftover PID is not inserted as owner unless that PID owns the socket.
+- Missing `ListenProbe.ps1` no longer makes doctor `Test-Port` always false (inline listen-table fallback).
+- Gate review is **this diff + callers**, not a re-audit of the whole ledger. Untouched `next` is carried forward (not re-scored, not dropped). Persist keeps rows whose file is outside this diff; an empty path list keeps every old open row (does not wipe). In-diff items omitted this round are resolved. Small diffs cap reviewer turns at 8 / arbiter 6. Smoke runs a runtime carry-forward survival check.
 
 ## [1.5.10] - 2026-08-21
 

@@ -30,6 +30,9 @@ function Get-VibeStateDir {
 }
 
 function Get-GateOpenAdvisoriesFile {
+    if (-not [string]::IsNullOrWhiteSpace($env:VIBE_OPEN_ADVISORIES_FILE)) {
+        return $env:VIBE_OPEN_ADVISORIES_FILE.Trim()
+    }
     Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
 }
 

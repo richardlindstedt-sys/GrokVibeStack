@@ -57,6 +57,11 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $vibeScripts = Split-Path $MyInvocation.MyCommand.Path -Parent
+$listenProbeGate = Join-Path $env:USERPROFILE '.grok\token-saving\scripts\ListenProbe.ps1'
+if (-not (Test-Path -LiteralPath $listenProbeGate)) {
+    $listenProbeGate = Join-Path $vibeScripts '..\..\token-saving\scripts\ListenProbe.ps1'
+}
+if (Test-Path -LiteralPath $listenProbeGate) { . $listenProbeGate }
 $runScans = Join-Path $vibeScripts 'run-vibe-scans.ps1'
 $pathParse = Join-Path $vibeScripts 'gate-path-parse.ps1'
 if (-not (Test-Path -LiteralPath $pathParse)) {
@@ -256,6 +261,10 @@ if (-not $PSBoundParameters.ContainsKey('ReviewerMaxTurns')) {
         $n = if ($probe) { (ConvertTo-SinglePatchText $probe).Length } else { 0 }
         if ($n -gt 60000 -and $ReviewerMaxTurns -lt 16) { $ReviewerMaxTurns = 16 }
         if ($n -gt 60000 -and $ArbiterMaxTurns -lt 10) { $ArbiterMaxTurns = 10 }
+        if ($n -gt 0 -and $n -lt 24000 -and $script:ResolvedProfile.Name -ne 'strict') {
+            if ($ReviewerMaxTurns -gt 8) { $ReviewerMaxTurns = 8 }
+            if ($ArbiterMaxTurns -gt 6) { $ArbiterMaxTurns = 6 }
+        }
     } catch {}
 }
 if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.NoFixDefault) {
@@ -328,39 +337,25 @@ function Write-Phase([string]$msg) {
 }
 
 function Test-PortListening([int]$p) {
-    # Local listen table (IPHlp). Get-NetTCPConnection can block for minutes
-    # (this preflight hung the 1.5.4 commit). Do not call it on the gate hot path.
-    # No connect => no Close hang, no leaked ESTABLISHED sockets.
+    # Get-NetTCPConnection can block for minutes — never on this path.
+    if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
+        return [bool](Test-VibePortListening -Port $p)
+    }
     try {
         $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
         foreach ($e in $listeners) {
-            if ($e.Port -ne $p) { continue }
-            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
-            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
-            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
+            if ($e.Port -eq $p) { return $true }
         }
     } catch {}
     return $false
 }
 
-function Test-ProxyHttpReady([int]$p) {
-    try { Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue } catch {}
-    foreach ($path in @('/readyz', '/health', '/livez')) {
-        $client = $null
-        try {
-            $client = New-Object System.Net.Http.HttpClient
-            $client.Timeout = [TimeSpan]::FromSeconds(1)
-            $resp = $client.GetAsync(('http://127.0.0.1:{0}{1}' -f $p, $path)).GetAwaiter().GetResult()
-            if ($resp -and [int]$resp.StatusCode -ge 200 -and [int]$resp.StatusCode -lt 300) { return $true }
-        } catch {}
-        finally { if ($client) { try { $client.Dispose() } catch {} } }
-    }
-    return $false
-}
-
 function Test-ProxyUsable([int]$p) {
-    # Listen is enough. Never call /readyz here: HttpClient.Timeout does not
-    # abort a blocked SSE, which froze preflight for minutes.
+    # Listen + Headroom/python owner. Never /readyz (SSE blocks HttpClient).
+    # A random TCP holder is not usable.
+    if (Get-Command Test-VibeProxyStackUp -ErrorAction SilentlyContinue) {
+        return [bool](Test-VibeProxyStackUp -Port $p)
+    }
     return [bool](Test-PortListening $p)
 }
 
@@ -819,6 +814,9 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine('Legacy "advisory" is not valid; use next or later.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Rules:')
+    [void]$sb.AppendLine('- SCOPE: review THIS diff and BLAST RADIUS callers only. Do not audit unrelated unchanged files.')
+    [void]$sb.AppendLine('- CARRY-FORWARD ledger items are host-persisted. Do not copy them into findings or spend turns re-scoring them.')
+    [void]$sb.AppendLine('- PRIOR OPEN NEXT listed as in-diff: re-state if still present; omit if this diff fixed it.')
     [void]$sb.AppendLine('- Be specific: file path + line when possible.')
     [void]$sb.AppendLine('- Do NOT edit files. Tools that write or run shell are disabled.')
     [void]$sb.AppendLine('- Do NOT spend turns chunking, grepping, or re-reading the diff. The brief below is complete.')
@@ -891,6 +889,7 @@ function New-ArbiterPrompt {
     [void]$sb.AppendLine('- verdict MUST be BLOCK if blockers is non-empty.')
     [void]$sb.AppendLine('- verdict APPROVE_WITH_CHANGES if next is non-empty and blockers is empty.')
     [void]$sb.AppendLine('- verdict APPROVE if only later (or later + no next). STRONG_APPROVE only if next and later are both empty.')
+    [void]$sb.AppendLine('- SCOPE: merge panel findings about THIS diff and its callers. Do not import CARRY-FORWARD ledger items into next/later.')
     [void]$sb.AppendLine('- Do not invent issues not grounded in reviewer findings or the diff brief.')
     [void]$sb.AppendLine('- Do not edit files or run shell. Emit JSON immediately; do not re-chunk the brief.')
     [void]$sb.AppendLine('- Legacy "advisories" array is invalid; put items in next or later.')
@@ -2015,7 +2014,11 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
             elseif ($arb.Result -and $arb.Result.advisories) { $ledgerNow += @($arb.Result.advisories) }
             if ($arb.Later) { $ledgerNow += @($arb.Later) }
             elseif ($arb.Result -and $arb.Result.later) { $ledgerNow += @($arb.Result.later) }
-            Save-GateOpenAdvisories -Items $ledgerNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow
+            $savePaths = @()
+            if (Get-Command Get-ChangedPathsFromDiff -ErrorAction SilentlyContinue) {
+                $savePaths = @(Get-ChangedPathsFromDiff $rawDiff)
+            }
+            Save-GateOpenAdvisories -Items $ledgerNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow -ChangedPaths $savePaths
         }
         $nNext = @($(if ($arb.Next) { $arb.Next } else { @() })).Count
         $nLater = @($(if ($arb.Later) { $arb.Later } else { @() })).Count

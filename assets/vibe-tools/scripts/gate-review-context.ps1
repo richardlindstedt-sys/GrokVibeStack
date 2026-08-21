@@ -168,8 +168,34 @@ function Get-StrictFullFileAppendix {
     return $sb.ToString()
 }
 
+function Test-VibeAdvisoryTouchesDiff {
+    param([string]$File, [string[]]$ChangedPaths)
+    if (@($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
+        return $false
+    }
+    if ([string]::IsNullOrWhiteSpace($File)) { return $false }
+    $norm = (($File -replace '\\', '/').Trim().TrimStart('/'))
+    if (-not $norm) { return $false }
+    foreach ($c in @($ChangedPaths)) {
+        if (-not $c) { continue }
+        $cn = (($c -replace '\\', '/').Trim().TrimStart('/'))
+        if (-not $cn) { continue }
+        if ($norm -eq $cn) { return $true }
+        if ($cn.EndsWith('/' + $norm) -or $norm.EndsWith('/' + $cn)) { return $true }
+    }
+    return $false
+}
+
 function Get-PriorOpenAdvisoriesBlock {
-    $path = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
+    param([string[]]$ChangedPaths = @())
+    $path = ''
+    if (Get-Command Get-GateOpenAdvisoriesFile -ErrorAction SilentlyContinue) {
+        $path = Get-GateOpenAdvisoriesFile
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:VIBE_OPEN_ADVISORIES_FILE)) {
+        $path = $env:VIBE_OPEN_ADVISORIES_FILE.Trim()
+    } else {
+        $path = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
+    }
     if (-not (Test-Path -LiteralPath $path)) { return '' }
     try {
         $doc = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
@@ -195,29 +221,37 @@ function Get-PriorOpenAdvisoriesBlock {
     }
     $next = @($open | Where-Object { -not (& $isLater $_) })
     $later = @($open | Where-Object { & $isLater $_ })
+    $nextIn = @($next | Where-Object { Test-VibeAdvisoryTouchesDiff -File ([string]$_.file) -ChangedPaths $ChangedPaths })
+    $nextCarry = @($next | Where-Object { -not (Test-VibeAdvisoryTouchesDiff -File ([string]$_.file) -ChangedPaths $ChangedPaths) })
+    $laterIn = @($later | Where-Object { Test-VibeAdvisoryTouchesDiff -File ([string]$_.file) -ChangedPaths $ChangedPaths })
     $sb = New-Object System.Text.StringBuilder
-    if ($next.Count -gt 0) {
-        [void]$sb.AppendLine('## PRIOR OPEN NEXT')
-        [void]$sb.AppendLine('These shipped last gate as next-commit debt. Re-evaluate each. If still present, keep as next or promote to blocker. Omit ONLY if the diff actually fixed it — do not drop by silence.')
-        foreach ($a in $next) {
+    if ($nextCarry.Count -gt 0 -or ($later.Count - $laterIn.Count) -gt 0) {
+        [void]$sb.AppendLine(('## CARRY-FORWARD ({0} next, {1} later on files not in this diff)' -f $nextCarry.Count, ($later.Count - $laterIn.Count)))
+        [void]$sb.AppendLine('Host keeps these open. Do not re-score, copy into findings, or spend turns on them.')
+        [void]$sb.AppendLine('')
+    }
+    if ($nextIn.Count -gt 0) {
+        [void]$sb.AppendLine('## PRIOR OPEN NEXT (files in this diff — re-evaluate)')
+        [void]$sb.AppendLine('Re-state if still present. Omit if this diff fixed it. Do not list carry-forward IDs.')
+        foreach ($a in @($nextIn | Select-Object -First 12)) {
             $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
             $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
             $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
             [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
+        }
+        if ($nextIn.Count -gt 12) {
+            [void]$sb.AppendLine(('- ... {0} more in-diff next' -f ($nextIn.Count - 12)))
         }
         [void]$sb.AppendLine('')
     }
-    if ($later.Count -gt 0) {
-        [void]$sb.AppendLine('## PRIOR LATER BACKLOG')
-        [void]$sb.AppendLine('Ledger only. Stay later unless the diff made it worse (then promote to next or blocker). Do not require a fix to pass.')
-        foreach ($a in @($later | Select-Object -First 8)) {
+    if ($laterIn.Count -gt 0) {
+        [void]$sb.AppendLine('## PRIOR LATER (files in this diff)')
+        [void]$sb.AppendLine('Stay later unless this diff made it worse. Do not require a fix to pass.')
+        foreach ($a in @($laterIn | Select-Object -First 6)) {
             $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
             $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
             $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
             [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
-        }
-        if ($later.Count -gt 8) {
-            [void]$sb.AppendLine(('- ... {0} more later' -f ($later.Count - 8)))
         }
         [void]$sb.AppendLine('')
     }
@@ -243,10 +277,9 @@ function Add-ReviewContext {
     [void]$sb.AppendLine('Intent check: next if staged diff clearly does not match this intent (extra unrelated files, missing promised change). Blocker if the message claims a security/correctness fix but the diff is unrelated or empty of that fix.')
     [void]$sb.AppendLine('')
 
-    $priorAdv = Get-PriorOpenAdvisoriesBlock
-    if ($priorAdv) { [void]$sb.AppendLine($priorAdv) }
-
     $paths = @(Get-ChangedPathsFromDiff $RawDiff)
+    $priorAdv = Get-PriorOpenAdvisoriesBlock -ChangedPaths $paths
+    if ($priorAdv) { [void]$sb.AppendLine($priorAdv) }
     $blast = Get-BlastRadiusNotes -Diff $RawDiff -ChangedPaths $paths
     if ($blast) { [void]$sb.AppendLine($blast) }
 

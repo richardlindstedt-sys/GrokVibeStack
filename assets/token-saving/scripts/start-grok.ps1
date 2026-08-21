@@ -96,15 +96,13 @@ function Get-HeadroomUpstreamHost {
 }
 
 function Test-PortListening([int]$p) {
-    # Local listen table (IPHlp). Get-NetTCPConnection / CIM hang for minutes.
-    # No connect => no Close hang, no leaked ESTABLISHED sockets on keeper polls.
+    if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
+        return [bool](Test-VibePortListening -Port $p)
+    }
     try {
         $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
         foreach ($e in $listeners) {
-            if ($e.Port -ne $p) { continue }
-            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
-            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
-            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
+            if ($e.Port -eq $p) { return $true }
         }
     } catch {}
     return $false
@@ -198,23 +196,6 @@ function Get-ProxyStackFingerprintBase {
 
 function Get-ExpectedProxyFingerprint {
     return ("{0}|port={1}" -f (Get-ProxyStackFingerprintBase), $Port)
-}
-
-function Test-ProxyHttpReady([int]$p) {
-    # HttpClient honors Timeout. PS 5.1 Invoke-WebRequest -TimeoutSec can hang
-    # for minutes while Headroom is busy on SSE (that froze gate preflight).
-    try { Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue } catch {}
-    foreach ($path in @('/readyz', '/health', '/livez')) {
-        $client = $null
-        try {
-            $client = New-Object System.Net.Http.HttpClient
-            $client.Timeout = [TimeSpan]::FromSeconds(1)
-            $resp = $client.GetAsync(('http://127.0.0.1:{0}{1}' -f $p, $path)).GetAwaiter().GetResult()
-            if ($resp -and [int]$resp.StatusCode -ge 200 -and [int]$resp.StatusCode -lt 300) { return $true }
-        } catch {}
-        finally { if ($client) { try { $client.Dispose() } catch {} } }
-    }
-    return $false
 }
 
 function Save-ProxyFingerprint {
@@ -334,7 +315,13 @@ function Test-ProxyMatchesStack {
     foreach ($op in @(Get-ListenOwnerPids $Port)) {
         if (-not $ownerPids.Contains($op)) { [void]$ownerPids.Add($op) }
     }
-    if ($null -ne $recordedPid -and (Get-Process -Id $recordedPid -ErrorAction SilentlyContinue)) {
+    $sockPids = [System.Collections.Generic.List[int]]::new()
+    if (Get-Command Get-VibeListenSocketPids -ErrorAction SilentlyContinue) {
+        foreach ($sp in @(Get-VibeListenSocketPids -Port $Port)) {
+            if (-not $sockPids.Contains([int]$sp)) { [void]$sockPids.Add([int]$sp) }
+        }
+    }
+    if ($null -ne $recordedPid -and $sockPids.Contains([int]$recordedPid) -and (Get-Process -Id $recordedPid -ErrorAction SilentlyContinue)) {
         if (-not $ownerPids.Contains([int]$recordedPid)) {
             $ownerPids.Insert(0, [int]$recordedPid)
         }
@@ -624,8 +611,7 @@ function Start-HeadroomProxyIfNeeded {
         -RedirectStandardError $ProxyErrLog `
         -PassThru
 
-    Set-Content -Path $ProxyPidFile -Value $proc.Id -Encoding ascii -NoNewline
-    Write-Info "Proxy PID $($proc.Id) - waiting up to ${ProxyWaitSeconds}s ..."
+    Write-Info "Proxy PID $($proc.Id) - waiting up to ${ProxyWaitSeconds}s (PID file after listen proof) ..."
 
     $deadline = (Get-Date).AddSeconds($ProxyWaitSeconds)
     while ((Get-Date) -lt $deadline) {

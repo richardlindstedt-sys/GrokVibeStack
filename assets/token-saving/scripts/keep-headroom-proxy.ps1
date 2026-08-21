@@ -28,6 +28,9 @@ $portTag = if ($Port -eq 8787) { '' } else { "-$Port" }
 $PidFile = Join-Path $StateDir "headroom-keeper$portTag.pid"
 $LogFile = Join-Path $LogDir "headroom-keeper$portTag.log"
 $MutexName = if ($Port -eq 8787) { 'Local\GrokVibeHeadroomKeeper' } else { "Local\GrokVibeHeadroomKeeper-$Port" }
+$ListenProbePs1 = Join-Path $TokenRoot 'scripts\ListenProbe.ps1'
+if (-not (Test-Path -LiteralPath $ListenProbePs1)) { $ListenProbePs1 = Join-Path $PSScriptRoot 'ListenProbe.ps1' }
+if (Test-Path -LiteralPath $ListenProbePs1) { . $ListenProbePs1 }
 
 function Write-KeepLog([string]$msg) {
     $line = '{0} {1}' -f (Get-Date).ToString('o'), $msg
@@ -43,15 +46,14 @@ function Write-KeepLog([string]$msg) {
 }
 
 function Test-ProxyAlive([int]$p) {
-    # Local listen table. /readyz blocks during SSE. Get-NetTCPConnection hangs.
-    # No connect => keeper poll cannot leak ESTABLISHED sockets.
+    # Listen table only. /readyz blocks during SSE. Get-NetTCPConnection hangs.
+    if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
+        return [bool](Test-VibePortListening -Port $p)
+    }
     try {
         $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
         foreach ($e in $listeners) {
-            if ($e.Port -ne $p) { continue }
-            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
-            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
-            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
+            if ($e.Port -eq $p) { return $true }
         }
     } catch {}
     return $false

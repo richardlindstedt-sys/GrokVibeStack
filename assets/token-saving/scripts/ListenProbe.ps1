@@ -75,17 +75,24 @@ function Test-VibeHeadroomOwnerCandidate {
         [bool]$SocketOwnsPort
     )
     $isHeadroomBin = ($Name -match '(?i)^headroom(\.exe)?$') -or ($ExecutablePath -match '(?i)[\\/]headroom(\.exe)?$')
+    $isPy = $Name -match '(?i)^python(w)?(\.exe)?$'
+    $isProxyProc = $isHeadroomBin -or $isPy
+    # Socket owner on $Port + headroom/python is enough (empty or truncated CIM cmdline).
+    if ($SocketOwnsPort -and $isProxyProc) { return $true }
     $cl = [string]$CommandLine
-    if ([string]::IsNullOrWhiteSpace($cl)) {
-        return [bool]($isHeadroomBin -and $SocketOwnsPort)
-    }
+    if ([string]::IsNullOrWhiteSpace($cl)) { return $false }
     if ($cl -notmatch '(?i)headroom') { return $false }
     $hasProxy = $cl -match '(?i)(\s|^)proxy(\s|$)'
     $hasPort = ($Port -gt 0) -and ($cl -match ("(?i)--port(\s|=)+{0}(\s|$)" -f $Port))
     if ($hasProxy -and $hasPort) { return $true }
-    # Truncated CIM CommandLine: still headroom, missing --port — only if this PID owns $Port.
-    if ($SocketOwnsPort -and ($isHeadroomBin -or $hasProxy)) { return $true }
     return $false
+}
+
+function Test-VibeProxyStackUp {
+    param([int]$Port)
+    if (-not (Test-VibePortListening -Port $Port)) { return $false }
+    $owners = @(Get-VibeListenOwnerPids -Port $Port)
+    return ($owners.Count -gt 0)
 }
 
 function Get-VibeListenOwnerPids {

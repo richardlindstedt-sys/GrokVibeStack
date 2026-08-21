@@ -103,7 +103,28 @@ function Save-GateLastDone {
 }
 
 function Get-GateOpenAdvisoriesFile {
+    if (-not [string]::IsNullOrWhiteSpace($env:VIBE_OPEN_ADVISORIES_FILE)) {
+        return $env:VIBE_OPEN_ADVISORIES_FILE.Trim()
+    }
     Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
+}
+
+function Test-GateAdvisoryFileInPaths {
+    param([string]$File, [string[]]$ChangedPaths)
+    if (@($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
+        return $false
+    }
+    if ([string]::IsNullOrWhiteSpace($File)) { return $false }
+    $norm = (($File -replace '\\', '/').Trim().TrimStart('/'))
+    if (-not $norm) { return $false }
+    foreach ($c in @($ChangedPaths)) {
+        if (-not $c) { continue }
+        $cn = (($c -replace '\\', '/').Trim().TrimStart('/'))
+        if (-not $cn) { continue }
+        if ($norm -eq $cn) { return $true }
+        if ($cn.EndsWith('/' + $norm) -or $norm.EndsWith('/' + $cn)) { return $true }
+    }
+    return $false
 }
 
 function Get-GateFindingBucket([object]$item) {
@@ -122,15 +143,19 @@ function Get-GateFindingBucket([object]$item) {
 }
 
 function Save-GateOpenAdvisories {
-    # Hashtable merge by cwd+id. This cwd's ids in $Items stay open with their
-    # bucket (next|later). This cwd's ids missing from $Items are marked resolved.
-    # Legacy rows with no bucket (old advisory) map to next.
-    # later is capped per cwd (oldest resolved); next is never capped.
+    # Hashtable merge by cwd+id.
+    # $Items = this round's next|later (blockers skipped). Those ids stay open.
+    # Unseen open rows for this cwd:
+    #   - file NOT in ChangedPaths → keep (carry-forward; do not re-review).
+    #   - file IS in ChangedPaths → resolved (panel omitted it = fixed this SHA).
+    #   - ChangedPaths empty → keep ALL old open rows (unknown scope must not wipe).
+    # Legacy rows with no bucket map to next. later is capped per cwd; next is not.
     param(
         [object[]]$Items,
         [string]$RunId,
         [string]$Cwd,
-        [int]$LaterCap = 40
+        [int]$LaterCap = 40,
+        [string[]]$ChangedPaths = @()
     )
     if (-not $Cwd) {
         try { $Cwd = (Get-Location).Path } catch { $Cwd = '' }
@@ -180,11 +205,22 @@ function Save-GateOpenAdvisories {
             updated = $nowIso
         }
     }
+    $haveChangedPaths = @($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
     foreach ($k in @($byKey.Keys)) {
         $row = $byKey[$k]
         if ([string]$row.cwd -ne $Cwd) { continue }
         if ($seen.ContainsKey($k)) { continue }
         if ([string]$row.status -eq 'resolved') { continue }
+        # Empty path list: keep ALL old open rows (unknown scope must not wipe carry-forward).
+        if (-not $haveChangedPaths) { continue }
+        $inThisDiff = $false
+        if (Get-Command Test-VibeAdvisoryTouchesDiff -ErrorAction SilentlyContinue) {
+            $inThisDiff = [bool](Test-VibeAdvisoryTouchesDiff -File ([string]$row.file) -ChangedPaths $ChangedPaths)
+        } else {
+            $inThisDiff = [bool](Test-GateAdvisoryFileInPaths -File ([string]$row.file) -ChangedPaths $ChangedPaths)
+        }
+        # Not in this diff: keep (carry-forward). In-diff and omitted: resolve.
+        if (-not $inThisDiff) { continue }
         $oldBucket = Get-GateFindingBucket $row
         $byKey[$k] = [pscustomobject]@{
             cwd         = [string]$row.cwd
