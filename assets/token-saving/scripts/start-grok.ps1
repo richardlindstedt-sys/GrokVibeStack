@@ -93,21 +93,18 @@ function Get-HeadroomUpstreamHost {
 }
 
 function Test-PortListening([int]$p) {
-    # TcpClient 400ms. Get-NetTCPConnection can block for minutes on this box.
-    # Abortive close: TcpClient.Close() can hang forever on a half-open connect.
-    $client = $null
+    # Local listen table (IPHlp). Get-NetTCPConnection / CIM hang for minutes.
+    # No connect => no Close hang, no leaked ESTABLISHED sockets on keeper polls.
     try {
-        $client = New-Object System.Net.Sockets.TcpClient
-        $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-        if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
-        return [bool]$client.Connected
-    } catch { return $false }
-    finally {
-        # Do not call TcpClient.Close() — it can hang even after Close(0).
-        if ($client -and $client.Client) {
-            try { $client.Client.Close(0) } catch {}
+        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+        foreach ($e in $listeners) {
+            if ($e.Port -ne $p) { continue }
+            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
         }
-    }
+    } catch {}
+    return $false
 }
 
 function Get-ProxyPid {
@@ -224,7 +221,7 @@ function Save-ProxyFingerprint {
 
 function Get-ProcessCommandLine([int]$procId) {
     try {
-        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -OperationTimeoutSec 3 -ErrorAction SilentlyContinue
         if ($wmi -and $wmi.CommandLine) { return [string]$wmi.CommandLine }
     } catch {}
     return $null
@@ -236,7 +233,7 @@ function Get-ListenOwnerPids([int]$p) {
     $owners = [System.Collections.Generic.List[int]]::new()
     try {
         $filter = "Name = 'headroom.exe' OR Name = 'python.exe' OR Name = 'pythonw.exe'"
-        $procs = @(Get-CimInstance Win32_Process -Filter $filter -ErrorAction SilentlyContinue)
+        $procs = @(Get-CimInstance Win32_Process -Filter $filter -OperationTimeoutSec 3 -ErrorAction SilentlyContinue)
         foreach ($w in $procs) {
             $cl = [string]$w.CommandLine
             if ([string]::IsNullOrWhiteSpace($cl)) { continue }

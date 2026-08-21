@@ -686,7 +686,7 @@ if ($startSrc -match 'function Get-HeadroomCliVersion' -and $startSrc -match 'fu
     Bad 'start-grok missing hr version fingerprint / readyz / read-maturation env clear'
 }
 $keepSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\keep-headroom-proxy.ps1') -Raw
-if ($keepSrc -match 'Start-Process' -and $keepSrc -match 'AbandonedMutexException' -and $keepSrc -match '-ProxyOnly' -and $keepSrc -match 'failStreak' -and $keepSrc -match 'Test-ProxyAlive' -and $keepSrc -match 'proxy not listening' -and $keepSrc -notmatch '& \$StartPs1') {
+if ($keepSrc -match 'Start-Process' -and $keepSrc -match 'AbandonedMutexException' -and $keepSrc -match '-ProxyOnly' -and $keepSrc -match 'failStreak' -and $keepSrc -match 'Test-ProxyAlive' -and $keepSrc -match 'proxy not listening' -and $keepSrc -match 'WaitForExit' -and $keepSrc -notmatch '-Wait -PassThru' -and $keepSrc -notmatch '& \$StartPs1') {
     Ok 'keeper: child start-grok + mutex + listen/argv liveness (no /readyz kill)'
 } else {
     Bad 'keeper still & start-grok or still restarts on hung /readyz'
@@ -706,15 +706,15 @@ if ($startSrc -match 'function Get-ListenOwnerPids' -and $startSrc -match 'CIM H
 } else {
     Bad 'start-grok still uses Get-NetTCPConnection -LocalPort'
 }
-if ($startSrc -match 'Abortive close' -and $startSrc -match 'Client.Close\(0\)' -and $rawReview -match 'Client.Close\(0\)' -and $keepSrc -match 'Client.Close\(0\)' -and $startSrc -notmatch 'EndConnect' -and $rawReview -notmatch 'EndConnect') {
-    Ok 'tcp probe: abortive Close(0), no EndConnect hang'
+if ($startSrc -match 'GetActiveTcpListeners' -and $rawReview -match 'GetActiveTcpListeners' -and $keepSrc -match 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $rawReview -match 'Get-NetTCPConnection can block') {
+    Ok 'tcp probe: GetActiveTcpListeners (no connect/Close leak, no Get-NetTCPConnection)'
 } else {
-    Bad 'tcp probe missing Close(0) or still has EndConnect'
+    Bad 'tcp probe missing GetActiveTcpListeners or still connects / Get-NetTCPConnection'
 }
-if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-ProxyOnly' -and $instSrc -match '-Quiet' -and $instSrc -notmatch '& \$startPs1 -ProxyOnly' -and $unSrc -notmatch '& \$startPs1 -StopProxy' -and $unSrc -match '-File., \$startPs1, .-StopProxy') {
-    Ok 'install/uninstall: start-grok via powershell -File child (no & exit suicide)'
+if ($instSrc -match 'function Invoke-StartGrokChild' -and $instSrc -match '-ProxyOnly' -and $instSrc -match '-Quiet' -and $instSrc -match 'WaitForExit' -and $instSrc -notmatch '-Wait -PassThru' -and $instSrc -notmatch '& \$startPs1 -ProxyOnly' -and $unSrc -notmatch '& \$startPs1 -StopProxy' -and $unSrc -match '-File., \$startPs1, .-StopProxy' -and $unSrc -match 'WaitForExit' -and $unSrc -notmatch '-Wait -PassThru') {
+    Ok 'install/uninstall: start-grok via powershell -File child (no & exit suicide, no pwsh -Wait descendant hang)'
 } else {
-    Bad 'install/uninstall still & start-grok (exit kills parent)'
+    Bad 'install/uninstall still & start-grok or Start-Process -Wait (pwsh descendant hang)'
 }
 if ($instSrc -match "-Port', '8788', '-NoLogonKeeper'" -and $instSrc -match 'grok-gate on :8788') {
     Ok 'installer: starts gate :8788 NoLogonKeeper; next-steps document grok-gate'
@@ -732,7 +732,7 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'TcpClient' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never call /readyz here' -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+if ($rawReview -match 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'GetActiveTcpListeners' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-gate'" -and $rawReview -match 'ProxyPort = 8788' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match "Invoke-One 'grok-4\.6-direct'" -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never call /readyz here' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
     Ok 'review: grok-gate :8788 + listen-only usable (no /readyz in preflight) + hatch to direct'
 } else {
     Bad 'review missing grok-gate / listen-only preflight / hatch / ProxyPort 8788'

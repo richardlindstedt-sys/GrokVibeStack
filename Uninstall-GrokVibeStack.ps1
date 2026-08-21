@@ -161,7 +161,13 @@ function Stop-HeadroomProxy {
                 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startPs1, '-StopProxy'),
                 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startPs1, '-StopProxy', '-Port', '8788')
             )) {
-                $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $stopArg -Wait -PassThru -WindowStyle Hidden
+                # No Start-Process -Wait (pwsh waits for descendants). Stop should
+                # finish; cap at 60s so uninstall cannot hang on a wedged child.
+                $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $stopArg -PassThru -WindowStyle Hidden
+                if ($p -and -not $p.WaitForExit(60000)) {
+                    try { $p.Kill() } catch {}
+                    try { $null = $p.WaitForExit(3000) } catch {}
+                }
             }
         } catch {}
     } elseif (Test-Path -LiteralPath $stopShim) {

@@ -329,22 +329,19 @@ function Write-Phase([string]$msg) {
 }
 
 function Test-PortListening([int]$p) {
-    # TcpClient 400ms only. Get-NetTCPConnection can block for minutes (this
-    # preflight hung the 1.5.4 commit). Do not call it on the gate hot path.
-    # Abortive close: TcpClient.Close() can hang forever on a half-open connect.
-    $client = $null
+    # Local listen table (IPHlp). Get-NetTCPConnection can block for minutes
+    # (this preflight hung the 1.5.4 commit). Do not call it on the gate hot path.
+    # No connect => no Close hang, no leaked ESTABLISHED sockets.
     try {
-        $client = New-Object System.Net.Sockets.TcpClient
-        $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-        if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
-        return [bool]$client.Connected
-    } catch { return $false }
-    finally {
-        # Do not call TcpClient.Close() — it can hang even after Close(0).
-        if ($client -and $client.Client) {
-            try { $client.Client.Close(0) } catch {}
+        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+        foreach ($e in $listeners) {
+            if ($e.Port -ne $p) { continue }
+            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
         }
-    }
+    } catch {}
+    return $false
 }
 
 function Test-ProxyHttpReady([int]$p) {
@@ -408,7 +405,12 @@ function Test-ReviewPreflight {
                 $sg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startGrok, '-ProxyOnly', '-Quiet', '-Port', "$Port")
                 if ($Port -ne 8787) { $sg += '-NoLogonKeeper' }
                 try {
-                    $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $sg -Wait -PassThru -WindowStyle Hidden
+                    # No Start-Process -Wait: pwsh waits for descendants (proxy + keeper).
+                    $sp = Start-Process -FilePath 'powershell.exe' -ArgumentList $sg -PassThru -WindowStyle Hidden
+                    if ($sp -and -not $sp.WaitForExit(120000)) {
+                        try { $sp.Kill() } catch {}
+                        try { $null = $sp.WaitForExit(3000) } catch {}
+                    }
                 } catch {}
             }
         }

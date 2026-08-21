@@ -451,14 +451,23 @@ function Test-PipFileLockText {
 function Invoke-StartGrokChild {
     param(
         [Parameter(Mandatory)][string]$ScriptPath,
-        [string[]]$GrokArgs
+        [string[]]$GrokArgs,
+        [int]$TimeoutSeconds = 120
     )
     # start-grok uses `exit`; `&` / dot-source kills this installer runspace.
+    # Do NOT use Start-Process -Wait: pwsh waits for descendants. Headroom +
+    # keeper stay alive → this step hangs forever after a successful start.
     if (-not (Test-Path -LiteralPath $ScriptPath)) { return 1 }
     $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($GrokArgs)
-    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $arg -Wait -PassThru -WindowStyle Hidden
-    if ($p) { return [int]$p.ExitCode }
-    return 1
+    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $arg -PassThru -WindowStyle Hidden
+    if (-not $p) { return 1 }
+    $ms = [Math]::Max(1000, $TimeoutSeconds * 1000)
+    if (-not $p.WaitForExit($ms)) {
+        try { $p.Kill() } catch {}
+        try { $null = $p.WaitForExit(3000) } catch {}
+        return 124
+    }
+    return [int]$p.ExitCode
 }
 
 function Stop-HeadroomServices {

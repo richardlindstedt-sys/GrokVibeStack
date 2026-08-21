@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-08-21
+
+### Fixed
+
+- Installer **Headroom proxy + keeper** hung forever under **pwsh**. `Start-Process -Wait` waits for the process **and its descendants**; Headroom + keeper stay alive so the step never returned after a successful start. Child wait is now `Process.WaitForExit(timeout)` on the start-grok process only (same for uninstall stop, gate preflight, and the keeper's start-grok child).
+- TCP listen probe is **GetActiveTcpListeners** (local IPHlp table). No connect, so no Close hang and no leaked ESTABLISHED sockets on the keeper poll loop. `Get-CimInstance` owner lookup uses `-OperationTimeoutSec 3`.
+
 ## [1.5.4] - 2026-08-20
 
 ### Fixed

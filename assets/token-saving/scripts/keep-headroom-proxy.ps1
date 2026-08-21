@@ -43,21 +43,18 @@ function Write-KeepLog([string]$msg) {
 }
 
 function Test-ProxyAlive([int]$p) {
-    # TCP accept = up. /readyz blocks during SSE. Get-NetTCPConnection can hang
-    # for minutes and must not be the liveness check (that froze gate preflight).
-    $client = $null
+    # Local listen table. /readyz blocks during SSE. Get-NetTCPConnection hangs.
+    # No connect => keeper poll cannot leak ESTABLISHED sockets.
     try {
-        $client = New-Object System.Net.Sockets.TcpClient
-        $iar = $client.BeginConnect('127.0.0.1', $p, $null, $null)
-        if (-not $iar.AsyncWaitHandle.WaitOne(400)) { return $false }
-        return [bool]$client.Connected
-    } catch { return $false }
-    finally {
-        # Do not call TcpClient.Close() — it can hang even after Close(0).
-        if ($client -and $client.Client) {
-            try { $client.Client.Close(0) } catch {}
+        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+        foreach ($e in $listeners) {
+            if ($e.Port -ne $p) { continue }
+            if ([System.Net.IPAddress]::IsLoopback($e.Address)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::Any)) { return $true }
+            if ($e.Address.Equals([System.Net.IPAddress]::IPv6Any)) { return $true }
         }
-    }
+    } catch {}
+    return $false
 }
 
 function Start-ProxyChild([int]$p) {
@@ -78,10 +75,19 @@ function Start-ProxyChild([int]$p) {
     Write-KeepLog ('start-grok child -ProxyOnly -Port {0}' -f $p)
     $code = 1
     try {
+        # No Start-Process -Wait: pwsh waits for descendants (the proxy we just started).
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $arg `
-            -Wait -PassThru -WindowStyle Hidden `
+            -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-        if ($proc) { $code = [int]$proc.ExitCode }
+        if ($proc) {
+            if (-not $proc.WaitForExit(120000)) {
+                try { $proc.Kill() } catch {}
+                try { $null = $proc.WaitForExit(3000) } catch {}
+                Write-KeepLog 'start-grok child timed out (120s)'
+                return 124
+            }
+            $code = [int]$proc.ExitCode
+        }
     } catch {
         Write-KeepLog ("start failed: {0}" -f $_.Exception.Message)
         return 1
