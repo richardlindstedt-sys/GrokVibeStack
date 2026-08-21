@@ -43,6 +43,28 @@ function Get-ListenOwnerPids([int]$p) {
     return @()
 }
 
+function Get-KeeperPidFile([int]$p) {
+    $tag = if ($p -eq 8787) { '' } else { "-$p" }
+    Join-Path $grokHome ("token-saving\state\headroom-keeper{0}.pid" -f $tag)
+}
+
+function Test-KeeperAlive([int]$p) {
+    $f = Get-KeeperPidFile $p
+    if (-not (Test-Path -LiteralPath $f)) { return $false }
+    $kr = (Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue)
+    if (-not $kr) { return $false }
+    $kr = $kr.Trim()
+    $kid = 0
+    if (-not [int]::TryParse($kr, [ref]$kid) -or $kid -le 0) { return $false }
+    $kp = Get-Process -Id $kid -ErrorAction SilentlyContinue
+    if (-not $kp) { return $false }
+    $kcl = Get-ProcessCommandLine $kid
+    if (-not ($kcl -and $kcl -match 'keep-headroom-proxy')) { return $false }
+    if ($kcl -match ("-Port\s+$p(?!\d)")) { return $true }
+    if ($p -eq 8787 -and $kcl -notmatch '-Port\s+\d+') { return $true }
+    return $false
+}
+
 function Get-StatusColor([bool]$ok) {
     if ($ok) { 'Green' } else { 'Yellow' }
 }
@@ -234,17 +256,7 @@ if ($proxyUp) {
     Write-Host "  fix:    start-grok   (or start-headroom-proxy.ps1)" -ForegroundColor Yellow
     Write-Host "  note:   default grok-4.6 is overridden to Headroom; needs proxy up" -ForegroundColor DarkGray
 }
-$keepPidFile = Join-Path $grokHome 'token-saving\state\headroom-keeper.pid'
-$keepUp = $false
-if (Test-Path -LiteralPath $keepPidFile) {
-    $kr = (Get-Content -LiteralPath $keepPidFile -Raw -ErrorAction SilentlyContinue).Trim()
-    $kid = 0
-    if ([int]::TryParse($kr, [ref]$kid) -and $kid -gt 0) {
-        $kp = Get-Process -Id $kid -ErrorAction SilentlyContinue
-        $kcl = Get-ProcessCommandLine $kid
-        $keepUp = [bool]($kp -and $kcl -and $kcl -match 'keep-headroom-proxy')
-    }
-}
+$keepUp = Test-KeeperAlive 8787
 Write-Host ("  keeper: {0}" -f $(if ($keepUp) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })) -ForegroundColor (Get-StatusColor $keepUp)
 
 Write-Host ""
@@ -252,22 +264,12 @@ Write-Host "--- Leftover gate proxy (:8788; grok-gate is :8787 alias) ---" -Fore
 $gatePort = 8788
 $gateUp = Test-Port $gatePort
 $gatePidFile = Join-Path $grokHome 'token-saving\state\headroom-proxy-8788.pid'
-$gateKeepFile = Join-Path $grokHome 'token-saving\state\headroom-keeper-8788.pid'
 $gatePid = '-'
 if (Test-Path -LiteralPath $gatePidFile) {
     $gp = (Get-Content -LiteralPath $gatePidFile -Raw -ErrorAction SilentlyContinue).Trim()
     if ($gp) { $gatePid = $gp }
 }
-$gateKeepUp = $false
-if (Test-Path -LiteralPath $gateKeepFile) {
-    $gkr = (Get-Content -LiteralPath $gateKeepFile -Raw -ErrorAction SilentlyContinue).Trim()
-    $gkid = 0
-    if ([int]::TryParse($gkr, [ref]$gkid) -and $gkid -gt 0) {
-        $gkp = Get-Process -Id $gkid -ErrorAction SilentlyContinue
-        $gkcl = Get-ProcessCommandLine $gkid
-        $gateKeepUp = [bool]($gkp -and $gkcl -and $gkcl -match 'keep-headroom-proxy')
-    }
-}
+$gateKeepUp = Test-KeeperAlive 8788
 if ($gateUp) {
     Write-Host "  status: LISTENING (leftover dual proxy - stop it)" -ForegroundColor Yellow
     Write-Host ("  pid:    {0}" -f $gatePid)

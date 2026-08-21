@@ -213,11 +213,15 @@ function Save-GateOpenAdvisories {
         if ([string]$row.status -eq 'resolved') { continue }
         # Empty path list: keep ALL old open rows (unknown scope must not wipe carry-forward).
         if (-not $haveChangedPaths) { continue }
+        $rowFile = [string]$row.file
         $inThisDiff = $false
-        if (Get-Command Test-VibeAdvisoryTouchesDiff -ErrorAction SilentlyContinue) {
-            $inThisDiff = [bool](Test-VibeAdvisoryTouchesDiff -File ([string]$row.file) -ChangedPaths $ChangedPaths)
+        if ([string]::IsNullOrWhiteSpace($rowFile)) {
+            # Empty path cannot carry-forward; omitted this round => resolve.
+            $inThisDiff = $true
+        } elseif (Get-Command Test-VibeAdvisoryTouchesDiff -ErrorAction SilentlyContinue) {
+            $inThisDiff = [bool](Test-VibeAdvisoryTouchesDiff -File $rowFile -ChangedPaths $ChangedPaths)
         } else {
-            $inThisDiff = [bool](Test-GateAdvisoryFileInPaths -File ([string]$row.file) -ChangedPaths $ChangedPaths)
+            $inThisDiff = [bool](Test-GateAdvisoryFileInPaths -File $rowFile -ChangedPaths $ChangedPaths)
         }
         # Not in this diff: keep (carry-forward). In-diff and omitted: resolve.
         if (-not $inThisDiff) { continue }
@@ -259,6 +263,32 @@ function Save-GateOpenAdvisories {
                     updated     = $nowIso
                 }
             }
+        }
+    }
+    # Resolved rows are audit-only. Drop old / excess so the ledger cannot grow forever.
+    $resolvedMaxAge = [TimeSpan]::FromDays(14)
+    $resolvedCap = 80
+    $nowDt = Get-Date
+    foreach ($k in @($byKey.Keys)) {
+        $row = $byKey[$k]
+        if ([string]$row.status -ne 'resolved') { continue }
+        $when = $null
+        try {
+            if ([string]$row.updated) {
+                $when = [datetime]::Parse([string]$row.updated, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+            }
+        } catch { $when = $null }
+        if ($when -and ($nowDt - $when) -gt $resolvedMaxAge) {
+            [void]$byKey.Remove($k)
+        }
+    }
+    $resolvedNow = @($byKey.GetEnumerator() | Where-Object {
+            ([string]$_.Value.cwd -eq $Cwd) -and ([string]$_.Value.status -eq 'resolved')
+        } | Sort-Object { [string]$_.Value.updated })
+    $resOverflow = $resolvedNow.Count - $resolvedCap
+    if ($resOverflow -gt 0) {
+        foreach ($entry in @($resolvedNow | Select-Object -First $resOverflow)) {
+            [void]$byKey.Remove($entry.Key)
         }
     }
     $dir = Split-Path $path -Parent

@@ -99,12 +99,6 @@ function Test-PortListening([int]$p) {
     if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
         return [bool](Test-VibePortListening -Port $p)
     }
-    try {
-        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
-        foreach ($e in $listeners) {
-            if ($e.Port -eq $p) { return $true }
-        }
-    } catch {}
     return $false
 }
 

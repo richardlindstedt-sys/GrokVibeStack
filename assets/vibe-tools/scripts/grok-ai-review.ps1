@@ -272,7 +272,7 @@ if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.No
 }
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
     # One Headroom (:8787 / grok-4.6). Sequential so 3 SSE do not kill the TUI.
-    $sharesChatProxy = ($ProxyPort -eq 8787) -or ($Model -eq 'grok-4.6') -or ($Model -eq 'grok-via-headroom') -or ($Model -match '8787')
+    $sharesChatProxy = ($ProxyPort -eq 8787)
     if ($sharesChatProxy) {
         $SequentialReviewers = $true
     } elseif ($script:ResolvedProfile.SequentialDefault) {
@@ -341,12 +341,6 @@ function Test-PortListening([int]$p) {
     if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
         return [bool](Test-VibePortListening -Port $p)
     }
-    try {
-        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
-        foreach ($e in $listeners) {
-            if ($e.Port -eq $p) { return $true }
-        }
-    } catch {}
     return $false
 }
 
@@ -356,7 +350,7 @@ function Test-ProxyUsable([int]$p) {
     if (Get-Command Test-VibeProxyStackUp -ErrorAction SilentlyContinue) {
         return [bool](Test-VibeProxyStackUp -Port $p)
     }
-    return [bool](Test-PortListening $p)
+    return $false
 }
 
 function Resolve-GrokExe {
@@ -636,6 +630,31 @@ function Save-Text([string]$Path, [string]$Text) {
     [System.IO.File]::WriteAllText($Path, $Text, $utf8)
 }
 
+function Get-VibePreflightHatchKind {
+    param(
+        [bool]$NeedsProxy,
+        [bool]$NoHatchRetry,
+        [bool]$ProxyUsable,
+        [bool]$VanillaHatchOk
+    )
+    if ($NoHatchRetry) { return 'none' }
+    if ($NeedsProxy -and -not $ProxyUsable -and $VanillaHatchOk) { return 'direct' }
+    return 'none'
+}
+
+function Get-VibeStreamRetryKind {
+    param(
+        [bool]$NeedsProxy,
+        [bool]$NoHatchRetry,
+        [bool]$ProxyUsable,
+        [bool]$Ok,
+        [bool]$ProxyStreamFail
+    )
+    if ($NoHatchRetry) { return 'none' }
+    if ((-not $Ok -or $ProxyStreamFail) -and $NeedsProxy -and $ProxyUsable) { return 'same-headroom' }
+    return 'none'
+}
+
 function Invoke-GrokHeadless {
     param(
         [Parameter(Mandatory)][string]$GrokExe,
@@ -653,7 +672,10 @@ function Invoke-GrokHeadless {
     )
 
     $needsProxy = ($ModelName -match 'headroom|grok-gate|8787|8788') -or ($ModelName -eq 'grok-4.6')
-    if ($needsProxy -and -not $NoHatchRetry -and -not (Test-ProxyUsable $ProxyPort) -and (Test-VanillaHatchEndpoint)) {
+    $preflightUsable = [bool](Test-ProxyUsable $ProxyPort)
+    $vanillaOk = $false
+    if ($needsProxy -and -not $NoHatchRetry -and -not $preflightUsable) { $vanillaOk = [bool](Test-VanillaHatchEndpoint) }
+    if ((Get-VibePreflightHatchKind -NeedsProxy $needsProxy -NoHatchRetry ([bool]$NoHatchRetry) -ProxyUsable $preflightUsable -VanillaHatchOk $vanillaOk) -eq 'direct') {
         Write-Host ("  proxy down - {0} using grok-4.6-direct" -f $Label) -ForegroundColor Yellow
         return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
     }
@@ -761,7 +783,7 @@ function Invoke-GrokHeadless {
     } catch {}
     $ok = ($code -eq 0 -or $null -eq $code) -and -not [string]::IsNullOrWhiteSpace($text)
     $proxyStreamFail = ($text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
-    if ((-not $ok -or $proxyStreamFail) -and -not $NoHatchRetry -and $needsProxy -and (Test-ProxyUsable $ProxyPort)) {
+    if ((Get-VibeStreamRetryKind -NeedsProxy $needsProxy -NoHatchRetry ([bool]$NoHatchRetry) -ProxyUsable ([bool](Test-ProxyUsable $ProxyPort)) -Ok $ok -ProxyStreamFail $proxyStreamFail) -eq 'same-headroom') {
         Write-Host ("  proxy stream failed - retry {0} on {1} (same Headroom)" -f $Label, $ModelName) -ForegroundColor Yellow
         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
             Write-GateProgress ("proxy stream fail - retry {0} on {1}" -f $Label, $ModelName)

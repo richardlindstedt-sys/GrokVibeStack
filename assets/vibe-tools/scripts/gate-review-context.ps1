@@ -170,18 +170,12 @@ function Get-StrictFullFileAppendix {
 
 function Test-VibeAdvisoryTouchesDiff {
     param([string]$File, [string[]]$ChangedPaths)
-    if (@($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
-        return $false
+    if (-not (Get-Command Test-GateAdvisoryFileInPaths -ErrorAction SilentlyContinue)) {
+        $gp = Join-Path $PSScriptRoot 'gate-progress.ps1'
+        if (Test-Path -LiteralPath $gp) { . $gp }
     }
-    if ([string]::IsNullOrWhiteSpace($File)) { return $false }
-    $norm = (($File -replace '\\', '/').Trim().TrimStart('/'))
-    if (-not $norm) { return $false }
-    foreach ($c in @($ChangedPaths)) {
-        if (-not $c) { continue }
-        $cn = (($c -replace '\\', '/').Trim().TrimStart('/'))
-        if (-not $cn) { continue }
-        if ($norm -eq $cn) { return $true }
-        if ($cn.EndsWith('/' + $norm) -or $norm.EndsWith('/' + $cn)) { return $true }
+    if (Get-Command Test-GateAdvisoryFileInPaths -ErrorAction SilentlyContinue) {
+        return [bool](Test-GateAdvisoryFileInPaths -File $File -ChangedPaths $ChangedPaths)
     }
     return $false
 }
@@ -233,14 +227,11 @@ function Get-PriorOpenAdvisoriesBlock {
     if ($nextIn.Count -gt 0) {
         [void]$sb.AppendLine('## PRIOR OPEN NEXT (files in this diff — re-evaluate)')
         [void]$sb.AppendLine('Re-state if still present. Omit if this diff fixed it. Do not list carry-forward IDs.')
-        foreach ($a in @($nextIn | Select-Object -First 12)) {
+        foreach ($a in @($nextIn)) {
             $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
             $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()
             $loc = if ($a.file) { ' ' + ((([string]$a.file) -replace '[\r\n\t]', ' ').Trim()) } else { '' }
             [void]$sb.AppendLine(('- {0}{1} — {2}' -f $id, $loc, $title))
-        }
-        if ($nextIn.Count -gt 12) {
-            [void]$sb.AppendLine(('- ... {0} more in-diff next' -f ($nextIn.Count - 12)))
         }
         [void]$sb.AppendLine('')
     }

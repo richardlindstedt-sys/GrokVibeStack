@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.12] - 2026-08-21
+
+### Fixed
+
+- Owner short-circuit is empty/truncated CIM only. `python -m http.server` (or any complete non-headroom cmdline) on the port is not stack-up / adopt.
+- Gate `Test-ProxyUsable` is fail-closed when `ListenProbe` is missing (not any-TCP).
+- Socket PID table is IPv4 **and** IPv6 (`GetExtendedTcpTable` AF_INET6). `ERROR_INSUFFICIENT_BUFFER` retries instead of returning no PIDs.
+- Callers thin-wrap `Test-VibePortListening` (no copied listen loops). Doctor still has a listen-table fallback so a missing helper is not false-down.
+- Sequential reviewers only when the proxy port is `:8787`. `grok-4.6` on another port can run parallel.
+- In-diff **next** is no longer capped at 12 (omit = resolved no longer drops unshown rows). Empty-file ledger rows omitted this round resolve.
+- Open-advisories ledger **prunes resolved** rows older than 14 days and caps resolved at 80 per cwd so the file cannot grow forever. Open next/later are kept.
+- Doctor keeper liveness uses the port-scoped pid file and requires `-Port N` on the cmdline (8787 may omit `-Port`).
+- Path-match helper is one implementation (`Test-GateAdvisoryFileInPaths`); context wraps it.
+- Smoke: owner matrix (http.server not owner), Any/IPv6 bind, hatch-kind matrix, dual-proxy name isolation, ledger empty-file + prune/cap.
+
 ## [1.5.11] - 2026-08-21
 
 ### Fixed

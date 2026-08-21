@@ -18,51 +18,57 @@ function Get-VibeListenSocketPids {
     $ids = New-Object 'System.Collections.Generic.List[int]'
     if ($Port -le 0) { return $ids }
     try {
-        if (-not ('VibeListenTable' -as [type])) {
+        if (-not ('VibeListenTable2' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-public static class VibeListenTable {
+public static class VibeListenTable2 {
     [DllImport("iphlpapi.dll", SetLastError = true)]
     static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, int tableClass, uint reserved);
-    [StructLayout(LayoutKind.Sequential)]
-    struct Row {
-        public uint state;
-        public uint localAddr;
-        public uint localPort;
-        public uint remoteAddr;
-        public uint remotePort;
-        public uint owningPid;
+    const int AF_INET = 2;
+    const int AF_INET6 = 23;
+    const int TCP_TABLE_OWNER_PID_LISTENER = 3;
+    const uint ERROR_INSUFFICIENT_BUFFER = 122;
+    static void Collect(int port, int ipVersion, int rowSize, int portOffset, int pidOffset, List<int> found) {
+        int len = 0;
+        GetExtendedTcpTable(IntPtr.Zero, ref len, false, ipVersion, TCP_TABLE_OWNER_PID_LISTENER, 0);
+        if (len <= 0) return;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            IntPtr buf = Marshal.AllocHGlobal(len);
+            try {
+                uint rc = GetExtendedTcpTable(buf, ref len, false, ipVersion, TCP_TABLE_OWNER_PID_LISTENER, 0);
+                if (rc == ERROR_INSUFFICIENT_BUFFER) continue;
+                if (rc != 0) return;
+                int count = Marshal.ReadInt32(buf);
+                IntPtr row = IntPtr.Add(buf, 4);
+                for (int i = 0; i < count; i++) {
+                    IntPtr r = IntPtr.Add(row, i * rowSize);
+                    uint localPort = unchecked((uint)Marshal.ReadInt32(r, portOffset));
+                    int lp = (int)(((localPort & 0xFF) << 8) | ((localPort >> 8) & 0xFF));
+                    int pid = Marshal.ReadInt32(r, pidOffset);
+                    if (lp == port && pid > 0 && !found.Contains(pid)) found.Add(pid);
+                }
+                return;
+            } finally { Marshal.FreeHGlobal(buf); }
+        }
     }
     public static int[] PidsOnPort(int port) {
         var found = new List<int>();
         if (port <= 0 || port > 65535) return found.ToArray();
-        int len = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref len, false, 2, 3, 0);
-        if (len <= 0) return found.ToArray();
-        IntPtr buf = Marshal.AllocHGlobal(len);
-        try {
-            if (GetExtendedTcpTable(buf, ref len, false, 2, 3, 0) != 0) return found.ToArray();
-            int count = Marshal.ReadInt32(buf);
-            int rowSize = Marshal.SizeOf(typeof(Row));
-            IntPtr row = IntPtr.Add(buf, 4);
-            for (int i = 0; i < count; i++) {
-                var r = (Row)Marshal.PtrToStructure(IntPtr.Add(row, i * rowSize), typeof(Row));
-                int lp = (int)(((r.localPort & 0xFF) << 8) | ((r.localPort >> 8) & 0xFF));
-                if (lp == port && r.owningPid > 0 && !found.Contains((int)r.owningPid))
-                    found.Add((int)r.owningPid);
-            }
-        } finally { Marshal.FreeHGlobal(buf); }
+        Collect(port, AF_INET, 24, 8, 20, found);
+        Collect(port, AF_INET6, 56, 20, 52, found);
         return found.ToArray();
     }
 }
 '@
         }
-        foreach ($id in @([VibeListenTable]::PidsOnPort($Port))) {
+        foreach ($id in @([VibeListenTable2]::PidsOnPort($Port))) {
             if ($id -gt 0 -and -not $ids.Contains([int]$id)) { [void]$ids.Add([int]$id) }
         }
-    } catch {}
+    } catch {
+        # P/Invoke or Add-Type failed: no socket PIDs (fail closed for owner/adopt).
+    }
     return $ids
 }
 
@@ -75,15 +81,22 @@ function Test-VibeHeadroomOwnerCandidate {
         [bool]$SocketOwnsPort
     )
     $isHeadroomBin = ($Name -match '(?i)^headroom(\.exe)?$') -or ($ExecutablePath -match '(?i)[\\/]headroom(\.exe)?$')
-    $isPy = $Name -match '(?i)^python(w)?(\.exe)?$'
+    $isPy = ($Name -match '(?i)^python(w)?(\.exe)?$') -or ($ExecutablePath -match '(?i)[\\/]python(w)?(\.exe)?$')
     $isProxyProc = $isHeadroomBin -or $isPy
-    # Socket owner on $Port + headroom/python is enough (empty or truncated CIM cmdline).
-    if ($SocketOwnsPort -and $isProxyProc) { return $true }
     $cl = [string]$CommandLine
-    if ([string]::IsNullOrWhiteSpace($cl)) { return $false }
-    if ($cl -notmatch '(?i)headroom') { return $false }
-    $hasProxy = $cl -match '(?i)(\s|^)proxy(\s|$)'
+    $clEmpty = [string]::IsNullOrWhiteSpace($cl)
     $hasPort = ($Port -gt 0) -and ($cl -match ("(?i)--port(\s|=)+{0}(\s|$)" -f $Port))
+    $hasHeadroom = $cl -match '(?i)headroom'
+    $hasProxy = $cl -match '(?i)(\s|^)proxy(\s|$)'
+    $hasAnyPortFlag = $cl -match '(?i)--port(\s|=)+\d+'
+    # Socket + headroom/python only when CIM is empty or truncated (no --port at all).
+    # A complete non-headroom CL (python -m http.server) is not the proxy.
+    if ($SocketOwnsPort -and $isProxyProc) {
+        if ($clEmpty) { return $true }
+        if ($hasHeadroom -and -not $hasAnyPortFlag) { return $true }
+    }
+    if ($clEmpty) { return $false }
+    if (-not $hasHeadroom) { return $false }
     if ($hasProxy -and $hasPort) { return $true }
     return $false
 }

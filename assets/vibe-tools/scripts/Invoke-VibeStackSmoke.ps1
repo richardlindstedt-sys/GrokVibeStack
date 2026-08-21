@@ -432,7 +432,7 @@ if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'Cha
 } else {
     Bad 'gate ledger missing persist/inject or diff-scoped carry-forward'
 }
-if ($progSrc -match 'keep ALL old open' -and $progSrc -match 'function Test-GateAdvisoryFileInPaths' -and $progSrc -match 'VIBE_OPEN_ADVISORIES_FILE' -and $chatLibSrc -match 'VIBE_OPEN_ADVISORIES_FILE' -and $ctxSrc -notmatch 'Split-Path -Leaf' -and $progSrc -match 'In-diff and omitted: resolve') {
+if ($progSrc -match 'keep ALL old open' -and $progSrc -match 'function Test-GateAdvisoryFileInPaths' -and $progSrc -match 'VIBE_OPEN_ADVISORIES_FILE' -and $chatLibSrc -match 'VIBE_OPEN_ADVISORIES_FILE' -and $ctxSrc -notmatch 'Split-Path -Leaf' -and $progSrc -match 'In-diff and omitted: resolve' -and $progSrc -match 'cannot grow forever' -and $progSrc -match 'Empty path cannot carry-forward' -and $ctxSrc -notmatch 'Select-Object -First 12' -and $ctxSrc -match 'Test-GateAdvisoryFileInPaths') {
     Ok 'gate ledger: keep-untouched persist; empty-paths keep-all; no leaf false-positive'
 } else {
     Bad 'gate ledger persist polarity / env isolate / leaf-match still present'
@@ -473,6 +473,37 @@ $carry2 = @($doc2.items) | Where-Object { $_.id -eq 'carry-1' } | Select-Object 
 $fresh2 = @($doc2.items) | Where-Object { $_.id -eq 'new-1' } | Select-Object -First 1
 if (-not $carry2 -or [string]$carry2.status -ne 'open') { Write-Output 'empty-paths-wiped-carry'; exit 1 }
 if (-not $fresh2 -or [string]$fresh2.status -ne 'open') { Write-Output 'empty-paths-wiped-new'; exit 1 }
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'empty-1'; title = 'no file'; file = ''; severity = 'next' },
+    [pscustomobject]@{ id = 'new-1'; title = 'new on diff'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
+) -RunId 'e1' -Cwd $cwd -ChangedPaths $changed
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'new-1'; title = 'new on diff'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
+) -RunId 'e2' -Cwd $cwd -ChangedPaths $changed
+$docE = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$emptyGone = @($docE.items) | Where-Object { $_.id -eq 'empty-1' } | Select-Object -First 1
+if (-not $emptyGone -or [string]$emptyGone.status -ne 'resolved') { Write-Output 'empty-file-not-resolved'; exit 1 }
+$oldIso = ([datetime]::UtcNow.AddDays(-20)).ToString('o')
+$keepIso = ([datetime]::UtcNow).ToString('o')
+$prev = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$items = [System.Collections.Generic.List[object]]::new()
+foreach ($it in @($prev.items)) { [void]$items.Add($it) }
+[void]$items.Add([pscustomobject]@{ cwd = $cwd; id = 'old-res'; title = 'old resolved'; file = 'x.ps1'; run = 'old'; bucket = 'next'; status = 'resolved'; opened = $oldIso; updated = $oldIso; resolvedRun = 'old' })
+for ($i = 0; $i -lt 90; $i++) {
+    [void]$items.Add([pscustomobject]@{ cwd = $cwd; id = ('cap-{0}' -f $i); title = 'cap'; file = 'x.ps1'; run = 'c'; bucket = 'next'; status = 'resolved'; opened = $keepIso; updated = $keepIso; resolvedRun = 'c' })
+}
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($Ledger, ([pscustomobject]@{ updated = $keepIso; items = @($items) } | ConvertTo-Json -Depth 6), $utf8)
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'new-1'; title = 'new on diff'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
+) -RunId 'prune' -Cwd $cwd -ChangedPaths $changed
+$docP = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$oldRes = @($docP.items) | Where-Object { $_.id -eq 'old-res' } | Select-Object -First 1
+if ($oldRes) { Write-Output 'old-resolved-not-pruned'; exit 1 }
+$resCount = @($docP.items | Where-Object { [string]$_.status -eq 'resolved' }).Count
+if ($resCount -gt 80) { Write-Output ('resolved-cap-failed:{0}' -f $resCount); exit 1 }
+$openKept = @($docP.items) | Where-Object { $_.id -eq 'new-1' } | Select-Object -First 1
+if (-not $openKept -or [string]$openKept.status -ne 'open') { Write-Output 'prune-dropped-open'; exit 1 }
 Write-Output 'ok'
 exit 0
 '@
@@ -482,7 +513,7 @@ exit 0
     $code = $LASTEXITCODE
     $txt = ($out | Out-String).Trim()
     if ($code -eq 0 -and $txt -match '(?m)^ok$') {
-        Ok 'gate ledger runtime: untouched next survives; in-diff omitted resolves; empty paths keep all'
+        Ok 'gate ledger runtime: carry-forward; omit-resolve; empty-file resolve; resolved prune/cap'
     } else {
         Bad ("gate ledger runtime failed (exit {0}): {1}" -f $code, $txt)
     }
@@ -767,7 +798,7 @@ if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwn
     Bad 'start-grok missing ListenProbe / Save-ProxyFingerprint / adopted PID write / still has Test-ProxyHttpReady'
 }
 $probeSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1') -Raw
-if ($probeSrc -match 'GetActiveTcpListeners' -and $probeSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $startSrc -match 'Test-VibePortListening' -and $keepSrc -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibePortListening' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect') {
+if ($probeSrc -match 'GetActiveTcpListeners' -and $probeSrc -match 'AF_INET6' -and $probeSrc -match 'VibeListenTable2' -and $probeSrc -match 'ERROR_INSUFFICIENT_BUFFER' -and $probeSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $startSrc -match 'Test-VibePortListening' -and $keepSrc -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibePortListening' -and $startSrc -notmatch 'GetActiveTcpListeners' -and $keepSrc -notmatch 'GetActiveTcpListeners' -and $rawReview -notmatch 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect') {
     Ok 'tcp probe: ListenProbe GetActiveTcpListeners; start/keep/review wrap it (no connect/Get-NetTCPConnection)'
 } else {
     Bad 'tcp probe missing ListenProbe wrap or still connects / Get-NetTCPConnection'
@@ -783,7 +814,7 @@ if ($instSrc -match 'one Headroom' -and $instSrc -match "-StopProxy', '-Port', '
     Bad 'installer still starts :8788 or missing one-proxy next-steps'
 }
 $docSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\doctor.ps1') -Raw
-if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate' -and $docSrc -match '-StopProxy -Port 8788' -and $docSrc -match 'ListenProbe\.ps1' -and $docSrc -match 'Test-VibePortListening' -and $docSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
+if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'headroom-proxy.fingerprint' -and $docSrc -match 'live argv' -and $docSrc -match 'headroom-proxy-8788' -and $docSrc -match 'grok-gate' -and $docSrc -match '-StopProxy -Port 8788' -and $docSrc -match 'ListenProbe\.ps1' -and $docSrc -match 'Test-VibePortListening' -and $docSrc -match 'function Test-KeeperAlive' -and $docSrc -match 'Test-KeeperAlive 8787' -and $docSrc -match 'Test-KeeperAlive 8788' -and $docSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
     Ok 'doctor: live proxy cmdline / fingerprint + leftover :8788 stop; ListenProbe; no Get-NetTCPConnection'
 } else {
     Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / ListenProbe / still Get-NetTCPConnection'
@@ -805,10 +836,12 @@ if (Test-Path -LiteralPath $probePs1) {
     $pyEmptySock = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name 'python.exe' -Port 8787 -SocketOwnsPort $true
     $pyEmptyNo = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name 'python.exe' -Port 8787 -SocketOwnsPort $false
     $notepadSock = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name 'notepad.exe' -Port 8787 -SocketOwnsPort $true
-    if ((-not $emptyNoSock) -and $emptySock -and $fullCl -and (-not $truncNoSock) -and $truncSock -and (-not $wrongPortCl) -and $pyEmptySock -and (-not $pyEmptyNo) -and (-not $notepadSock)) {
-        Ok 'ListenProbe: empty-CL needs socket PID; python empty-CL + socket counts; notepad does not'
+    $httpSrv = Test-VibeHeadroomOwnerCandidate -CommandLine 'python.exe -m http.server 8787' -Name 'python.exe' -ExecutablePath 'C:\Python\python.exe' -Port 8787 -SocketOwnsPort $true
+    $pyPathEmpty = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name '' -ExecutablePath 'C:\Python\python.exe' -Port 8787 -SocketOwnsPort $true
+    if ((-not $emptyNoSock) -and $emptySock -and $fullCl -and (-not $truncNoSock) -and $truncSock -and (-not $wrongPortCl) -and $pyEmptySock -and (-not $pyEmptyNo) -and (-not $notepadSock) -and (-not $httpSrv) -and $pyPathEmpty) {
+        Ok 'ListenProbe: empty-CL needs socket PID; http.server not owner; python path empty-CL + socket counts'
     } else {
-        Bad ('ListenProbe candidate matrix emptyNo={0} emptyYes={1} full={2} truncNo={3} truncYes={4} wrongPort={5} pyYes={6} pyNo={7} note={8}' -f $emptyNoSock, $emptySock, $fullCl, $truncNoSock, $truncSock, $wrongPortCl, $pyEmptySock, $pyEmptyNo, $notepadSock)
+        Bad ('ListenProbe candidate matrix emptyNo={0} emptyYes={1} full={2} truncNo={3} truncYes={4} wrongPort={5} pyYes={6} pyNo={7} note={8} http={9} pyPath={10}' -f $emptyNoSock, $emptySock, $fullCl, $truncNoSock, $truncSock, $wrongPortCl, $pyEmptySock, $pyEmptyNo, $notepadSock, $httpSrv, $pyPathEmpty)
     }
     $listener = $null
     try {
@@ -828,6 +861,38 @@ if (Test-Path -LiteralPath $probePs1) {
         } else {
             Bad ('ListenProbe runtime up={0} hasPid={1} downAfter={2} stack={3} pids={4}' -f $up, $hasUs, $down, $stack, ($sockPids -join ','))
         }
+        $anyL = $null
+        try {
+            $anyL = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Any, 0)
+            $anyL.Start()
+            $ap = [int]([System.Net.IPEndPoint]$anyL.LocalEndpoint).Port
+            $anyUp = Test-VibePortListening -Port $ap
+            $anyL.Stop(); $anyL = $null
+            if ($anyUp) { Ok 'ListenProbe: unicast/Any bind counts as listening' } else { Bad 'ListenProbe: Any bind not listening' }
+        } catch {
+            Bad "ListenProbe Any bind: $_"
+            if ($anyL) { try { $anyL.Stop() } catch {} }
+        }
+        $v6 = $null
+        try {
+            $v6 = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::IPv6Loopback, 0)
+            $v6.Start()
+            $vp = [int]([System.Net.IPEndPoint]$v6.LocalEndpoint).Port
+            $v6up = Test-VibePortListening -Port $vp
+            $v6pids = @(Get-VibeListenSocketPids -Port $vp)
+            $v6has = $v6pids -contains $PID
+            $v6.Stop(); $v6 = $null
+            if ($v6up -and $v6has) {
+                Ok 'ListenProbe: IPv6 loopback listen has socket PID'
+            } elseif ($v6up) {
+                Ok 'ListenProbe: IPv6 loopback listen-up (socket PID skipped)'
+            } else {
+                Bad 'ListenProbe: IPv6 loopback not listening'
+            }
+        } catch {
+            Ok 'ListenProbe: IPv6 unavailable (skipped)'
+            if ($v6) { try { $v6.Stop() } catch {} }
+        }
     } catch {
         Bad "ListenProbe runtime bind: $_"
         if ($listener) { try { $listener.Stop() } catch {} }
@@ -840,10 +905,45 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'GetActiveTcpListeners' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.6'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.6'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match '\$sharesChatProxy = \(\$ProxyPort -eq 8787\)' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
     Ok 'review: grok-4.6 :8787 one proxy; stream fail retries Headroom; listen-only preflight'
 } else {
     Bad 'review missing grok-4.6 :8787 / Headroom retry / listen-only preflight'
+}
+$hatchFns = [regex]::Matches($rawReview, '(?ms)^function Get-Vibe(?:PreflightHatch|StreamRetry)Kind \{.*?^\}')
+if ($hatchFns.Count -eq 2) {
+    Invoke-Expression (($hatchFns | ForEach-Object { $_.Value }) -join "`n")
+    $h1 = Get-VibePreflightHatchKind -NeedsProxy $true -NoHatchRetry $false -ProxyUsable $false -VanillaHatchOk $true
+    $h2 = Get-VibePreflightHatchKind -NeedsProxy $true -NoHatchRetry $true -ProxyUsable $false -VanillaHatchOk $true
+    $h3 = Get-VibeStreamRetryKind -NeedsProxy $true -NoHatchRetry $false -ProxyUsable $true -Ok $false -ProxyStreamFail $true
+    $h4 = Get-VibeStreamRetryKind -NeedsProxy $true -NoHatchRetry $true -ProxyUsable $true -Ok $false -ProxyStreamFail $true
+    $h5 = Get-VibeStreamRetryKind -NeedsProxy $true -NoHatchRetry $false -ProxyUsable $false -Ok $false -ProxyStreamFail $true
+    if ($h1 -eq 'direct' -and $h2 -eq 'none' -and $h3 -eq 'same-headroom' -and $h4 -eq 'none' -and $h5 -eq 'none') {
+        Ok 'review: hatch kind matrix (direct / NoHatchRetry skip / same-Headroom / no hatch when proxy down mid-stream)'
+    } else {
+        Bad ('review hatch kind matrix d={0} nohatch={1} stream={2} streamSkip={3} downStream={4}' -f $h1, $h2, $h3, $h4, $h5)
+    }
+} else {
+    Bad ('review hatch functions not extractable (count={0})' -f $hatchFns.Count)
+}
+$isoHit = @{}
+$isoOk = $true
+foreach ($p in 8787, 8788, 9999) {
+    $tag = if ($p -eq 8787) { '' } else { "-$p" }
+    $names = @(
+        ("headroom-proxy{0}.pid" -f $tag),
+        ("headroom-keeper{0}.pid" -f $tag),
+        $(if ($p -eq 8787) { 'Local\GrokVibeHeadroomKeeper' } else { "Local\GrokVibeHeadroomKeeper-$p" })
+    )
+    foreach ($n in $names) {
+        if ($isoHit.ContainsKey($n)) { $isoOk = $false }
+        $isoHit[$n] = $p
+    }
+}
+if ($isoOk -and $startSrc -match 'headroom-proxy\$portTag' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $isoHit.Count -eq 9) {
+    Ok 'dual-proxy isolation: port-scoped pid/keeper/mutex names unique'
+} else {
+    Bad 'dual-proxy isolation names collide or missing portTag'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
 if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
