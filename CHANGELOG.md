@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-08-21
+
+### Fixed
+
+- TOML merge parsed **zero tables**. `$Raw -split "`r?`n", -1` is not "keep trailing empties": a negative max-substrings returns the **whole file as one string** (Windows PowerShell 5.1 / some pwsh). `foreach` then walks **characters**, so `[model."grok-4.6"]` never registered. Install and `start-grok` then wrote a Headroom-less `config.toml` (marketplace/ui/privacy only). `grok models` showed stock `grok-4.6` with no Headroom alias. Split is now .NET `String.Split` + `Write-Output -NoEnumerate` so a 1-line file stays a list.
+
+## [1.5.8] - 2026-08-21
+
+### Fixed
+
+- Install and `start-grok` crashed when `config.toml` was missing **or** when Grok had rewritten MCP `command` paths to `command = "C:\Users\..."` (invalid TOML escapes: `\U`, `\t`, `\.`). Python `tomllib` wrote that error to stderr; with `$ErrorActionPreference = Stop` the native ErrorRecord aborted **before** repair. `Test-TomlStrictParse` now never throws. MCP commands are written as forward-slash double-quoted paths. Merge sanitizes leftover backslash commands.
+- Missing `config.toml`, a Headroom-less stub, and a grok-poisoned file all repair to a grok-parseable Headroom config. If merge still fails, install and `start-grok` write a snippet-only fallback and **still launch grok**. `start-grok` no longer refuses to start because the helper or snippet is missing.
+
 ## [1.5.7] - 2026-08-21
 
 ### Fixed

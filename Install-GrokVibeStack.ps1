@@ -746,19 +746,35 @@ function Merge-GrokConfig {
         Write-Utf8NoBomFile -Path $cfgPath -Content "[cli]`ninstaller = `"internal`"`n"
     }
 
-    $result = Repair-GrokConfigFile -ConfigPath $cfgPath -SnippetPath $snippetPath -HeadroomCmd $hr -SerenaExe $serenaExe -SerenaEnabled $serenaOn -BackupSuffix ("install-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-    if ($result.BackupPath) {
-        $script:Manifest.configBackup = $result.BackupPath
-        Write-Info "Config backup: $($result.BackupPath)"
-    }
-    if ($result.Quarantined) {
-        Write-Info "Quarantined sidecar: $($result.Quarantined)"
-    }
-    if ($existed) {
-        Write-Ok "Merged vibe stack into config.toml"
-    } else {
-        Write-Ok "Created config.toml"
-        [void]$script:Manifest.stackFiles.Add($cfgPath)
+    try {
+        $result = Repair-GrokConfigFile -ConfigPath $cfgPath -SnippetPath $snippetPath -HeadroomCmd $hr -SerenaExe $serenaExe -SerenaEnabled $serenaOn -BackupSuffix ("install-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        if ($result.BackupPath) {
+            $script:Manifest.configBackup = $result.BackupPath
+            Write-Info "Config backup: $($result.BackupPath)"
+        }
+        if ($result.Quarantined) {
+            Write-Info "Quarantined sidecar: $($result.Quarantined)"
+        }
+        if ($existed) {
+            Write-Ok "Merged vibe stack into config.toml"
+        } else {
+            Write-Ok "Created config.toml"
+            [void]$script:Manifest.stackFiles.Add($cfgPath)
+        }
+    } catch {
+        Write-Warn2 ("config merge: {0}" -f $_.Exception.Message)
+        try {
+            $snippet = Get-VibeManagedSnippet -SnippetPath $snippetPath -HeadroomCmd $hr -SerenaExe $serenaExe -SerenaEnabled $serenaOn
+            $fallback = Repair-TomlUnsafeCommandPaths -Raw (Merge-VibeToml -Raw '' -Snippet $snippet)
+            if (Test-Path -LiteralPath $cfgPath) {
+                $null = Backup-VibeConfigFile -ConfigPath $cfgPath -BackupSuffix ("install-fallback-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            }
+            Write-Utf8NoBomFile -Path $cfgPath -Content $fallback
+            Write-Ok "Wrote fallback config.toml (snippet only) so grok can start"
+            if (-not $existed) { [void]$script:Manifest.stackFiles.Add($cfgPath) }
+        } catch {
+            Write-Fail ("config.toml: {0}" -f $_.Exception.Message)
+        }
     }
 }
 

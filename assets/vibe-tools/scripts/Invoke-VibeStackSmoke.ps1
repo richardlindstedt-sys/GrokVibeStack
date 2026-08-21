@@ -781,6 +781,20 @@ base_url = "http://127.0.0.1:8787/v1"
 default = "grok-4.6"
 "@
     $snippetText = Get-VibeManagedSnippet -SnippetPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true
+    $splitN = Split-VibeTomlLines "a`nb`nc"
+    $splitOne = Split-VibeTomlLines '[session]'
+    if ($splitN.Count -eq 3 -and $splitN[1] -eq 'b' -and $splitOne.Count -eq 1 -and $splitOne[0] -eq '[session]') {
+        Ok 'Split-VibeTomlLines: multi-line stays lines; single line does not unwrap to chars'
+    } else {
+        Bad ("Split-VibeTomlLines multi={0} single={1} firstSingle={2}" -f $splitN.Count, $splitOne.Count, $splitOne[0])
+    }
+    $docSnip = ConvertFrom-VibeTomlDocument -Raw $snippetText
+    $secNames = @($docSnip.Sections | ForEach-Object { [string]$_.Name })
+    if ($secNames -contains 'session' -and $secNames -contains 'model."grok-4.6"' -and $secNames -contains 'model."grok-gate"') {
+        Ok 'ConvertFrom-VibeTomlDocument: snippet has session + quoted grok-4.6 + grok-gate tables'
+    } else {
+        Bad ("parser saw {0} sections: {1}" -f $secNames.Count, ($secNames -join ','))
+    }
     $snipCheck = Test-VibeToml -Raw $snippetText
     if ($snipCheck.Ok -and $snipCheck.HasHeadroomOverride -and $snipCheck.HasGateOverride) {
         Ok 'Test-VibeToml: managed snippet (grok-4.6 + grok-gate on :8787) is Ok'
@@ -809,7 +823,7 @@ base_url = "http://127.0.0.1:8788/v1"
     }
     $merged = Merge-VibeToml -Raw $pre -Snippet $snippetText
     $mergedCheck = Test-VibeToml -Raw $merged
-    if ($mergedCheck.Ok -and ($merged -match 'command = ''C:\\hr\.cmd''') -and ($merged -notmatch "command = 'old'")) {
+    if ($mergedCheck.Ok -and ($merged -match 'command = "C:/hr\.cmd"') -and ($merged -notmatch "command = 'old'")) {
         Ok 'config merge: reinstall over existing owned tables stays valid'
     } else {
         Bad ("config merge invalid after reinstall-shaped input: {0}" -f ($mergedCheck.Errors -join '; '))
@@ -870,6 +884,69 @@ enabled = true
     } else {
         Bad 'Test-VibeToml treated Headroom-less stub as Ok'
     }
+    $poison = @'
+[mcp_servers.headroom]
+command = "C:\Users\linds\.grok\token-saving\scripts\headroom-mcp-serve.cmd"
+enabled = true
+
+[model."grok-4.6"]
+base_url = "http://127.0.0.1:8787/v1"
+'@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Stop'
+    $poisonThrew = $false
+    $poisonCheck = $null
+    try {
+        $poisonCheck = Test-VibeToml -Raw $poison
+    } catch {
+        $poisonThrew = $true
+    }
+    $ErrorActionPreference = $prevEa
+    if (-not $poisonThrew -and $poisonCheck -and -not $poisonCheck.Ok) {
+        Ok 'Test-VibeToml: grok-rewritten backslash command is not Ok and does not throw under Stop'
+    } else {
+        Bad ("poison Test-VibeToml throw={0} ok={1} err={2}" -f $poisonThrew, $(if ($poisonCheck) { $poisonCheck.Ok } else { 'null' }), $(if ($poisonCheck) { $poisonCheck.Errors -join '; ' } else { '' }))
+    }
+    $mergedPoison = Merge-VibeToml -Raw $poison -Snippet $snippetText
+    $mpCheck = Test-VibeToml -Raw $mergedPoison
+    if ($mpCheck.Ok -and ($mergedPoison -match 'command = "C:/hr\.cmd"') -and ($mergedPoison -notmatch '(?m)^\s*command\s*=\s*"C:\\')) {
+        Ok 'config merge: poisoned backslash command becomes forward-slash double-quoted'
+    } else {
+        Bad ("poison merge ok={0} err={1}" -f $mpCheck.Ok, ($mpCheck.Errors -join '; '))
+    }
+    $emptyMerged = Merge-VibeToml -Raw '' -Snippet $snippetText
+    $emptyCheck = Test-VibeToml -Raw $emptyMerged
+    if ($emptyCheck.Ok -and ($emptyMerged -match '\[model\."grok-4\.6"\]')) {
+        Ok 'config merge: empty/missing config.toml produces valid Headroom file'
+    } else {
+        Bad ("empty merge ok={0} err={1}" -f $emptyCheck.Ok, ($emptyCheck.Errors -join '; '))
+    }
+    $grokStub = @"
+[marketplace]
+default_skills_installs_purged = true
+official_marketplace_auto_installed = true
+
+[[marketplace.sources]]
+name = "xAI Official"
+git = "https://github.com/xai-org/plugin-marketplace.git"
+
+[ui]
+max_thoughts_width = 120
+fork_secondary_model = "grok-4.6"
+yolo = false
+compact_mode = false
+permission_mode = "always-approve"
+
+[privacy]
+privacy_banner_acked = "2026-08-21T07:31:59Z"
+"@
+    $mergedStub = Merge-VibeToml -Raw $grokStub -Snippet $snippetText
+    $stubCheck = Test-VibeToml -Raw $mergedStub
+    if ($stubCheck.Ok -and ($mergedStub -match '\[model\."grok-4\.6"\]') -and ($mergedStub -match '\[marketplace\]') -and ($mergedStub -match 'permission_mode = "always-approve"')) {
+        Ok 'config merge: Grok rewrite stub (marketplace/ui/privacy) gets Headroom tables'
+    } else {
+        Bad ("Grok-stub merge ok={0} err={1}" -f $stubCheck.Ok, ($stubCheck.Errors -join '; '))
+    }
     $srcTmp = Join-Path $env:TEMP ("vibe-cfg-src-{0}" -f [guid]::NewGuid().ToString('n'))
     try {
         New-Item -ItemType Directory -Path $srcTmp -Force | Out-Null
@@ -918,6 +995,35 @@ enabled = true
                 Ok 'Repair: stub+stack bak writes Headroom live; backup+sidecar under relocations'
             } else {
                 Bad ("Repair path liveOk={0} bakGone={1} q={2} bak={3}" -f $liveOk, $bakGone, $repaired.Quarantined, $repaired.BackupPath)
+            }
+            $missingPath = Join-Path $srcTmp 'no-dir\config.toml'
+            $repMiss = $null
+            try {
+                $repMiss = Repair-GrokConfigFile -ConfigPath $missingPath -SnippetPath $snipPath -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true -BackupSuffix ('smoke-miss-{0}' -f [guid]::NewGuid().ToString('n'))
+                $missRaw = Read-Utf8NoBomFile -Path $missingPath
+                $missOk = [bool]((Test-VibeToml -Raw $missRaw).Ok)
+                if ($missOk -and ($missRaw -match '127\.0\.0\.1:8787') -and ($missRaw -match 'command = "C:/hr\.cmd"')) {
+                    Ok 'Repair: missing config.toml creates valid Headroom file'
+                } else {
+                    Bad ("Repair missing ok={0}" -f $missOk)
+                }
+            } finally {
+                if ($repMiss -and $repMiss.BackupPath) { Remove-Item -LiteralPath $repMiss.BackupPath -Force -ErrorAction SilentlyContinue }
+            }
+            $poisonPath = Join-Path $srcTmp 'poison.toml'
+            Write-Utf8NoBomFile -Path $poisonPath -Content $poison
+            $repPoison = $null
+            try {
+                $repPoison = Repair-GrokConfigFile -ConfigPath $poisonPath -SnippetPath $snipPath -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true -BackupSuffix ('smoke-poison-{0}' -f [guid]::NewGuid().ToString('n'))
+                $poisonAfter = Read-Utf8NoBomFile -Path $poisonPath
+                $poisonOk = [bool]((Test-VibeToml -Raw $poisonAfter).Ok)
+                if ($poisonOk -and ($poisonAfter -match 'command = "C:/hr\.cmd"') -and ($poisonAfter -notmatch '(?m)^\s*command\s*=\s*"C:\\')) {
+                    Ok 'Repair: grok-rewritten backslash command file becomes startable'
+                } else {
+                    Bad ("Repair poison ok={0} err={1}" -f $poisonOk, ((Test-VibeToml -Raw $poisonAfter).Errors -join '; '))
+                }
+            } finally {
+                if ($repPoison -and $repPoison.BackupPath) { Remove-Item -LiteralPath $repPoison.BackupPath -Force -ErrorAction SilentlyContinue }
             }
         } finally {
             if ($repaired -and $repaired.BackupPath) { Remove-Item -LiteralPath $repaired.BackupPath -Force -ErrorAction SilentlyContinue }
@@ -973,26 +1079,26 @@ enabled = true
 } else {
     Bad 'missing GrokToml.ps1'
 }
-if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Repair-GrokConfigFile') {
-    Ok 'installer: merge uses GrokToml Repair-GrokConfigFile'
+if ($instSrc -match 'GrokToml\.ps1' -and $instSrc -match 'Repair-GrokConfigFile' -and $instSrc -match 'Wrote fallback config.toml') {
+    Ok 'installer: merge uses GrokToml Repair-GrokConfigFile + fallback write'
 } else {
-    Bad 'installer merge no longer calls Repair-GrokConfigFile'
+    Bad 'installer merge no longer calls Repair-GrokConfigFile or missing fallback write'
 }
 $tomlSrc = Get-Content -LiteralPath $tomlHelper -Raw
-if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'Confirm-VibeConfigWrite' -and $tomlSrc -match 'ExpectedRaw' -and $tomlSrc -match 'Remove-VibeStackFromToml' -and $tomlSrc -match 'backup was not valid') {
-    Ok 'GrokToml: repair throws on invalid merge; confirm retries ExpectedRaw; no stub restore'
+if ($tomlSrc -match 'config.toml merge still invalid' -and $tomlSrc -match 'HasHeadroomOverride' -and $tomlSrc -match 'Confirm-VibeConfigWrite' -and $tomlSrc -match 'ExpectedRaw' -and $tomlSrc -match 'Remove-VibeStackFromToml' -and $tomlSrc -match 'backup was not valid' -and $tomlSrc -match 'Repair-TomlUnsafeCommandPaths' -and $tomlSrc -match 'SilentlyContinue' -and $tomlSrc -match 'function Split-VibeTomlLines' -and $tomlSrc -notmatch '-split "`r\?`n", -1') {
+    Ok 'GrokToml: repair throws on invalid merge; confirm retries ExpectedRaw; no stub restore; path sanitize; strict-parse never Stop-crashes; line split is not -1'
 } else {
-    Bad 'GrokToml missing throw-on-invalid, ExpectedRaw retry, or no-stub-restore'
+    Bad 'GrokToml missing throw-on-invalid, ExpectedRaw retry, no-stub-restore, path sanitize, SilentlyContinue strict parse, or still uses -split max -1'
 }
 if ($tomlSrc -match 'missing quoted \[model\."grok-gate"\] Headroom override \(127\.0\.0\.1:8787\)' -and $tomlSrc -notmatch 'missing quoted \[model\."grok-gate"\] Headroom override \(127\.0\.0\.1:8788\)' -and $tomlSrc -match 'Test-TomlQuotedModelBaseUrl') {
     Ok 'GrokToml: grok-gate Headroom is table-local :8787 (not :8788)'
 } else {
     Bad 'GrokToml still requires grok-gate on :8788 or missing table-local base_url check'
 }
-if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile' -and $startSrc -match 'GrokToml\.ps1 missing' -and $startSrc -match 'HasHeadroomOverride' -and $startSrc -match 'if \(\$check\.HasHeadroomOverride -and \$check\.Ok\) \{ return \}') {
-    Ok 'start-grok: config preflight + auto-repair + fail-closed helper + skip rewrite when Headroom Ok'
+if ($startSrc -match 'Assert-GrokConfig' -and $startSrc -match 'Repair-GrokConfigFile' -and $startSrc -match 'GrokToml\.ps1 missing' -and $startSrc -match 'HasHeadroomOverride' -and $startSrc -match 'if \(\$check\.HasHeadroomOverride -and \$check\.Ok\) \{ return \}' -and $startSrc -match 'launching grok anyway' -and $startSrc -match 'Wrote fallback config.toml' -and $startSrc -match '(?s)if \(-not \$StopProxy\) \{\s*Assert-GrokConfig') {
+    Ok 'start-grok: config preflight + auto-repair + never block launch + skip rewrite when Headroom Ok'
 } else {
-    Bad 'start-grok missing config preflight/repair/fail-closed helper/Headroom-Ok return'
+    Bad 'start-grok missing config preflight/repair/never-block-launch/Headroom-Ok return'
 }
 if ($rawReview -match 'Test-VanillaHatchEndpoint' -and $rawReview -match 'vanilla hatch') {
     Ok 'review: hatch official endpoint before proxy-down fallback'

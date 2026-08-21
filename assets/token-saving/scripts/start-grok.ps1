@@ -714,11 +714,17 @@ function Test-GrokTomlHelperLoaded {
 function Assert-GrokConfig {
     $cfg = Join-Path $GrokHome 'config.toml'
     if (-not (Test-GrokTomlHelperLoaded)) {
-        throw "GrokToml.ps1 missing — cannot preflight config.toml. Re-run Install-GrokVibeStack.ps1 (do not run plain grok)."
+        Write-Warn "GrokToml.ps1 missing — launching grok anyway (Headroom model may be unwired). Re-run Install-GrokVibeStack.ps1."
+        return
     }
     $raw = ''
-    if (Test-Path -LiteralPath $cfg) {
-        $raw = Read-Utf8NoBomFile -Path $cfg
+    try {
+        if (Test-Path -LiteralPath $cfg) {
+            $raw = Read-Utf8NoBomFile -Path $cfg
+        }
+    } catch {
+        Write-Warn ("config.toml read failed: {0}" -f $_.Exception.Message)
+        $raw = ''
     }
     $check = if ($raw) { Test-VibeToml -Raw $raw } else {
         @{ Ok = $false; Errors = @('config.toml missing'); Duplicates = @(); HasHeadroomOverride = $false }
@@ -729,12 +735,13 @@ function Assert-GrokConfig {
 
     Write-Warn ("config.toml needs repair: {0}" -f ($check.Errors -join '; '))
     $snippet = Get-VibeConfigSnippetPath -TokenRoot $TokenRoot
-    if (-not $snippet) {
-        throw "config.toml is invalid and no config-snippet.toml is installed. Re-run Install-GrokVibeStack.ps1 (do not run plain grok)."
-    }
     $hr = Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'
     $serena = Join-Path $env:USERPROFILE '.local\bin\serena.exe'
     $serenaOn = Test-Path -LiteralPath $serena
+    if (-not $snippet) {
+        Write-Warn "config-snippet.toml missing — launching grok anyway. Re-run Install-GrokVibeStack.ps1."
+        return
+    }
     try {
         $result = Repair-GrokConfigFile -ConfigPath $cfg -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn -BackupSuffix ("startgrok-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
         if ($result.Quarantined) {
@@ -742,14 +749,24 @@ function Assert-GrokConfig {
         } else {
             Write-Ok "Repaired ~/.grok/config.toml (Headroom override restored, user settings kept). Backup under ~/.grok/relocations/"
         }
+        return
     } catch {
-        $after = if (Test-Path -LiteralPath $cfg) { Test-VibeToml -Raw (Read-Utf8NoBomFile -Path $cfg) } else { @{ Ok = $false } }
-        if ($after.Ok) {
-            Write-Warn ("config repair warning: {0}" -f $_.Exception.Message)
-            Write-Ok "config.toml is valid after retry; launching."
-            return
+        Write-Warn ("config repair failed: {0}" -f $_.Exception.Message)
+    }
+    try {
+        $snipText = Get-VibeManagedSnippet -SnippetPath $snippet -HeadroomCmd $hr -SerenaExe $serena -SerenaEnabled $serenaOn
+        $fallback = Repair-TomlUnsafeCommandPaths -Raw (Merge-VibeToml -Raw '' -Snippet $snipText)
+        if (Test-Path -LiteralPath $cfg) {
+            $null = Backup-VibeConfigFile -ConfigPath $cfg -BackupSuffix ("startgrok-fallback-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
         }
-        throw ("config.toml still invalid after repair (grok would not start): {0}" -f $_.Exception.Message)
+        $dir = Split-Path -Parent $cfg
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        Write-Utf8NoBomFile -Path $cfg -Content $fallback
+        Write-Ok "Wrote fallback config.toml (snippet only) so grok can start"
+    } catch {
+        Write-Warn ("fallback config write failed: {0} — launching grok anyway (delete config.toml if grok refuses to start)" -f $_.Exception.Message)
     }
 }
 
@@ -761,6 +778,11 @@ $rtkVer = Ensure-Rtk
 # Headroom proxy labels/metrics for the CLI context tool
 $env:HEADROOM_CONTEXT_TOOL = if ($env:HEADROOM_CONTEXT_TOOL) { $env:HEADROOM_CONTEXT_TOOL } else { 'rtk' }
 
+# Repair before Status so `start-grok -Status` is truthful after a Grok rewrite.
+if (-not $StopProxy) {
+    Assert-GrokConfig
+}
+
 if ($Status) { Show-Status; exit 0 }
 if ($StopProxy) { Stop-HeadroomKeeper; Stop-HeadroomProxy; exit 0 }
 
@@ -768,8 +790,6 @@ Write-Info "Caveman level: $cavemanLevel (rules + skills auto-load)"
 Write-Info "RTK:           $(if ($rtkVer) { $rtkVer } else { 'not found — shell compression limited' })"
 Write-Info "Token rules:   ~/.grok/rules/token-efficiency.md + rtk.md"
 Write-Info "Headroom MCP:  on by default in config (optional off: [mcp_servers.headroom] enabled = false)"
-
-Assert-GrokConfig
 
 if (-not $NoProxy) {
     Start-HeadroomProxyIfNeeded

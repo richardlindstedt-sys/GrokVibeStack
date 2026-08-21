@@ -252,7 +252,11 @@ function Remove-ManagedConfigBlock {
         } else {
             $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
             foreach ($n in $stackTables) { if ($n) { [void]$set.Add($n) } }
-            $lines = $raw -split "`r?`n", -1
+            if (Get-Command Split-VibeTomlLines -ErrorAction SilentlyContinue) {
+                $lines = Split-VibeTomlLines $raw
+            } else {
+                $lines = $raw.Split([string[]]@("`r`n", "`n"), [System.StringSplitOptions]::None)
+            }
             $out = New-Object System.Collections.Generic.List[string]
             $skip = $false
             foreach ($line in $lines) {

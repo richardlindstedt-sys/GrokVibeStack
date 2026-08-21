@@ -79,6 +79,24 @@ function ConvertFrom-TomlTableLine {
     return $null
 }
 
+function Split-VibeTomlLines {
+    param([string]$Raw)
+    # Do not use PowerShell `-split $delim, -1`. A negative max-substrings
+    # returns the whole string on Windows PowerShell 5.1 (and some pwsh).
+    # foreach then walks characters, zero tables parse, merge writes a
+    # Headroom-less config.toml, grok-4.6 never overrides to :8787.
+    # Write-Output -NoEnumerate so a 1-line file stays a list (not a string
+    # that foreach walks as characters). Do not wrap the result in @() —
+    # that nests the list and foreach sees one item.
+    $list = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $Raw) {
+        foreach ($p in $Raw.Split([string[]]@("`r`n", "`n"), [System.StringSplitOptions]::None)) {
+            [void]$list.Add([string]$p)
+        }
+    }
+    Write-Output -NoEnumerate $list
+}
+
 function Convert-VibeToArray {
     param($Value)
     if ($null -eq $Value) { return ,@() }
@@ -198,7 +216,7 @@ function ConvertFrom-VibeTomlDocument {
     if ([string]::IsNullOrEmpty($Raw)) {
         return @{ Preamble = $preamble; Sections = $sections }
     }
-    $lines = $Raw -split "`r?`n", -1
+    $lines = Split-VibeTomlLines $Raw
     $cur = $null
     foreach ($line in $lines) {
         $hdr = ConvertFrom-TomlTableLine $line
@@ -352,7 +370,7 @@ function Remove-TomlSections {
     foreach ($n in $names) {
         if ($n) { [void]$set.Add($n) }
     }
-    $lines = $Raw -split "`r?`n", -1
+    $lines = Split-VibeTomlLines $Raw
     $out = New-Object System.Collections.Generic.List[string]
     $skip = $false
     foreach ($line in $lines) {
@@ -369,7 +387,7 @@ function Get-TomlDuplicateTables {
     param([string]$Raw)
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $dups = New-Object System.Collections.Generic.List[string]
-    foreach ($line in ($Raw -split "`r?`n", -1)) {
+    foreach ($line in (Split-VibeTomlLines $Raw)) {
         $hdr = ConvertFrom-TomlTableLine $line
         if (-not $hdr -or $hdr.Kind -ne 'table') { continue }
         $name = [string]$hdr.Name
@@ -384,7 +402,7 @@ function Repair-TomlKeepFirstTables {
     param([string]$Raw)
     if ([string]::IsNullOrEmpty($Raw)) { return '' }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $lines = $Raw -split "`r?`n", -1
+    $lines = Split-VibeTomlLines $Raw
     $out = New-Object System.Collections.Generic.List[string]
     $skip = $false
     foreach ($line in $lines) {
@@ -414,9 +432,9 @@ function Repair-TomlKeepLastTables {
             if ($n) { [void]$filter.Add($n) }
         }
     }
-    $lines = $Raw -split "`r?`n", -1
+    $lines = Split-VibeTomlLines $Raw
     $lastIdx = New-Object 'System.Collections.Generic.Dictionary[string,int]' ([StringComparer]::Ordinal)
-    for ($i = 0; $i -lt $lines.Length; $i++) {
+    for ($i = 0; $i -lt $lines.Count; $i++) {
         $hdr = ConvertFrom-TomlTableLine $lines[$i]
         if (-not $hdr -or $hdr.Kind -ne 'table') { continue }
         $name = [string]$hdr.Name
@@ -425,7 +443,7 @@ function Repair-TomlKeepLastTables {
     }
     $out = New-Object System.Collections.Generic.List[string]
     $skip = $false
-    for ($i = 0; $i -lt $lines.Length; $i++) {
+    for ($i = 0; $i -lt $lines.Count; $i++) {
         $hdr = ConvertFrom-TomlTableLine $lines[$i]
         if ($hdr) {
             if ($hdr.Kind -eq 'table') {
@@ -452,7 +470,7 @@ function Remove-VibeManagedTomlMarkers {
     param([string]$Raw)
     if ([string]::IsNullOrEmpty($Raw)) { return $Raw }
     $m = Get-VibeManagedBlockMarkers
-    $lines = $Raw -split "`r?`n", -1
+    $lines = Split-VibeTomlLines $Raw
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($line in $lines) {
         $t = $line.Trim()
@@ -480,6 +498,34 @@ function Get-VibeConfigSnippetPath {
     return $null
 }
 
+function Convert-VibeTomlCommandPath {
+    param([string]$Path)
+    if ([string]::IsNullOrEmpty($Path)) { return '' }
+    return ([string]$Path).Replace('\', '/')
+}
+
+function Repair-TomlUnsafeCommandPaths {
+    param([string]$Raw)
+    if ([string]::IsNullOrEmpty($Raw)) { return $Raw }
+    # Grok rewrite turns Windows paths into double-quoted basic strings.
+    # `\Users` `\token-saving` `\.grok` are invalid TOML escapes → grok.exe
+    # refuses to start. Forward slashes are valid in basic and literal strings.
+    $out = [regex]::Replace($Raw, '(?m)^(\s*command\s*=\s*")([^"]*)(")', {
+        param($m)
+        $val = [string]$m.Groups[2].Value
+        if ($val.Contains([string][char]92)) { $val = $val.Replace('\', '/') }
+        return ($m.Groups[1].Value + $val + $m.Groups[3].Value)
+    })
+    $out = [regex]::Replace($out, "(?m)^(\s*command\s*=\s*)'([^']*)'", {
+        param($m)
+        $val = [string]$m.Groups[2].Value
+        if (-not $val.Contains([string][char]92)) { return $m.Value }
+        $val = $val.Replace('\', '/')
+        return ($m.Groups[1].Value + '"' + $val + '"')
+    })
+    return $out
+}
+
 function Get-VibeManagedSnippet {
     param(
         [string]$SnippetPath,
@@ -492,10 +538,12 @@ function Get-VibeManagedSnippet {
     }
     $snippet = Read-Utf8NoBomFile -Path $SnippetPath
     if ($HeadroomCmd) {
-        $snippet = $snippet.Replace('command = "HEADROOM_MCP_CMD"', "command = '$HeadroomCmd'")
+        $hp = Convert-VibeTomlCommandPath $HeadroomCmd
+        $snippet = $snippet.Replace('command = "HEADROOM_MCP_CMD"', ('command = "{0}"' -f $hp))
     }
     if ($SerenaExe) {
-        $snippet = $snippet.Replace('command = "SERENA_EXE"', "command = '$SerenaExe'")
+        $sp = Convert-VibeTomlCommandPath $SerenaExe
+        $snippet = $snippet.Replace('command = "SERENA_EXE"', ('command = "{0}"' -f $sp))
     }
     if (-not $SerenaEnabled) {
         $snippet = [regex]::Replace(
@@ -612,14 +660,27 @@ function Test-TomlStrictParse {
             'try:'
             '    tomllib.load(open(p, "rb"))'
             'except Exception as e:'
-            '    sys.stderr.write(str(e))'
+            '    sys.stdout.write(str(e))'
             '    sys.exit(2)'
         ) -join "`n"
         Write-Utf8NoBomFile -Path $pyf -Content $code
-        $err = & $py $pyf $tmp 2>&1
-        if ($LASTEXITCODE -eq 2) {
+        # Native stderr becomes ErrorRecord. Installer/start-grok use Stop, so
+        # a grok-rewritten `command = "C:\Users\..."` used to crash before repair.
+        $prevEa = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        try {
+            $err = & $py $pyf $tmp 2>&1 | Out-String
+            $code = $LASTEXITCODE
+        } catch {
+            return $null
+        } finally {
+            $ErrorActionPreference = $prevEa
+        }
+        if ($code -eq 2) {
             return ([string]$err).Trim()
         }
+        return $null
+    } catch {
         return $null
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -710,6 +771,7 @@ function Merge-VibeToml {
         $text = $text.TrimEnd() + "`n`n" + $m.Begin + "`n" + $block.TrimEnd() + "`n" + $m.End + "`n"
     }
     $text = Repair-TomlKeepLastTables -Raw $text
+    $text = Repair-TomlUnsafeCommandPaths -Raw $text
     return ($text.TrimEnd() + "`n")
 }
 
@@ -880,38 +942,51 @@ function Test-TomlQuotedModelBaseUrl {
 
 function Test-VibeToml {
     param([string]$Raw)
-    $dups = @(Get-TomlDuplicateTables -Raw $Raw)
-    $keyDups = @(Get-TomlIntraTableDuplicateKeys -Raw $Raw)
-    $collisions = @(Get-TomlPathCollisions -Raw $Raw)
-    $strict = Test-TomlStrictParse -Raw $Raw
-    # One Headroom on :8787. grok-gate is an alias — table-local base_url, not a file-wide :8788 hunt.
-    $hasHr = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-4.6' -MustContain '127.0.0.1:8787'
-    $hasGate = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-gate' -MustContain '127.0.0.1:8787'
-    $errors = New-Object System.Collections.Generic.List[string]
-    if ($dups.Count -gt 0) {
-        [void]$errors.Add(('duplicate TOML tables: {0}' -f ($dups -join ', ')))
-    }
-    if ($keyDups.Count -gt 0) {
-        [void]$errors.Add(('duplicate key: {0}' -f ($keyDups -join ', ')))
-    }
-    if ($collisions.Count -gt 0) {
-        [void]$errors.Add(('duplicate key: {0}' -f ($collisions -join ', ')))
-    }
-    if ($strict) {
-        [void]$errors.Add(('TOML parse: {0}' -f $strict))
-    }
-    if (-not $hasHr) {
-        [void]$errors.Add('missing quoted [model."grok-4.6"] Headroom override (127.0.0.1:8787)')
-    }
-    if (-not $hasGate) {
-        [void]$errors.Add('missing quoted [model."grok-gate"] Headroom override (127.0.0.1:8787)')
-    }
-    return @{
-        Ok                   = ($errors.Count -eq 0)
-        Duplicates           = $dups
-        HasHeadroomOverride  = $hasHr
-        HasGateOverride      = $hasGate
-        Errors               = $errors.ToArray()
+    try {
+        $dups = @(Get-TomlDuplicateTables -Raw $Raw)
+        $keyDups = @(Get-TomlIntraTableDuplicateKeys -Raw $Raw)
+        $collisions = @(Get-TomlPathCollisions -Raw $Raw)
+        $strict = Test-TomlStrictParse -Raw $Raw
+        # One Headroom on :8787. grok-gate is an alias — table-local base_url, not a file-wide :8788 hunt.
+        $hasHr = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-4.6' -MustContain '127.0.0.1:8787'
+        $hasGate = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-gate' -MustContain '127.0.0.1:8787'
+        $errors = New-Object System.Collections.Generic.List[string]
+        if ($dups.Count -gt 0) {
+            [void]$errors.Add(('duplicate TOML tables: {0}' -f ($dups -join ', ')))
+        }
+        if ($keyDups.Count -gt 0) {
+            [void]$errors.Add(('duplicate key: {0}' -f ($keyDups -join ', ')))
+        }
+        if ($collisions.Count -gt 0) {
+            [void]$errors.Add(('duplicate key: {0}' -f ($collisions -join ', ')))
+        }
+        if ($strict) {
+            [void]$errors.Add(('TOML parse: {0}' -f $strict))
+        }
+        if ($Raw -match '(?m)^\s*command\s*=\s*"[^"]*\\[^"]*"') {
+            [void]$errors.Add('double-quoted command path has backslashes (invalid TOML escapes; grok will not start)')
+        }
+        if (-not $hasHr) {
+            [void]$errors.Add('missing quoted [model."grok-4.6"] Headroom override (127.0.0.1:8787)')
+        }
+        if (-not $hasGate) {
+            [void]$errors.Add('missing quoted [model."grok-gate"] Headroom override (127.0.0.1:8787)')
+        }
+        return @{
+            Ok                   = ($errors.Count -eq 0)
+            Duplicates           = $dups
+            HasHeadroomOverride  = $hasHr
+            HasGateOverride      = $hasGate
+            Errors               = $errors.ToArray()
+        }
+    } catch {
+        return @{
+            Ok                   = $false
+            Duplicates           = @()
+            HasHeadroomOverride  = $false
+            HasGateOverride      = $false
+            Errors               = @('Test-VibeToml: {0}' -f $_.Exception.Message)
+        }
     }
 }
 
@@ -943,12 +1018,31 @@ function Repair-GrokConfigFile {
         [bool]$SerenaEnabled = $true,
         [string]$BackupSuffix = ''
     )
-    $src = Resolve-VibeConfigMergeSource -ConfigPath $ConfigPath
+    $src = @{
+        Raw         = ''
+        SourcePath  = $ConfigPath
+        SidecarPath = $null
+    }
     $snippet = Get-VibeManagedSnippet -SnippetPath $SnippetPath -HeadroomCmd $HeadroomCmd -SerenaExe $SerenaExe -SerenaEnabled $SerenaEnabled
-    $merged = Merge-VibeToml -Raw $src.Raw -Snippet $snippet
-    $check = Test-VibeToml -Raw $merged
-    if (-not $check.Ok) {
-        $merged = Repair-TomlKeepLastTables -Raw $merged
+    $merged = $null
+    $check = $null
+    try {
+        $src = Resolve-VibeConfigMergeSource -ConfigPath $ConfigPath
+        $merged = Merge-VibeToml -Raw $src.Raw -Snippet $snippet
+        $merged = Repair-TomlUnsafeCommandPaths -Raw $merged
+        $check = Test-VibeToml -Raw $merged
+        if (-not $check.Ok) {
+            $merged = Repair-TomlKeepLastTables -Raw $merged
+            $merged = Repair-TomlUnsafeCommandPaths -Raw $merged
+            $check = Test-VibeToml -Raw $merged
+        }
+    } catch {
+        $check = @{ Ok = $false; Errors = @($_.Exception.Message) }
+    }
+    if (-not $check -or -not $check.Ok) {
+        # Last resort: snippet only. User settings dropped rather than leave grok unstartable.
+        $merged = Merge-VibeToml -Raw '' -Snippet $snippet
+        $merged = Repair-TomlUnsafeCommandPaths -Raw $merged
         $check = Test-VibeToml -Raw $merged
     }
     if (-not $check.Ok) {
