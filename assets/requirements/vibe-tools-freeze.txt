@@ -8,7 +8,7 @@ annotated-types==0.8.0
 anyio==4.14.2
 argcomplete==3.7.2
 ast_serialize==0.8.0
-asteval==1.0.6
+asteval==1.0.10
 attrs==26.1.0
 bandit==1.9.4
 bc-detect-secrets==1.5.50

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.15] - 2026-08-27
+
+### Security
+
+- Freeze pin `asteval` `1.0.6` → `1.0.10` (PyPI latest; Dependabot #4 asked 1.0.9). 1.0.6 is still open on GHSA-89v8-rhwq-hf77 / GHSA-9w56-46f6-3qhx (sandbox escape). Transitive via checkov; not a GitHub binary.
+
 ## [1.5.14] - 2026-08-27
 
 ### Fixed
