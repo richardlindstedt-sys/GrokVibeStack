@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-27
+
+### Fixed
+
+- Pytest detect-and-run no longer treats a bare `tests/` directory as a Python suite. Schedule pytest only on Python markers (`pytest.ini`, `conftest.py`, `[tool.pytest]`, setup.cfg `[tool:pytest]`, tox.ini `[pytest]`, `test_*.py`, `*_test.py`). Cargo/Go/npm trees with pytest on PATH no longer fail Full/push (pytest exit 5).
+
 ## [2.0.0] - 2026-08-27
 
 ### Added

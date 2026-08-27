@@ -101,6 +101,7 @@ function Get-VibeProjectPythonExe([string]$Root) {
 }
 
 function Test-VibeHasPytestLayout([string]$Root) {
+    # Python markers only. A bare tests/ dir is Go/Rust/JS-normal and must not schedule pytest.
     if (Test-Path -LiteralPath (Join-Path $Root 'pytest.ini')) { return $true }
     if (Test-Path -LiteralPath (Join-Path $Root 'conftest.py')) { return $true }
     $pyproject = Join-Path $Root 'pyproject.toml'
@@ -110,8 +111,23 @@ function Test-VibeHasPytestLayout([string]$Root) {
             if ($raw -match '(?m)^\[tool\.pytest') { return $true }
         } catch {}
     }
+    $setupCfg = Join-Path $Root 'setup.cfg'
+    if (Test-Path -LiteralPath $setupCfg) {
+        try {
+            $raw = Get-Content -LiteralPath $setupCfg -Raw -ErrorAction Stop
+            if ($raw -match '(?m)^\[tool:pytest') { return $true }
+        } catch {}
+    }
+    $toxIni = Join-Path $Root 'tox.ini'
+    if (Test-Path -LiteralPath $toxIni) {
+        try {
+            $raw = Get-Content -LiteralPath $toxIni -Raw -ErrorAction Stop
+            if ($raw -match '(?m)^\[pytest\]') { return $true }
+        } catch {}
+    }
+    if (Test-VibeRepoHasFile -Root $Root -Filter 'conftest.py' -Depth 4) { return $true }
     if (Test-VibeRepoHasFile -Root $Root -Filter 'test_*.py' -Depth 4) { return $true }
-    if (Test-Path -LiteralPath (Join-Path $Root 'tests')) { return $true }
+    if (Test-VibeRepoHasFile -Root $Root -Filter '*_test.py' -Depth 4) { return $true }
     return $false
 }
 

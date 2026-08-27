@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.0.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.0.1** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |

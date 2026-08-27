@@ -241,6 +241,37 @@ if (Test-Path -LiteralPath $ptLib) {
         $c0 = @(Get-VibeProjectCompilePlan -Root $ptDir)
         $t0 = @(Get-VibeProjectTestPlan -Root $ptDir)
         if ($c0.Count -eq 0 -and $t0.Count -eq 0) { Ok 'project-tools: empty tree has no plan' } else { Bad 'project-tools: empty tree still produced a plan' }
+        $testsDir = Join-Path $ptDir 'tests'
+        New-Item -ItemType Directory -Path $testsDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $testsDir 'foo_test.go') -Value 'package foo' -Encoding utf8
+        $tBare = @(Get-VibeProjectTestPlan -Root $ptDir)
+        if (@($tBare | Where-Object { $_.Label -eq 'pytest' }).Count -eq 0) {
+            Ok 'project-tools: non-Python tests/ is not pytest'
+        } else {
+            Bad 'project-tools: bare tests/ scheduled pytest'
+        }
+        Set-Content -LiteralPath (Join-Path $testsDir 'test_sample.py') -Value 'def test_ok(): pass' -Encoding utf8
+        $tPy = @(Get-VibeProjectTestPlan -Root $ptDir)
+        $pyHits = @($tPy | Where-Object { $_.Label -eq 'pytest' })
+        $havePyRunner = [bool](Resolve-VibeCommandPath 'pytest')
+        if (-not $havePyRunner) {
+            $pyExe = Get-VibeProjectPythonExe $ptDir
+            if ($pyExe) {
+                $prev = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try {
+                    $null = & $pyExe -c 'import pytest' 2>&1
+                    $havePyRunner = ($LASTEXITCODE -eq 0)
+                } catch { $havePyRunner = $false }
+                finally { $ErrorActionPreference = $prev }
+            }
+        }
+        if ($havePyRunner) {
+            if ($pyHits.Count -ge 1) { Ok 'project-tools: test_*.py schedules pytest' } else { Bad 'project-tools: test_*.py did not schedule pytest' }
+        } else {
+            if ($pyHits.Count -eq 0) { Ok 'project-tools: test_*.py without pytest runner skipped' } else { Bad 'project-tools: pytest planned without runner' }
+        }
+        Remove-Item -LiteralPath (Join-Path $testsDir 'test_sample.py') -Force
         $fx = Join-Path $RepoRoot 'assets\vibe-tools\fixtures'
         Copy-Item -LiteralPath (Join-Path $fx 'npm-placeholder.json') -Destination (Join-Path $ptDir 'package.json') -Force
         if ($null -eq (Get-VibeNpmTestInvocation -Root $ptDir)) { Ok 'project-tools: npm placeholder test skipped' } else { Bad 'project-tools: npm placeholder test was scheduled' }
