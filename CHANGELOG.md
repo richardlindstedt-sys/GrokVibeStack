@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.13] - 2026-08-27
+
+### Changed
+
+- Requirement floors to current PyPI latest (2026-08-27): `headroom-ai[proxy]>=0.36.5`, `ast-grep-cli>=0.45.2`, `ruff>=0.16.4`, `mypy>=2.3.1`, `bandit>=1.9.4`, `semgrep>=1.175.0`, `vulture>=2.16`, `yamllint>=1.38.0`, `checkov>=3.3.15`. Tokenizers stay `>=0.22.0,<=0.23.0` (0.23.1 still breaks transformers 5.13.x / Headroom proxy). `mcp` stays 1.x (`headroom-ai[proxy]` requires `<2.0.0`).
+- Direct pins in `*-freeze.txt` regenerated from those floors (`-UseFrozenReqs`).
+- GitHub binary `scc` `v4.0.0` (Windows zip + dest SHA256). `tokei` still `v13.0.0-alpha.0` — `v13`/`v14` GitHub releases ship no Windows exe.
+- Serena remains `1.7.0` (PyPI latest).
+
 ## [1.5.12] - 2026-08-21
 
 ### Fixed

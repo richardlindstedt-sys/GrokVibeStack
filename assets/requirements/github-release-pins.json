@@ -4,10 +4,10 @@
     {
       "dest": "scc.exe",
       "repo": "boyter/scc",
-      "tag": "v3.7.0",
+      "tag": "v4.0.0",
       "asset": "scc_Windows_x86_64.zip",
-      "sha256": "97abf9d55d4b79d3310536d576ccbdf5017aeb425780e850336120b6e67622e1",
-      "destSha256": "122c379b537ac5c168e12a9d87c218bdea00f53129f21912f3cca283584f6994"
+      "sha256": "bfd4f956f6c23917fee3a0ed0d950b80ee914fb4555effe9c6abbe0c30f1ec2f",
+      "destSha256": "8c523124abfa47a88baa6fd80845a3bcfe4467eed1ea2e1ad29fbe672306c731"
     },
     {
       "dest": "tokei.exe",

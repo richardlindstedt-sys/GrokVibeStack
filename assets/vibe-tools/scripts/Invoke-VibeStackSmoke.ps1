@@ -946,10 +946,10 @@ if ($isoOk -and $startSrc -match 'headroom-proxy\$portTag' -and $keepSrc -match 
     Bad 'dual-proxy isolation names collide or missing portTag'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
-if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
-    Ok 'reqs: headroom-ai[proxy] >= 0.36.0 + tokenizers pin'
+if ($hrReq -match 'headroom-ai\[proxy\]>=0\.36\.5' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
+    Ok 'reqs: headroom-ai[proxy] >= 0.36.5 + tokenizers pin'
 } else {
-    Bad 'reqs missing headroom-ai[proxy] >= 0.36.0 / tokenizers pin'
+    Bad 'reqs missing headroom-ai[proxy] >= 0.36.5 / tokenizers pin'
 }
 $snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
 if ($snip -match '\[model\."grok-4.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8787' -and $snip -notmatch '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
