@@ -3,8 +3,9 @@
     Shared scan-pass cache helpers (Full-scope only authorizes Full skip).
 .NOTES
     Dot-sourced by run-vibe-scans.ps1 and run-vibe-pre-push.ps1.
-    Cache hit requires: matching treeHash, matching cwd, cached scope Full, within TTL.
-    Missing scope/cwd fields are treated as miss (fail closed).
+    Cache hit requires: matching treeHash, matching cwd, cached scope Full, matching scannerSet, within TTL.
+    Missing scope/cwd/scannerSet fields are treated as miss (fail closed).
+    Bump ScanPassScannerSet when the Full scan recipe changes (new compilers/tests).
 #>
 
 if (-not $script:ScanPassCacheFile) {
@@ -12,6 +13,9 @@ if (-not $script:ScanPassCacheFile) {
 }
 if (-not $script:ScanPassTtlSec -or $script:ScanPassTtlSec -le 0) {
     $script:ScanPassTtlSec = 7200
+}
+if (-not $script:ScanPassScannerSet) {
+    $script:ScanPassScannerSet = 2
 }
 
 function Get-TreeHashForScanCache {
@@ -70,10 +74,11 @@ function Save-ScanPassCache {
         $dir = Split-Path $script:ScanPassCacheFile -Parent
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $obj = [ordered]@{
-            treeHash = $TreeHash
-            scope    = 'Full'
-            passedAt = (Get-Date -Format 'o')
-            cwd      = $Cwd
+            treeHash    = $TreeHash
+            scope       = 'Full'
+            scannerSet  = [int]$script:ScanPassScannerSet
+            passedAt    = (Get-Date -Format 'o')
+            cwd         = $Cwd
         }
         ($obj | ConvertTo-Json -Compress) | Set-Content -Path $script:ScanPassCacheFile -Encoding utf8
     } catch {}
@@ -104,6 +109,10 @@ function Test-ScanPassCache {
         # Missing scope => miss (legacy/forged weak entries cannot authorize Full).
         $cachedScope = "$($e.scope)".Trim()
         if (-not $cachedScope -or $cachedScope -ne 'Full') { return $false }
+
+        $cachedSet = 0
+        try { $cachedSet = [int]$e.scannerSet } catch { $cachedSet = 0 }
+        if ($cachedSet -ne [int]$script:ScanPassScannerSet) { return $false }
 
         $cachedCwd = Normalize-ScanCacheCwd ([string]$e.cwd)
         $wantCwd = Normalize-ScanCacheCwd $Cwd

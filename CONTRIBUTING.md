@@ -19,6 +19,8 @@ This is a Windows PowerShell installer plus stack assets. Keep PRs focused.
 
    GitHub Actions (`.github/workflows/vibe-stack-smoke.yml`) reruns smoke + evals + gitleaks on push/PR.
 
+   User projects: copy `assets/ci/vibe-user-repo.yml` to `.github/workflows/` (no LLM on CI; local hooks keep the panel).
+
 3. Commit from this repo so the vibe pre-commit hook runs (scans + AI review).
 
 ## Pins

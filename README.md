@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **1.5.15** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.0.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -145,8 +145,8 @@ Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **
 |------|---------|--------|---------|
 | On-edit | Grok file write/edit | Secrets + linters; findings saved for next prompt | No |
 | Prompt inject | Next user prompt | Pending on-edit findings as additionalContext | No |
-| **pre-commit** | `git commit` | Scanners + **profile=standard** loop on staged diff | **Yes** |
-| **pre-push** | `git push` | Scanners + **fast** (version tags → **strict**, single-commit) | **Yes** |
+| **pre-commit** | `git commit` | Scanners + project compile (if toolchain + typed files) + **profile=standard** LLM loop on staged diff | **Yes** |
+| **pre-push** | `git push` | Scanners + project compile/tests (if toolchain) + **fast** LLM (version tags → **strict**, single-commit) | **Yes** |
 | Stop / gate-live | Turn end | Block silent end while `gate-now` is live; remind if edited | Keeps turn |
 | Poll clamp | `get_command_or_subagent_output` | Live gate: rewrite `timeout_ms` to 15000 | Rewrite |
 
@@ -157,6 +157,14 @@ If you run the installer inside a git repo, that repo gets hooks automatically (
 ```powershell
 & "$env:USERPROFILE\.grok\vibe-tools\scripts\install-vibe-hooks.ps1" path\to\your\project
 ```
+
+Optional GitHub Actions twin (secrets + project tests; **no LLM** — that stays on local commit/push):
+
+```text
+copy  assets/ci/vibe-user-repo.yml  →  your-repo/.github/workflows/vibe-gate.yml
+```
+
+After install the same file lives at `~\.grok\vibe-tools\ci\vibe-user-repo.yml`.
 
 ### Multi-reviewer quality loop
 
@@ -218,7 +226,9 @@ End-to-end “% off my monthly bill” depends on mix of chat vs gates vs tool n
 
 ### Tools pulled at install (third-party)
 
-winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, prettier, eslint, typescript, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
+winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, typescript, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
+
+Language SDKs (Rust, Go, .NET, JDK) are **not** bundled. If `cargo` / `go` / `dotnet` / `tsc` / `pytest` / `mvn` / `gradle` are on PATH, gates run them. Skip: `VIBE_SKIP_PROJECT_TOOLS=1`.
 
 Those projects keep their own licenses and update cadence. GitHub binaries (`scc`, `tokei`) use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install). Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
 

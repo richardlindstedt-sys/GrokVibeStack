@@ -2,8 +2,9 @@
 .SYNOPSIS
     Run all vibe static analysis scanners on the current directory or specific paths.
 .DESCRIPTION
-    Runs: Trivy, Gitleaks, PSScriptAnalyzer, Pester (if tests), jscpd, Biome (JS/TS), markdownlint,
-          Semgrep, Ruff/mypy/bandit/vulture (Python), yamllint/checkov (YAML/IaC), ShellCheck, Hadolint (Docker),
+    Runs: Trivy, Gitleaks, PSScriptAnalyzer, Pester (if tests), jscpd, Biome (JS/TS), tsc --noEmit (if tsconfig),
+          markdownlint, Semgrep, Ruff/mypy/bandit/vulture (Python), yamllint/checkov (YAML/IaC), ShellCheck, Hadolint,
+          project compile/tests when cargo/go/dotnet/pytest/npm/mvn/gradle exist on PATH,
           + rg hints for TODOs/unwired code.
     Exits non-zero on critical findings (secrets, HIGH/CRITICAL vulns, analyzer errors, failed tests).
 #>
@@ -29,6 +30,7 @@ elseif ($env:VIBE_SCAN_SCOPE -match '^(?i)full$') { $Scope = 'Full' }
 $script:ScanExcludeRegex = '(\\node_modules\\|\\\.git\\|\\\.serena\\|\\venv\\|\\\.venv\\|\\\.grok\\|\\__pycache__\\|\\\.tox\\|\\dist\\|\\build\\)'
 # Shared Full-only scan-pass cache (Save/Test/Get-TreeHash)
 . (Join-Path $PSScriptRoot 'scan-pass-cache.ps1')
+. (Join-Path $PSScriptRoot 'run-vibe-project-tools.ps1')
 $progressPs1 = Join-Path $PSScriptRoot 'gate-progress.ps1'
 if (Test-Path -LiteralPath $progressPs1) {
     . $progressPs1
@@ -726,6 +728,26 @@ rules:
     $shFiles = @(Get-ChildItem -Path $scanRoot -Recurse -Include *.sh,*.bash,*.zsh -Depth 3 -ErrorAction SilentlyContinue)
     if ($shFiles.Count -gt 0 -and (Get-Command shellcheck -ErrorAction SilentlyContinue)) {
         Run 'shellcheck' @($shFiles.FullName) 'ShellCheck'
+    }
+
+    # Project compile/tests: full tree (tip or checkout). Staged snapshot is incomplete.
+    # Tests follow Pester: Full/push only. Compile also runs on staged-first when typed sources are staged.
+    $compileHere = -not $useStaged
+    $testHere = -not $useStaged
+    if ($useStaged -and $stagedNames.Count -gt 0) {
+        foreach ($n in $stagedNames) {
+            if ("$n" -match '(?i)\.(rs|go|cs|fs|ts|tsx|java|kt)$') { $compileHere = $true; break }
+            if ("$n" -match '(?i)(Cargo\.toml|go\.mod|tsconfig\.json|\.csproj|\.sln|pom\.xml|build\.gradle)') { $compileHere = $true; break }
+        }
+    }
+    if ($compileHere -or $testHere) {
+        $ptMode = if ($compileHere -and $testHere) { 'Both' } elseif ($compileHere) { 'Compile' } else { 'Test' }
+        $ptRoot = if ($tipTree) { $tipTree } else { $root }
+        $pt = Invoke-VibeProjectCompileAndTests -Root $ptRoot -Mode $ptMode -Quiet:$Quiet
+        $script:failed += [int]$pt.Failed
+        $script:advisory += [int]$pt.Advisory
+    } elseif (-not $Quiet) {
+        Write-Host '[project-tools] skipped in staged-first mode (tests on full/push; compile when typed sources staged)' -ForegroundColor DarkGray
     }
 
     # Hints

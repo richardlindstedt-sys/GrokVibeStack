@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-27
+
+### Added
+
+- Project compile + tests in `run-vibe-scans.ps1` when the toolchain is already on PATH (no extra SDKs in the bundle): `cargo clippy`/`check` + `cargo test`, `go vet` + `go test`, `tsc --noEmit`, `dotnet build`/`test`, `pytest`, safe `npm test` (jest/vitest; skip watch/e2e/placeholder), `mvn`/`gradle` when wrappers or CLIs exist. Timeouts: `VIBE_PROJECT_COMPILE_TIMEOUT` (120s), `VIBE_PROJECT_TEST_TIMEOUT` (180s) — timeout **fails** the gate (process tree killed). Skip: `VIBE_SKIP_PROJECT_TOOLS`, `VIBE_SKIP_PROJECT_COMPILE`, `VIBE_SKIP_PROJECT_TESTS`. Tests run on Full/push (same as Pester). Compile also runs on staged-first when typed sources are staged.
+- On-edit linters for Rust (`rustfmt --check`), Go (`gofmt`/`go vet`), C# (`dotnet format --verify-no-changes`) when those binaries exist.
+- `Resolve-VibeCommandPath` prefers `.exe`/`.cmd`/`.bat` so `Start-Process` does not hit Node `npm.ps1`/`tsc.ps1` shims (CreateProcess would fail on default Windows Node).
+- User-repo CI twin: `assets/ci/vibe-user-repo.yml` (gitleaks + optional stack scans / project tools). **No LLM** on GitHub-hosted runners. Local commit/push hooks still run the multi-reviewer panel.
+
+### Changed
+
+- Scan-pass cache requires `scannerSet` (now 2). Old Full-pass entries miss so the new compile/test recipe cannot be skipped.
+- Pre-commit intent: if `COMMIT_EDITMSG` still equals `HEAD` (git writes the new `-m` body after pre-commit), treat intent as empty so reviewers infer from the **this** diff. Stops leftover previous-SHA messages (e.g. 1.5.15) from BLOCK-ing an honest 2.0.0 commit.
+- npm globals: keep `jscpd`, `markdownlint-cli`, `typescript` (`tsc --noEmit` is wired). Drop `prettier` and `eslint` from new installs (Biome already lints/formats JS/TS).
+
+### Removed
+
+- Global `prettier` / `eslint` from the installer package list. Existing globals are left on the machine until `Uninstall-GrokVibeStack.ps1 -RemoveNpmPackages` (uses the install manifest).
+
 ## [1.5.15] - 2026-08-27
 
 ### Security

@@ -1,0 +1,60 @@
+# Copy to your project as .github/workflows/vibe-gate.yml
+#
+# Local GrokVibeStack git hooks still run scanners + LLM review on commit/push.
+# This workflow is the CI twin WITHOUT the LLM panel (typical GitHub-hosted
+# runners do not have grok + Headroom). Secrets: gitleaks. Optional: run
+# run-vibe-scans.ps1 when the stack is installed on a self-hosted runner.
+#
+# LLM review is intentionally not invoked here.
+
+name: vibe-user-gate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  project-tools:
+    runs-on: windows-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect and run project compile/tests
+        shell: pwsh
+        env:
+          VIBE_REQUIRE_SCANNERS: '0'
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $stackScans = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\run-vibe-scans.ps1'
+          if (Test-Path -LiteralPath $stackScans) {
+            Write-Host 'GrokVibeStack found on runner - Full scans (no LLM).'
+            & $stackScans -Scope Full
+            if ($null -eq $LASTEXITCODE -or $LASTEXITCODE -ne 0) { exit 1 }
+            exit 0
+          }
+          $lib = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\run-vibe-project-tools.ps1'
+          if (-not (Test-Path -LiteralPath $lib)) {
+            Write-Host 'Stack scripts not on runner. Skipping compile/tests (install GrokVibeStack on a self-hosted runner, or add language CI).'
+            exit 0
+          }
+          . $lib
+          $r = Invoke-VibeProjectCompileAndTests -Root $env:GITHUB_WORKSPACE -Mode Both
+          if ($null -eq $r -or [int]$r.Failed -gt 0) { exit 1 }
+          exit 0

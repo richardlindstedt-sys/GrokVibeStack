@@ -26,6 +26,8 @@ foreach ($p in @(
 
 $gateChatLib = Join-Path $PSScriptRoot 'gate-chat-lib.ps1'
 if (Test-Path -LiteralPath $gateChatLib) { . $gateChatLib }
+$projectTools = Join-Path $PSScriptRoot 'run-vibe-project-tools.ps1'
+if (Test-Path -LiteralPath $projectTools) { . $projectTools }
 
 $raw = [Console]::In.ReadToEnd()
 if (-not $raw) { exit 0 }
@@ -238,6 +240,15 @@ foreach ($rel in $edited) {
             [void]$fileHits.Add("[shellcheck] $_")
         }
         if ($LASTEXITCODE -ne 0) { $findings++ }
+    }
+
+    if (Get-Command Invoke-VibeOnEditFileLinters -ErrorAction SilentlyContinue) {
+        $extra = @(Invoke-VibeOnEditFileLinters -FullPath $full)
+        foreach ($x in $extra) {
+            Write-Host "  $x"
+            [void]$fileHits.Add($x)
+        }
+        if ($extra.Count -gt 0) { $findings++ }
     }
 
     $byFileNew[$rel] = @($fileHits)

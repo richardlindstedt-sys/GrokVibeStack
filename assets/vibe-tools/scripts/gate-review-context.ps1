@@ -9,6 +9,7 @@ function Get-StatedIntent {
     }
     $gitDir = $null
     try { $gitDir = (git rev-parse --git-dir 2>$null | Select-Object -First 1) } catch {}
+    $fromFile = ''
     if ($gitDir) {
         $msgFile = Join-Path $gitDir 'COMMIT_EDITMSG'
         if (Test-Path -LiteralPath $msgFile) {
@@ -18,16 +19,26 @@ function Get-StatedIntent {
                     if ($ln -match '^\s*#') { continue }
                     $ln
                 }
-                $t = ($kept -join "`n").Trim()
-                if ($t) { return $t }
+                $fromFile = ($kept -join "`n").Trim()
             }
         }
     }
+    $head = ''
     try {
-        $head = (git log -1 --format=%B 2>$null)
-        if ($head -isnot [string]) { $head = (@($head) -join "`n") }
-        if (-not [string]::IsNullOrWhiteSpace($head)) { return $head.Trim() }
+        $headRaw = (git log -1 --format=%B 2>$null)
+        if ($headRaw -isnot [string]) { $headRaw = (@($headRaw) -join "`n") }
+        if (-not [string]::IsNullOrWhiteSpace($headRaw)) { $head = $headRaw.Trim() }
     } catch {}
+    # pre-commit runs before the new message is committed. COMMIT_EDITMSG often still
+    # equals HEAD. Using that as this SHA's intent BLOCKS honest new work.
+    $inHook = -not [string]::IsNullOrWhiteSpace($env:GIT_INDEX_FILE)
+    if ($inHook) {
+        if ($fromFile -and $head -and ($fromFile -eq $head)) { return '' }
+        if ($fromFile) { return $fromFile }
+        return ''
+    }
+    if ($fromFile) { return $fromFile }
+    if ($head) { return $head }
     return ''
 }
 

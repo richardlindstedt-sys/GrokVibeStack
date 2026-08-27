@@ -74,6 +74,7 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-project-tools.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-on-edit.ps1'),
     (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1'),
@@ -208,10 +209,74 @@ if ($scanSrc -match 'checkout-index' -and $scanSrc -match 'Save-ScanPassCache' -
 } else {
     Bad 'scans missing checkout-index / scan cache / Scope'
 }
-if ($cacheSrc -and $cacheSrc -match 'ScopeUsed -ne ''Full''' -and $cacheSrc -match 'cachedScope -ne ''Full''' -and $cacheSrc -match 'Normalize-ScanCacheCwd' -and $cacheSrc -match 'Test-ScanPathsWholeTree' -and $prePushSrc -match 'scan-pass-cache\.ps1' -and $prePushSrc -match 'Test-ScanPassCache') {
-    Ok 'scan-pass cache: Full-only save + cwd/scope match; pre-push shares Test-ScanPassCache'
+if ($cacheSrc -and $cacheSrc -match 'ScopeUsed -ne ''Full''' -and $cacheSrc -match 'cachedScope -ne ''Full''' -and $cacheSrc -match 'Normalize-ScanCacheCwd' -and $cacheSrc -match 'Test-ScanPathsWholeTree' -and $cacheSrc -match 'ScanPassScannerSet' -and $cacheSrc -match 'scannerSet' -and $prePushSrc -match 'scan-pass-cache\.ps1' -and $prePushSrc -match 'Test-ScanPassCache') {
+    Ok 'scan-pass cache: Full-only save + cwd/scope/scannerSet match; pre-push shares Test-ScanPassCache'
 } else {
-    Bad 'scan-pass cache missing Full/cwd policy or pre-push still has weak reader'
+    Bad 'scan-pass cache missing Full/cwd/scannerSet policy or pre-push still has weak reader'
+}
+if ($scanSrc -match 'Invoke-VibeProjectCompileAndTests' -and $scanSrc -match 'run-vibe-project-tools\.ps1') {
+    Ok 'scans: project compile/tests wired'
+} else {
+    Bad 'scans missing project-tools invoke'
+}
+$onEditEarly = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-on-edit.ps1') -Raw -ErrorAction SilentlyContinue
+if ($onEditEarly -match 'Invoke-VibeOnEditFileLinters') {
+    Ok 'on-edit: rust/go/cs linters when binaries exist'
+} else {
+    Bad 'on-edit missing Invoke-VibeOnEditFileLinters'
+}
+$ciYml = Join-Path $RepoRoot 'assets\ci\vibe-user-repo.yml'
+if ((Test-Path -LiteralPath $ciYml) -and ((Get-Content -LiteralPath $ciYml -Raw) -match 'gitleaks') -and ((Get-Content -LiteralPath $ciYml -Raw) -notmatch 'grok-ai-review')) {
+    Ok 'user-repo CI template: gitleaks, no LLM'
+} else {
+    Bad 'assets/ci/vibe-user-repo.yml missing or still calls LLM'
+}
+
+$ptLib = Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-project-tools.ps1'
+if (Test-Path -LiteralPath $ptLib) {
+    . $ptLib
+    $ptDir = Join-Path ([System.IO.Path]::GetTempPath()) ('vibe-pt-smoke-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
+    New-Item -ItemType Directory -Path $ptDir | Out-Null
+    try {
+        $c0 = @(Get-VibeProjectCompilePlan -Root $ptDir)
+        $t0 = @(Get-VibeProjectTestPlan -Root $ptDir)
+        if ($c0.Count -eq 0 -and $t0.Count -eq 0) { Ok 'project-tools: empty tree has no plan' } else { Bad 'project-tools: empty tree still produced a plan' }
+        $fx = Join-Path $RepoRoot 'assets\vibe-tools\fixtures'
+        Copy-Item -LiteralPath (Join-Path $fx 'npm-placeholder.json') -Destination (Join-Path $ptDir 'package.json') -Force
+        if ($null -eq (Get-VibeNpmTestInvocation -Root $ptDir)) { Ok 'project-tools: npm placeholder test skipped' } else { Bad 'project-tools: npm placeholder test was scheduled' }
+        Copy-Item -LiteralPath (Join-Path $fx 'npm-watch.json') -Destination (Join-Path $ptDir 'package.json') -Force
+        if ($null -eq (Get-VibeNpmTestInvocation -Root $ptDir)) { Ok 'project-tools: npm watch test skipped' } else { Bad 'project-tools: npm watch test was scheduled' }
+        Copy-Item -LiteralPath (Join-Path $fx 'npm-vitest.json') -Destination (Join-Path $ptDir 'package.json') -Force
+        $npmVitest = Get-VibeNpmTestInvocation -Root $ptDir
+        $npmApp = @(Get-Command npm -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(cmd|exe|bat)$' })
+        if ($npmApp.Count -gt 0) {
+            if ($npmVitest -and $npmVitest.FilePath -and ($npmVitest.FilePath -notmatch '\.ps1$')) {
+                Ok 'project-tools: npm FilePath is Win32 not ps1 shim'
+            } else {
+                Bad 'project-tools: npm FilePath is missing or a .ps1 shim'
+            }
+        } else {
+            if ($null -eq $npmVitest) { Ok 'project-tools: npm absent so vitest plan skipped' } else { Bad 'project-tools: npm plan without Win32 npm' }
+        }
+        Set-Content -LiteralPath (Join-Path $ptDir 'Cargo.toml') -Value '# vibe-smoke-cargo' -Encoding utf8
+        $cCargo = @(Get-VibeProjectCompilePlan -Root $ptDir)
+        $cargoExe = Get-Command cargo -ErrorAction SilentlyContinue
+        if ($cargoExe) {
+            if ($cCargo.Count -ge 1) { Ok 'project-tools: Cargo.toml plus cargo makes compile plan' } else { Bad 'project-tools: cargo present but compile plan empty' }
+        } else {
+            if ($cCargo.Count -eq 0) { Ok 'project-tools: Cargo.toml without cargo skipped' } else { Bad 'project-tools: scheduled cargo with no cargo.exe' }
+        }
+        $env:VIBE_SKIP_PROJECT_TOOLS = '1'
+        $skipR = Invoke-VibeProjectCompileAndTests -Root $ptDir -Mode Both -Quiet
+        Remove-Item Env:VIBE_SKIP_PROJECT_TOOLS -ErrorAction SilentlyContinue
+        if ([int]$skipR.Failed -eq 0 -and [int]$skipR.Advisory -eq 0) { Ok 'project-tools: skip env skips run' } else { Bad 'project-tools: skip env still failed' }
+    } catch {
+        Bad ('project-tools smoke: ' + $_.Exception.Message)
+        Remove-Item Env:VIBE_SKIP_PROJECT_TOOLS -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $ptDir -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    Bad 'missing run-vibe-project-tools.ps1'
 }
 if ($scanSrc -match 'New-StagedScanTree' -and $scanSrc -match 'Gitleaks \(staged\)' -and $scanSrc -match 'Invoke-Checkov') {
     Ok 'scans: staged secrets tree + checkov via venv'
@@ -351,6 +416,11 @@ if ($verOk -and $instOk -and $docOk -and $logOk -and $readOk) {
 } else {
     Bad "VERSION / banner / stackVersion / doctor / changelog / README [$verLine] missing"
 }
+if ($instSrc -match "'jscpd', 'markdownlint-cli', 'typescript'" -and $instSrc -notmatch "'prettier'" -and $instSrc -notmatch "'eslint'") {
+    Ok 'npm globals: typescript kept; prettier/eslint not installed'
+} else {
+    Bad 'npm globals still install prettier/eslint or dropped typescript'
+}
 $unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
 $hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
 $vibeHookTpl = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\hooks\vibe-coding.json') -Raw
@@ -427,6 +497,11 @@ if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function
 }
 $chatLibSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-chat-lib.ps1') -Raw -ErrorAction SilentlyContinue
 $ctxSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-review-context.ps1') -Raw -ErrorAction SilentlyContinue
+if ($ctxSrc -match 'GIT_INDEX_FILE' -and $ctxSrc -match 'fromFile -eq \$head') {
+    Ok 'intent: hook ignores COMMIT_EDITMSG when it still equals HEAD'
+} else {
+    Bad 'Get-StatedIntent still uses leftover HEAD message as this SHA intent'
+}
 if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'ChangedPaths' -and $progSrc -match 'function Get-GateFindingBucket' -and $progSrc -match 'later-cap' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $rawReview -match 'SCOPE: review THIS diff' -and $rawReview -match 'CARRY-FORWARD' -and $rawReview -match 'blocker\|next\|later' -and $rawReview -match 'Get-FindingBucket' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN NEXT' -and $chatLibSrc -match 'LATER backlog' -and $ctxSrc -match 'PRIOR OPEN NEXT' -and $ctxSrc -match 'CARRY-FORWARD' -and $ctxSrc -match 'function Test-VibeAdvisoryTouchesDiff' -and $ctxSrc -match 'function Get-PriorOpenAdvisoriesBlock') {
     Ok 'gate ledger: persist + inject; review scoped to this diff; carry-forward untouched next'
 } else {

@@ -14,7 +14,7 @@
     vibe-tools (scanner venv, review scripts, git + Grok hooks)
     rules / skills / AGENTS.md / RTK.md
     winget CLIs (rg, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh)
-    npm globals (jscpd, markdownlint-cli, prettier, eslint, typescript)
+    npm globals (jscpd, markdownlint-cli, typescript)
     PS modules (PSScriptAnalyzer, Pester)
     Serena MCP (uv tool)
     config.toml managed block (Headroom + Serena MCP, grok-4.6 + grok-gate alias on :8787 + grok-4.6-direct)
@@ -1078,7 +1078,7 @@ function Install-NpmGlobals {
         Write-Warn2 "npm missing - skip global packages"
         return
     }
-    foreach ($pkg in @('jscpd', 'markdownlint-cli', 'prettier', 'eslint', 'typescript')) {
+    foreach ($pkg in @('jscpd', 'markdownlint-cli', 'typescript')) {
         Write-Info "npm i -g $pkg"
         if ($DryRun) {
             [void]$script:Manifest.npmPackages.Add($pkg)
@@ -1241,6 +1241,9 @@ if (Test-Path (Join-Path $Assets 'token-saving\README.md')) {
     if (-not $DryRun) { Copy-Item (Join-Path $Assets 'token-saving\README.md') (Join-Path $TokenRoot 'README.md') -Force }
 }
 Copy-Tree (Join-Path $Assets 'vibe-tools\scripts') (Join-Path $VibeRoot 'scripts')
+if (Test-Path (Join-Path $Assets 'ci')) {
+    Copy-Tree (Join-Path $Assets 'ci') (Join-Path $VibeRoot 'ci')
+}
 if (-not $DryRun) {
     Copy-Item (Join-Path $Assets 'vibe-tools\*.ps1') $VibeRoot -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $Assets 'vibe-tools\README.md') (Join-Path $VibeRoot 'README.md') -Force -ErrorAction SilentlyContinue

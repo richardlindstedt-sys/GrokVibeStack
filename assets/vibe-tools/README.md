@@ -9,7 +9,8 @@ High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** ar
 - Pester          → PowerShell tests (`Invoke-Pester`)
 - jscpd           → duplicate code (`jscpd .`)
 - Biome           → JS/TS/JSON lint + format (`biome check .`)
-- prettier / eslint / tsc → JS/TS format + lint + types (global npm)
+- tsc → JS/TS types (`tsc --noEmit` when `tsconfig.json` exists; global npm `typescript`)
+- project compile/tests → cargo / go / dotnet / pytest / npm test / mvn / gradle **if present** (no extra SDKs)
 - markdownlint-cli→ Markdown/docs quality
 - Semgrep         → multi-lang rules + security (`semgrep scan`)
 - Ruff + Vulture  → Python lint + dead code
