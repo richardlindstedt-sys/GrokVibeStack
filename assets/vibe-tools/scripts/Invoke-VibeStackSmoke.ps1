@@ -477,6 +477,20 @@ Save-GateOpenAdvisories -Items @(
     [pscustomobject]@{ id = 'empty-1'; title = 'no file'; file = ''; severity = 'next' },
     [pscustomobject]@{ id = 'new-1'; title = 'new on diff'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
 ) -RunId 'e1' -Cwd $cwd -ChangedPaths $changed
+if (-not (Test-GateAdvisoryFileInPaths -File '' -ChangedPaths $changed)) { Write-Output 'empty-file-helper-false'; exit 1 }
+if (Test-GateAdvisoryFileInPaths -File '' -ChangedPaths @()) { Write-Output 'empty-file-helper-no-scope'; exit 1 }
+$here = (Get-Location).Path
+New-Item -ItemType Directory -Path $cwd -Force | Out-Null
+Set-Location -LiteralPath $cwd
+try {
+    $prior = Get-PriorOpenAdvisoriesBlock -ChangedPaths $changed
+    $idxP = $prior.IndexOf('PRIOR OPEN NEXT')
+    $idxE = $prior.IndexOf('empty-1')
+    if ($idxP -lt 0 -or $idxE -lt 0 -or $idxE -lt $idxP) { Write-Output 'empty-file-not-prior-next'; exit 1 }
+} finally {
+    Set-Location -LiteralPath $here
+    Remove-Item -LiteralPath $cwd -Recurse -Force -ErrorAction SilentlyContinue
+}
 Save-GateOpenAdvisories -Items @(
     [pscustomobject]@{ id = 'new-1'; title = 'new on diff'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
 ) -RunId 'e2' -Cwd $cwd -ChangedPaths $changed
@@ -513,7 +527,7 @@ exit 0
     $code = $LASTEXITCODE
     $txt = ($out | Out-String).Trim()
     if ($code -eq 0 -and $txt -match '(?m)^ok$') {
-        Ok 'gate ledger runtime: carry-forward; omit-resolve; empty-file resolve; resolved prune/cap'
+        Ok 'gate ledger runtime: carry-forward; omit-resolve; empty-file PRIOR OPEN NEXT then resolve; resolved prune/cap'
     } else {
         Bad ("gate ledger runtime failed (exit {0}): {1}" -f $code, $txt)
     }
@@ -792,8 +806,8 @@ if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$port
 } else {
     Bad 'start-grok missing port-scoped state / NoLogonKeeper / keeper-per-port'
 }
-if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwnerPids' -and $startSrc -match 'function Save-ProxyFingerprint' -and $startSrc -match 'Set-Content -Path \$ProxyPidFile -Value \$adopted' -and $startSrc -match 'PID file after listen proof' -and $startSrc -notmatch 'function Test-ProxyHttpReady' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
-    Ok 'start-grok: ListenProbe owners; Save-ProxyFingerprint; PID after listen; no HTTP-ready zombie'
+if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwnerPids' -and $startSrc -match 'function Save-ProxyFingerprint' -and $startSrc -match 'Set-Content -Path \$ProxyPidFile -Value \$adopted' -and $startSrc -match 'PID file after listen proof' -and $startSrc -match 'Foreign listener or CIM race' -and $startSrc -match 'Get-VibeListenSocketPids -Port \$Port' -and $startSrc -notmatch 'Empty Listen / no OwningProcess' -and $startSrc -notmatch 'function Test-ProxyHttpReady' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
+    Ok 'start-grok: ListenProbe owners; empty owners need socket descendant; no HTTP-ready zombie'
 } else {
     Bad 'start-grok missing ListenProbe / Save-ProxyFingerprint / adopted PID write / still has Test-ProxyHttpReady'
 }
@@ -838,10 +852,12 @@ if (Test-Path -LiteralPath $probePs1) {
     $notepadSock = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name 'notepad.exe' -Port 8787 -SocketOwnsPort $true
     $httpSrv = Test-VibeHeadroomOwnerCandidate -CommandLine 'python.exe -m http.server 8787' -Name 'python.exe' -ExecutablePath 'C:\Python\python.exe' -Port 8787 -SocketOwnsPort $true
     $pyPathEmpty = Test-VibeHeadroomOwnerCandidate -CommandLine '' -Name '' -ExecutablePath 'C:\Python\python.exe' -Port 8787 -SocketOwnsPort $true
-    if ((-not $emptyNoSock) -and $emptySock -and $fullCl -and (-not $truncNoSock) -and $truncSock -and (-not $wrongPortCl) -and $pyEmptySock -and (-not $pyEmptyNo) -and (-not $notepadSock) -and (-not $httpSrv) -and $pyPathEmpty) {
-        Ok 'ListenProbe: empty-CL needs socket PID; http.server not owner; python path empty-CL + socket counts'
+    $pyHeadroomPath = Test-VibeHeadroomOwnerCandidate -CommandLine 'python.exe D:\Repos\headroom\serve.py' -Name 'python.exe' -ExecutablePath 'C:\Python\python.exe' -Port 8787 -SocketOwnsPort $true
+    $httpHeadroomDir = Test-VibeHeadroomOwnerCandidate -CommandLine 'python.exe -m http.server --directory C:\headroom' -Name 'python.exe' -ExecutablePath 'C:\Python\python.exe' -Port 8787 -SocketOwnsPort $true
+    if ((-not $emptyNoSock) -and $emptySock -and $fullCl -and (-not $truncNoSock) -and $truncSock -and (-not $wrongPortCl) -and $pyEmptySock -and (-not $pyEmptyNo) -and (-not $notepadSock) -and (-not $httpSrv) -and $pyPathEmpty -and (-not $pyHeadroomPath) -and (-not $httpHeadroomDir)) {
+        Ok 'ListenProbe: empty-CL needs socket PID; http.server not owner; path substring headroom is not owner'
     } else {
-        Bad ('ListenProbe candidate matrix emptyNo={0} emptyYes={1} full={2} truncNo={3} truncYes={4} wrongPort={5} pyYes={6} pyNo={7} note={8} http={9} pyPath={10}' -f $emptyNoSock, $emptySock, $fullCl, $truncNoSock, $truncSock, $wrongPortCl, $pyEmptySock, $pyEmptyNo, $notepadSock, $httpSrv, $pyPathEmpty)
+        Bad ('ListenProbe candidate matrix emptyNo={0} emptyYes={1} full={2} truncNo={3} truncYes={4} wrongPort={5} pyYes={6} pyNo={7} note={8} http={9} pyPath={10} pyHr={11} httpDir={12}' -f $emptyNoSock, $emptySock, $fullCl, $truncNoSock, $truncSock, $wrongPortCl, $pyEmptySock, $pyEmptyNo, $notepadSock, $httpSrv, $pyPathEmpty, $pyHeadroomPath, $httpHeadroomDir)
     }
     $listener = $null
     try {

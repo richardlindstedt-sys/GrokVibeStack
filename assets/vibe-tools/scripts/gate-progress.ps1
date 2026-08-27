@@ -114,9 +114,11 @@ function Test-GateAdvisoryFileInPaths {
     if (@($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
         return $false
     }
-    if ([string]::IsNullOrWhiteSpace($File)) { return $false }
+    # Empty path cannot carry-forward: in-scope this round (prompt PRIOR OPEN NEXT;
+    # persist omit => resolve). Unknown scope (no ChangedPaths) already returned.
+    if ([string]::IsNullOrWhiteSpace($File)) { return $true }
     $norm = (($File -replace '\\', '/').Trim().TrimStart('/'))
-    if (-not $norm) { return $false }
+    if (-not $norm) { return $true }
     foreach ($c in @($ChangedPaths)) {
         if (-not $c) { continue }
         $cn = (($c -replace '\\', '/').Trim().TrimStart('/'))
@@ -214,15 +216,7 @@ function Save-GateOpenAdvisories {
         # Empty path list: keep ALL old open rows (unknown scope must not wipe carry-forward).
         if (-not $haveChangedPaths) { continue }
         $rowFile = [string]$row.file
-        $inThisDiff = $false
-        if ([string]::IsNullOrWhiteSpace($rowFile)) {
-            # Empty path cannot carry-forward; omitted this round => resolve.
-            $inThisDiff = $true
-        } elseif (Get-Command Test-VibeAdvisoryTouchesDiff -ErrorAction SilentlyContinue) {
-            $inThisDiff = [bool](Test-VibeAdvisoryTouchesDiff -File $rowFile -ChangedPaths $ChangedPaths)
-        } else {
-            $inThisDiff = [bool](Test-GateAdvisoryFileInPaths -File $rowFile -ChangedPaths $ChangedPaths)
-        }
+        $inThisDiff = [bool](Test-GateAdvisoryFileInPaths -File $rowFile -ChangedPaths $ChangedPaths)
         # Not in this diff: keep (carry-forward). In-diff and omitted: resolve.
         if (-not $inThisDiff) { continue }
         $oldBucket = Get-GateFindingBucket $row

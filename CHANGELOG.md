@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.14] - 2026-08-27
+
+### Fixed
+
+- ListenProbe owner short-circuit is empty CIM or truncated Headroom argv (`headroom.exe` or word `proxy`, no `--port`). A complete python CL whose path contains `headroom` is not owner (`python D:\Repos\headroom\serve.py`, `python -m http.server --directory C:\headroom`).
+- `start-grok` no longer adopts the wrapper PID when listen is up and owner list is empty. Socket PID must be this process or a descendant; a foreign listener waits out / times out (fail-closed).
+- Empty-file gate `next` is in-diff for both prompt and persist (`Test-GateAdvisoryFileInPaths`). Reviewers see PRIOR OPEN NEXT; omit this round still resolves. Blank path is no longer carry-forward then silently dropped.
+
 ## [1.5.13] - 2026-08-27
 
 ### Changed

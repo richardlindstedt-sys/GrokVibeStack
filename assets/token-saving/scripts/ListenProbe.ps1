@@ -89,11 +89,12 @@ function Test-VibeHeadroomOwnerCandidate {
     $hasHeadroom = $cl -match '(?i)headroom'
     $hasProxy = $cl -match '(?i)(\s|^)proxy(\s|$)'
     $hasAnyPortFlag = $cl -match '(?i)--port(\s|=)+\d+'
-    # Socket + headroom/python only when CIM is empty or truncated (no --port at all).
-    # A complete non-headroom CL (python -m http.server) is not the proxy.
+    # Socket + python/headroom.bin only for empty CIM or truncated Headroom argv
+    # (no --port, and headroom.exe or word "proxy"). A complete python CL whose
+    # path merely contains "headroom" is not the proxy.
     if ($SocketOwnsPort -and $isProxyProc) {
         if ($clEmpty) { return $true }
-        if ($hasHeadroom -and -not $hasAnyPortFlag) { return $true }
+        if (-not $hasAnyPortFlag -and ($isHeadroomBin -or $hasProxy)) { return $true }
     }
     if ($clEmpty) { return $false }
     if (-not $hasHeadroom) { return $false }

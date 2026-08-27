@@ -622,9 +622,22 @@ function Start-HeadroomProxyIfNeeded {
             $owners = @(Get-ListenOwnerPids $Port)
             $adopted = $null
             if ($owners.Count -eq 0) {
-                # Empty Listen / no OwningProcess / cmdlet-missing / race is not a mismatch.
-                if (-not $proc.HasExited -and (Test-ProxyProcessOk $proc.Id)) {
-                    $adopted = [int]$proc.Id
+                # Foreign listener or CIM race. Never adopt the wrapper PID just
+                # because the port is up. Socket PID must be us or our descendant.
+                if (Get-Command Get-VibeListenSocketPids -ErrorAction SilentlyContinue) {
+                    foreach ($sp in @(Get-VibeListenSocketPids -Port $Port)) {
+                        $sid = 0
+                        try { $sid = [int]$sp } catch { continue }
+                        if ($sid -le 0) { continue }
+                        if ($sid -eq [int]$proc.Id -and (Test-ProxyProcessOk $proc.Id)) {
+                            $adopted = $sid
+                            break
+                        }
+                        if ((Test-IsDescendantOf -AncestorId ([int]$proc.Id) -ProcId $sid) -and (Test-ProxyProcessOk $sid)) {
+                            $adopted = $sid
+                            break
+                        }
+                    }
                 }
             } else {
                 foreach ($op in $owners) {
