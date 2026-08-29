@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-29
+
+### Added
+
+- MCP coding/personal profiles: `Set-GrokMcpProfile.ps1`, `Enable-GrokCodingMcp.ps1`, `Enable-GrokPersonalMcp.ps1`, shims `grok-mcp-coding` / `grok-mcp-personal`. Coding disables mail/calendar/drive/tasks (`disabled_mcp_servers` + `disabled_mcp_tools.__managed_gateway_connectors`) and keeps Serena + Headroom on. `start-grok -McpProfile coding|personal`.
+- Repo bootstrap: `Initialize-VibeRepo.ps1` (hooks + Serena `project.yml` + thin `AGENTS.md` if missing). `start-grok -BootstrapRepo`.
+- Affected-tests helper: `Get-VibeAffectedTests.ps1` (`-Json`, `-Run`, path narrowing for pytest/go/cargo).
+- Thin TUI user-rules stub: `assets/config/user-rules-thin.md` (do not paste full `~/.grok/rules/*`).
+- Doctor: MCP profile + `disabled_mcp_servers` count + `rtk gain` snippet.
+
+### Changed
+
+- Vibe "done" means affected tests green + diagnostics clean + light self-check. Still no in-session multi-reviewer panel.
+
 ## [2.0.1] - 2026-08-27
 
 ### Fixed

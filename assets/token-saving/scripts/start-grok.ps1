@@ -14,6 +14,8 @@
     start-grok -StopProxy             # stop keeper + Headroom proxy and exit
     start-grok -StopProxy -Port 8788  # stop the review proxy only (chat :8787 stays)
     start-grok -Status                # print stack status and exit
+    start-grok -McpProfile coding     # disable mail/calendar/drive/tasks MCP before launch
+    start-grok -BootstrapRepo         # install vibe hooks + Serena yml in cwd (git repos)
 #>
 [CmdletBinding()]
 param(
@@ -26,6 +28,9 @@ param(
     [switch]$NoOutputShaper,   # deprecated/ignored (kept for compat)
     [switch]$UseOutputShaper,  # opt-in: enables HEADROOM_OUTPUT_SHAPER (can cause repeats)
     [switch]$SkipRtk,          # skip ensure-rtk (not recommended)
+    [ValidateSet('coding', 'personal', 'none')]
+    [string]$McpProfile = 'none',
+    [switch]$BootstrapRepo,
     [int]$Port = 8787,
     [int]$ProxyWaitSeconds = 45,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -493,6 +498,14 @@ function Show-Status {
         $cfgLine = 'present (GrokToml.ps1 missing; cannot validate)'
     }
     Write-Host "config.toml:  $cfgLine"
+    $mcpState = Join-Path $TokenRoot 'state\mcp-profile.json'
+    $mcpProf = 'unset'
+    if (Test-Path -LiteralPath $mcpState) {
+        try {
+            $mcpProf = [string]((Get-Content -LiteralPath $mcpState -Raw -Encoding utf8 | ConvertFrom-Json).profile)
+        } catch { $mcpProf = 'unreadable' }
+    }
+    Write-Host "MCP profile:  $mcpProf  (grok-mcp-coding / grok-mcp-personal / start-grok -McpProfile)"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
     $modelHint = if ($Port -eq 8787) { 'grok-4.6 (chat Headroom)' } else { 'grok-gate (review Headroom)' }
     Write-Host "model:        $modelHint -> http://127.0.0.1:$Port/v1"
@@ -770,6 +783,32 @@ if (-not $StopProxy) {
 
 if ($Status) { Show-Status; exit 0 }
 if ($StopProxy) { Stop-HeadroomKeeper; Stop-HeadroomProxy; exit 0 }
+
+if ($McpProfile -and $McpProfile -ne 'none') {
+    $mcpPs1 = Join-Path $TokenRoot 'scripts\Set-GrokMcpProfile.ps1'
+    if (-not (Test-Path -LiteralPath $mcpPs1)) { $mcpPs1 = Join-Path $PSScriptRoot 'Set-GrokMcpProfile.ps1' }
+    if (Test-Path -LiteralPath $mcpPs1) {
+        Write-Info "MCP profile: $McpProfile"
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $mcpPs1 -Profile $McpProfile
+        if ($LASTEXITCODE -ne 0) { Write-Warn "Set-GrokMcpProfile exit $LASTEXITCODE (continuing)" }
+    } else {
+        Write-Warn "Set-GrokMcpProfile.ps1 missing — skip -McpProfile"
+    }
+}
+
+if ($BootstrapRepo) {
+    $boot = Join-Path $env:USERPROFILE '.grok\vibe-tools\scripts\Initialize-VibeRepo.ps1'
+    if (-not (Test-Path -LiteralPath $boot)) {
+        $boot = Join-Path $PSScriptRoot '..\..\vibe-tools\scripts\Initialize-VibeRepo.ps1'
+    }
+    if (Test-Path -LiteralPath $boot) {
+        Write-Info "Bootstrap repo: $((Get-Location).Path)"
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $boot -RepoPath (Get-Location).Path
+        if ($LASTEXITCODE -ne 0) { Write-Warn "Initialize-VibeRepo exit $LASTEXITCODE (continuing)" }
+    } else {
+        Write-Warn "Initialize-VibeRepo.ps1 missing — skip -BootstrapRepo"
+    }
+}
 
 Write-Info "Caveman level: $cavemanLevel (rules + skills auto-load)"
 Write-Info "RTK:           $(if ($rtkVer) { $rtkVer } else { 'not found — shell compression limited' })"

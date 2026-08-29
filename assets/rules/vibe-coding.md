@@ -6,12 +6,14 @@ Ship solid code. Prefer quality at the **commit gate**; keep chat light.
 
 1. Explore with grep / Serena / small subagents when needed — not a full panel every edit.
 2. Write clean code. Prefer Serena / ast-grep for symbols over dumping whole files.
-3. After non-trivial edits: quick self-check (bugs, secrets, dead/unwired code). On-edit hooks already run fast linters/secrets.
+3. After logic edits: run **affected tests** (`Get-VibeAffectedTests.ps1`) and Serena/LSP diagnostics on touched paths. On-edit hooks already run secrets + linters.
 4. Do **not** spawn a full multi-reviewer panel or full scanner laundry list on every change — that is what **pre-commit** is for.
 
 ## Done means
 
-- You did a light self-check on what you touched.
+- Affected tests green (or no test runner in the repo).
+- Diagnostics clean on files you touched.
+- Light self-check (bugs, secrets, dead/unwired code).
 - For risky / large work, optional: `vibe-review` (or wait for commit hook).
 - **Commit** runs scanners + multi-reviewer (`standard` by default; docs-only may use `fast`).
 - Never `--no-verify` except true emergencies.

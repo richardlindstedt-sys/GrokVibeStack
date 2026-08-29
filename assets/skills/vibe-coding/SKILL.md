@@ -48,6 +48,8 @@ Path-aware: docs/md-only â†’ fast; sensitive paths (`auth`, `hook`, `crypto`, â€
 | `run-vibe-scans.ps1` | Static scanners (`-Scope Auto\|Staged\|Full`) |
 | `vibe-review` / `grok-ai-review.ps1` | Multi-reviewer + fix loop |
 | `install-vibe-hooks.ps1` | Once per repo |
+| `Initialize-VibeRepo.ps1` | Hooks + Serena `project.yml` + thin `AGENTS.md` |
+| `Get-VibeAffectedTests.ps1` | Print/run tests for this repo / changed paths |
 | `doctor.ps1` | Health + latest report |
 | `Invoke-VibeStackSmoke.ps1` | Offline smoke (no AI) |
 | `run-vibe-evals.ps1` | Known-bad plants (must fail closed) |

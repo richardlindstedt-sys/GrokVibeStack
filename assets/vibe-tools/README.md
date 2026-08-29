@@ -35,6 +35,8 @@ Serena CLI: `~\.local\bin\serena.exe` (MCP wired in `~\.grok\config.toml`). Inst
 | `scripts\grok-ai-review.ps1` | Canonical multi-reviewer loop (used by vibe-review + git hooks). |
 | `scripts\Invoke-VibeStackSmoke.ps1` | Offline smoke (parse, profiles, doctor, optional temp hooks). |
 | `install-vibe-hooks.ps1` / `install-pre-commit-hook.ps1` | Installs **pre-commit** + **pre-push** git hooks and global Grok **on-edit** hook. |
+| `Initialize-VibeRepo.ps1` | Hooks + Serena `project.yml` + thin `AGENTS.md` (no overwrite). |
+| `Get-VibeAffectedTests.ps1` | Print (or `-Run`) project tests, narrowed to changed paths. |
 
 ### Gate profiles
 
@@ -74,7 +76,7 @@ Grok should still use in-session subagents; the **git gate enforces** the panel 
 ## Always-on Behavior (via rules)
 Grok must:
 1. Explore with grep / Serena / small subagents when the work is non-trivial.
-2. After writing code, do a light self-check. On-edit hooks already run secrets + linters.
+2. After writing code, run affected tests + diagnostics. On-edit hooks already run secrets + linters.
 3. **Not** spawn a full multi-reviewer panel in chat — pre-commit runs that (`standard`). Use `vibe-review` only when asked or before a risky push.
 4. Prefer Serena MCP for symbol-level navigation when available.
 5. Look specifically for: duplication, dead code, unwired/incomplete features, security issues, bugs.
@@ -86,6 +88,12 @@ vibe-review
 & "$env:USERPROFILE\.grok\vibe-tools\vibe-review.ps1"
 & "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile fast
 & "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile strict
+
+# Repo bootstrap (hooks + Serena yml + AGENTS stub)
+& "$env:USERPROFILE\.grok\vibe-tools\scripts\Initialize-VibeRepo.ps1"
+
+# Tests for this repo / changed paths
+& "$env:USERPROFILE\.grok\vibe-tools\scripts\Get-VibeAffectedTests.ps1"
 
 # Static scans only
 & "$env:USERPROFILE\.grok\vibe-tools\scripts\run-vibe-scans.ps1"

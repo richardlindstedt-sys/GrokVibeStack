@@ -111,7 +111,8 @@ $script:Manifest = [ordered]@{
     stackFiles           = New-Object System.Collections.Generic.List[string]
     binShims             = @(
         'start-grok.cmd', 'start-grok.ps1', 'stop-grok-proxy.cmd',
-        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe'
+        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe',
+        'grok-mcp-coding.cmd', 'grok-mcp-personal.cmd', 'initialize-vibe-repo.ps1', 'get-vibe-affected-tests.ps1'
     )
     hookFiles            = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')
     qualityGates         = @('pre-commit', 'pre-push', 'on-edit', 'rtk-enforce', 'ai-review-high')
@@ -1260,6 +1261,7 @@ if (-not $DryRun) {
     }
     Copy-Item (Join-Path $Assets 'config\AGENTS.md') (Join-Path $GrokHome 'AGENTS.md') -Force
     Copy-Item (Join-Path $Assets 'config\RTK.md') (Join-Path $GrokHome 'RTK.md') -Force
+    Copy-Item (Join-Path $Assets 'config\user-rules-thin.md') (Join-Path $GrokHome 'user-rules-thin.md') -Force
     Copy-Item (Join-Path $Assets 'config\config-snippet.toml') (Join-Path $TokenRoot 'config-snippet.toml') -Force
     # portable mcp launcher
     $mcpCmd = @"

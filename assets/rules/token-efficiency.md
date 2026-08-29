@@ -9,6 +9,7 @@ Save context and tokens without losing correctness.
 - **Caveman ultra** for chat output
 - **Compact** at **55%** context + two-pass
 - **MCP** tool output capped at **20k** bytes. **Headroom MCP** (`headroom__*`) is **on by default**; optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
+- **Coding MCP profile:** `grok-mcp-coding` / `start-grok -McpProfile coding` disables mail/calendar/drive/tasks (tool schemas every turn). Restore: `grok-mcp-personal`.
 - Interactive reasoning default **medium**; AI gates are **fail-closed**. Effort by profile: **standard/strict = high**, **fast = medium** (push / docs-only)
 - After install/hook **file changes**: restart Grok, or once run **`/hooks` then `r`** in an already-open session. New sessions load hooks from disk automatically (not every session).
 - Prefer `start-grok` (proxy up); bare `grok` with default `grok-4.6` fails if proxy down. Vanilla: `-m grok-4.6-direct`.

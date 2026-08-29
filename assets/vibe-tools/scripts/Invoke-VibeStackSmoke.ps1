@@ -91,6 +91,11 @@ $parseTargets = @(
     (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\keep-headroom-proxy.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\GrokToml.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\Set-GrokMcpProfile.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\Enable-GrokCodingMcp.ps1'),
+    (Join-Path $RepoRoot 'assets\token-saving\scripts\Enable-GrokPersonalMcp.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Initialize-VibeRepo.ps1'),
+    (Join-Path $RepoRoot 'assets\vibe-tools\scripts\Get-VibeAffectedTests.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'),
     (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1'),
@@ -1251,6 +1256,66 @@ base_url = "http://127.0.0.1:8787/v1"
     } else {
         Bad ("empty merge ok={0} err={1}" -f $emptyCheck.Ok, ($emptyCheck.Errors -join '; '))
     }
+
+    $mcpPs1 = Join-Path $RepoRoot 'assets\token-saving\scripts\Set-GrokMcpProfile.ps1'
+    $mcpDir = Join-Path $env:TEMP ('vibe-mcp-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
+    New-Item -ItemType Directory -Path $mcpDir | Out-Null
+    try {
+        $mcpCfg = Join-Path $mcpDir 'config.toml'
+        $mcpState = Join-Path $mcpDir 'mcp-profile.json'
+        $seed = @"
+[ui]
+yolo = false
+
+[mcp_servers.headroom]
+command = "C:/hr.cmd"
+enabled = true
+"@
+        Set-Content -LiteralPath $mcpCfg -Value $seed -Encoding utf8
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $mcpPs1 -Profile coding -ConfigPath $mcpCfg -StatePath $mcpState 2>&1 | Out-Null
+        $c1 = Get-Content -LiteralPath $mcpCfg -Raw -ErrorAction SilentlyContinue
+        if ($c1 -match 'gmail' -and $c1 -match 'disabled_mcp_servers' -and $c1 -match '__managed_gateway_connectors') {
+            Ok 'MCP coding profile writes disabled_mcp_servers + gateway connectors'
+        } else {
+            Bad 'MCP coding profile did not write deny lists'
+        }
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $mcpPs1 -Profile personal -ConfigPath $mcpCfg -StatePath $mcpState 2>&1 | Out-Null
+        $c2 = Get-Content -LiteralPath $mcpCfg -Raw -ErrorAction SilentlyContinue
+        if ($c2 -notmatch 'disabled_mcp_servers' -and $c2 -notmatch '__managed_gateway_connectors') {
+            Ok 'MCP personal profile removes personal deny lists'
+        } else {
+            Bad 'MCP personal profile left coding deny lists'
+        }
+    } catch {
+        Bad "MCP profile smoke: $_"
+    } finally {
+        Remove-Item -LiteralPath $mcpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $affPs1 = Join-Path $RepoRoot 'assets\vibe-tools\scripts\Get-VibeAffectedTests.ps1'
+    try {
+        $json = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $affPs1 -Root $RepoRoot -Json 2>$null
+        if ($LASTEXITCODE -eq 0) { Ok 'Get-VibeAffectedTests -Json exit 0' }
+        else { Bad "Get-VibeAffectedTests -Json exit $LASTEXITCODE" }
+        $null = $json
+    } catch {
+        Bad "Get-VibeAffectedTests: $_"
+    }
+
+    $bootPs1 = Join-Path $RepoRoot 'assets\vibe-tools\scripts\Initialize-VibeRepo.ps1'
+    $bootSrc = Get-Content -LiteralPath $bootPs1 -Raw -ErrorAction SilentlyContinue
+    if ($bootSrc -match 'install-vibe-hooks' -and $bootSrc -match 'ensure-serena' -and $bootSrc -match 'AGENTS.md') {
+        Ok 'Initialize-VibeRepo: hooks + serena + AGENTS stub'
+    } else {
+        Bad 'Initialize-VibeRepo missing hooks/serena/AGENTS'
+    }
+    $startMcp = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
+    if ($startMcp -match 'McpProfile' -and $startMcp -match 'BootstrapRepo' -and $startMcp -match 'Set-GrokMcpProfile') {
+        Ok 'start-grok: -McpProfile + -BootstrapRepo'
+    } else {
+        Bad 'start-grok missing -McpProfile / -BootstrapRepo'
+    }
+
     $grokStub = @"
 [marketplace]
 default_skills_installs_purged = true

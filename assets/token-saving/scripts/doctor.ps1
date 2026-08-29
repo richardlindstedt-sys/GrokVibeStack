@@ -453,6 +453,15 @@ if (Test-Path -LiteralPath $cfg) {
         $on = $hrMcp.Groups[1].Value -eq 'true'
         Write-Host ("  Headroom MCP: {0} (default on; set enabled = false to opt out)" -f $(if ($on) { 'enabled' } else { 'disabled' }))
     }
+    $mcpState = Join-Path $grokHome 'token-saving\state\mcp-profile.json'
+    $mcpProf = 'unset'
+    if (Test-Path -LiteralPath $mcpState) {
+        try { $mcpProf = [string]((Get-Content -LiteralPath $mcpState -Raw -Encoding utf8 | ConvertFrom-Json).profile) } catch { $mcpProf = 'unreadable' }
+    }
+    $dis = [regex]::Match([string]$cfgTxt, '(?s)disabled_mcp_servers\s*=\s*\[(.*?)\]')
+    $disN = 0
+    if ($dis.Success) { $disN = @([regex]::Matches($dis.Groups[1].Value, '"[^"]+"')).Count }
+    Write-Host ("  MCP profile: {0}  (disabled_mcp_servers={1}; grok-mcp-coding / grok-mcp-personal)" -f $mcpProf, $disN)
 }
 
 Write-Host ""
@@ -487,7 +496,19 @@ Write-Host ""
 Write-Host 'Skills: caveman + token-save under ~/.grok/skills'
 Write-Host 'Rules:  caveman.md + token-efficiency.md + rtk.md under ~/.grok/rules'
 Write-Host 'RTK.md: ~/.grok/RTK.md'
-Write-Host 'MCP:    mcp_servers.headroom enabled=true by default; optional off in ~/.grok/config.toml'
+Write-Host 'MCP:    coding profile = serena+headroom; personal = mail/calendar/drive/tasks'
+$rtkGainCmd = Get-Command rtk -ErrorAction SilentlyContinue
+if ($rtkGainCmd) {
+    try {
+        $gj = Start-Job -ScriptBlock { & rtk gain 2>&1 | Select-Object -First 4 } 
+        $null = Wait-Job -Job $gj -Timeout 8
+        if ($gj.State -eq 'Completed') {
+            $gtxt = @(Receive-Job -Job $gj | ForEach-Object { "$_" } | Where-Object { $_ })
+            if ($gtxt.Count) { Write-Host ("rtk gain: {0}" -f ($gtxt -join ' | ')) }
+        }
+        Remove-Job -Job $gj -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
 $ledgerPath = Join-Path $reportsRoot 'gate-open-advisories.json'
 if (Test-Path -LiteralPath $ledgerPath) {
     try {

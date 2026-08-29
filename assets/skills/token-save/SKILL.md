@@ -42,6 +42,8 @@ start-grok                 # ensure rtk + Headroom proxy + grok -m grok-4.6
 start-grok -Status
 start-grok -StopProxy
 start-grok -NoProxy        # caveman + rtk + MCP only (no proxy)
+start-grok -McpProfile coding  # Serena + Headroom; disable mail/calendar MCP
+grok-mcp-coding / grok-mcp-personal
 ```
 
 Default `grok-4.6` is overridden to the Headroom proxy on `127.0.0.1:8787`. `grok-gate` is the same proxy. Use `start-grok` (not bare `grok`) for normal sessions. Vanilla: `start-grok -m grok-4.6-direct`.

@@ -28,6 +28,9 @@ start-grok -ProxyOnly       # chat proxy + logon keeper (auto-restart if Headroo
 start-grok -StopProxy -Port 8788   # leftover dual-proxy cleanup
 start-grok -StopProxy       # stop keeper + proxy on this port (disables logon task on :8787)
 start-grok -NoProxy         # skip proxy; caveman + rtk + MCP only
+start-grok -McpProfile coding   # Serena + Headroom; disable mail/calendar MCP
+start-grok -BootstrapRepo       # hooks + Serena yml + AGENTS stub in cwd
+grok-mcp-coding / grok-mcp-personal
 start-grok -SkipRtk         # skip ensure-rtk (not recommended)
 start-grok --help           # whatever you pass after still goes to grok if not a start-grok switch
 start-grok -m grok-build    # pass through to grok (skips default model inject if -m present)

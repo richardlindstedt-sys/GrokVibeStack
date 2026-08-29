@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.0.1** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.1.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -62,6 +62,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 # 3) New terminal (PATH refresh), start chat proxy + Grok
 start-grok -Status
+start-grok -McpProfile coding   # Serena + Headroom; disable mail/calendar MCP
 start-grok
 # One Headroom on :8787 (grok-gate is an alias). Leftover dual proxy:
 # start-grok -StopProxy -Port 8788
