@@ -26,6 +26,7 @@ All notable changes to this project are documented in this file.
 - Empty-owner adopt extracted as `Resolve-VibeProxyAdoptPid` (fail-closed: never adopt wrapper without a socket PID). Smoke covers foreign / descendant / wrapper-without-socket.
 - MCP personal profile smoke now seeds an unrelated deny and asserts it survives (filter names, do not wipe the key).
 - Netstat IPv6 PID parse no longer assigns `$pid` (PSSA `PSAvoidAssignmentToAutomaticVariable` Error on Full/push).
+- `GetExtendedTcpTable` ALL table now keeps only `MIB_TCP_STATE_LISTEN` rows (IPv4 state offset 0, IPv6 offset 48).
 
 ### Changed
 

@@ -18,20 +18,21 @@ function Get-VibeListenSocketPids {
     $ids = New-Object 'System.Collections.Generic.List[int]'
     if ($Port -le 0) { return $ids }
     try {
-        if (-not ('VibeListenTable3' -as [type])) {
+        if (-not ('VibeListenTable4' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-public static class VibeListenTable3 {
+public static class VibeListenTable4 {
     [DllImport("iphlpapi.dll", SetLastError = true)]
     static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, int tableClass, uint reserved);
     const int AF_INET = 2;
     const int AF_INET6 = 23;
     const int TCP_TABLE_OWNER_PID_LISTENER = 3;
     const int TCP_TABLE_OWNER_PID_ALL = 5;
+    const int MIB_TCP_STATE_LISTEN = 2;
     const uint ERROR_INSUFFICIENT_BUFFER = 122;
-    static void Collect(int port, int ipVersion, int tableClass, int rowSize, int portOffset, int pidOffset, List<int> found) {
+    static void Collect(int port, int ipVersion, int tableClass, int rowSize, int portOffset, int pidOffset, int stateOffset, List<int> found) {
         int len = 0;
         GetExtendedTcpTable(IntPtr.Zero, ref len, false, ipVersion, tableClass, 0);
         if (len <= 0) return;
@@ -47,8 +48,9 @@ public static class VibeListenTable3 {
                     IntPtr r = IntPtr.Add(row, i * rowSize);
                     uint localPort = unchecked((uint)Marshal.ReadInt32(r, portOffset));
                     int lp = (int)(((localPort & 0xFF) << 8) | ((localPort >> 8) & 0xFF));
-                    int pid = Marshal.ReadInt32(r, pidOffset);
-                    if (lp == port && pid > 0 && !found.Contains(pid)) found.Add(pid);
+                    int ownerPid = Marshal.ReadInt32(r, pidOffset);
+                    int state = Marshal.ReadInt32(r, stateOffset);
+                    if (lp == port && ownerPid > 0 && state == MIB_TCP_STATE_LISTEN && !found.Contains(ownerPid)) found.Add(ownerPid);
                 }
                 return;
             } finally { Marshal.FreeHGlobal(buf); }
@@ -57,16 +59,16 @@ public static class VibeListenTable3 {
     public static int[] PidsOnPort(int port) {
         var found = new List<int>();
         if (port <= 0 || port > 65535) return found.ToArray();
-        Collect(port, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 24, 8, 20, found);
-        Collect(port, AF_INET, TCP_TABLE_OWNER_PID_ALL, 24, 8, 20, found);
-        Collect(port, AF_INET6, TCP_TABLE_OWNER_PID_LISTENER, 56, 20, 52, found);
-        Collect(port, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 56, 20, 52, found);
+        Collect(port, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 24, 8, 20, 0, found);
+        Collect(port, AF_INET, TCP_TABLE_OWNER_PID_ALL, 24, 8, 20, 0, found);
+        Collect(port, AF_INET6, TCP_TABLE_OWNER_PID_LISTENER, 56, 20, 52, 48, found);
+        Collect(port, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 56, 20, 52, 48, found);
         return found.ToArray();
     }
 }
 '@
         }
-        foreach ($id in @([VibeListenTable3]::PidsOnPort($Port))) {
+        foreach ($id in @([VibeListenTable4]::PidsOnPort($Port))) {
             if ($id -gt 0 -and -not $ids.Contains([int]$id)) { [void]$ids.Add([int]$id) }
         }
     } catch {
