@@ -92,9 +92,9 @@ function Get-VibeListenSocketPidsViaNetstat {
     foreach ($line in @($raw)) {
         $m = $rx.Match([string]$line)
         if (-not $m.Success) { continue }
-        $pid = 0
-        if ([int]::TryParse($m.Groups[1].Value, [ref]$pid) -and $pid -gt 0 -and -not $found.Contains($pid)) {
-            [void]$found.Add($pid)
+        $sockPid = 0
+        if ([int]::TryParse($m.Groups[1].Value, [ref]$sockPid) -and $sockPid -gt 0 -and -not $found.Contains($sockPid)) {
+            [void]$found.Add($sockPid)
         }
     }
     return $found

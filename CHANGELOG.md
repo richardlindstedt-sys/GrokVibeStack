@@ -25,6 +25,7 @@ All notable changes to this project are documented in this file.
 - `Test-VibeKeeperAlive` shared in `ListenProbe.ps1`; smoke asserts 8788 cmdline is not 8787-alive and a live PID with the wrong script is dead.
 - Empty-owner adopt extracted as `Resolve-VibeProxyAdoptPid` (fail-closed: never adopt wrapper without a socket PID). Smoke covers foreign / descendant / wrapper-without-socket.
 - MCP personal profile smoke now seeds an unrelated deny and asserts it survives (filter names, do not wipe the key).
+- Netstat IPv6 PID parse no longer assigns `$pid` (PSSA `PSAvoidAssignmentToAutomaticVariable` Error on Full/push).
 
 ### Changed
 
