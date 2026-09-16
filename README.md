@@ -44,7 +44,7 @@ GrokVibeStack/ (this repo)
 | Windows 10/11 | Primary supported OS |
 | Grok Build CLI | Installed and logged in; this repo does **not** ship `grok.exe` |
 | Network | winget / npm / pip / optional Serena on first install; AI gates need model access |
-| Headroom proxy | One proxy: `grok-4.6` → `127.0.0.1:8787`. Gates sequential on the same proxy. `grok-4.6-direct` only if `:8787` is down. |
+| Headroom proxy | One chat proxy: `grok-4.6` / `grok-gate` / `grok-via-headroom` (default `:8787`). Multi-reviewer SSE is **sequential on any Headroom port**. `grok-4.6-direct` skips the proxy and may run reviewers in parallel. |
 | Admin (sometimes) | winget package installs may prompt; user-scope PATH preferred |
 
 ---
@@ -90,7 +90,7 @@ Offline smoke (no AI spend):
 
 | Goal | How |
 |------|-----|
-| **Quality** | On-edit checks · static scanners · multi-reviewer panel + arbiter + fix/re-review (fail-closed) |
+| **Quality** | On-edit secrets/linters/diagnostics · static scanners + project tests (fail if skipped) · multi-reviewer panel + arbiter + fix/re-review (fail-closed) |
 | **Token savings** | Headroom max-coding profile · RTK auto-enforce · caveman · early compact · MCP caps |
 | **Fresh machines** | One installer applies full gates + max-savings defaults |
 
@@ -110,7 +110,8 @@ How the pieces talk after install:
                 ▼                             ▼
 ┌──────────────────────────┐    ┌─────────────────────────────┐
 │  Session hooks           │    │  Repo git hooks             │
-│  on-edit → light scans   │    │  pre-commit = standard AI   │
+│  on-edit → secrets/lint  │    │  pre-commit = scans+tests   │
+│            + diagnostics │    │            + standard AI    │
 │  stop → remind if edited │    │  pre-push   = fast AI       │
 │  PreToolUse → RTK enforce│    └──────────────┬──────────────┘
 └──────────┬───────────────┘                   │
@@ -144,10 +145,10 @@ Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **
 
 | Gate | Trigger | Action | Blocks? |
 |------|---------|--------|---------|
-| On-edit | Grok file write/edit | Secrets + linters; findings saved for next prompt | No |
-| Prompt inject | Next user prompt | Pending on-edit findings as additionalContext | No |
-| **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests** (working tree; fail if skipped) + **profile=standard** LLM loop | **Yes** |
-| **pre-push** | `git push` | Scanners + project compile/tests (if toolchain) + **fast** LLM (version tags → **strict**, single-commit) | **Yes** |
+| On-edit | Grok file write/edit | Secrets + linters + parser diagnostics (PowerShell `ParseFile`, `py_compile`, `node --check`; rustfmt/gofmt/`dotnet format` when those CLIs exist). Cap ~10 lines. Fail-open. | No |
+| Prompt inject | Next user prompt | Pending on-edit findings + **SPEC PIN** (re-read `TASKS.md` / plan files after compact) + GATE LIVE | No |
+| **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests on the working tree** (fail if a test layout exists but tests were skipped) + **profile=standard** LLM loop | **Yes** |
+| **pre-push** | `git push` | Scanners + project compile/tests (if toolchain) + **fast** LLM (sensitive paths add security; version tags → **strict**) | **Yes** |
 | Stop / gate-live | Turn end | Block silent end while `gate-now` is live; remind if edited | Keeps turn |
 | Poll clamp | `get_command_or_subagent_output` | Live gate: rewrite `timeout_ms` to 15000 | Rewrite |
 
@@ -182,7 +183,7 @@ scans → reviewer panel (by profile) → arbiter → blockers? implementer fix 
 | **standard** | correctness + security + simplicity | 2 | on | high | pre-commit, `vibe-review` |
 | **strict** | same as standard | 3 | on | high | high-risk / **version-tag push** / `vibe-review -Profile strict` |
 
-Hooks use `-AutoProfile` (docs-only → fast; sensitive paths keep/add security). Scans: staged-first on commit (`-Scope Auto`); full on push with short scan-pass cache.
+Hooks use `-AutoProfile` (docs-only → fast; sensitive paths keep/add security). On **strict** or sensitive paths, security `next` for exploitable/secret issues is raised to **blocker** language. Simplicity also hunts clear quadratic / unbounded work. Scans: staged-first on commit (`-Scope Auto`); full on push with short scan-pass cache. Headroom-backed models (`grok-4.6`, `grok-gate`, `grok-via-headroom`) run the reviewer panel **sequentially on any proxy port**.
 
 ```powershell
 vibe-review
@@ -221,6 +222,7 @@ headroom savings    # proxy-side compression stats
 rtk gain            # RTK stdout reduction stats
 start-grok -Status
 doctor
+doctor -Usage       # bounded rtk + headroom snapshot
 ```
 
 End-to-end “% off my monthly bill” depends on mix of chat vs gates vs tool noise — use the commands above rather than a single marketing number.
@@ -229,9 +231,11 @@ End-to-end “% off my monthly bill” depends on mix of chat vs gates vs tool n
 
 winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, typescript, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
 
-Language SDKs (Rust, Go, .NET, JDK) are **not** bundled. If `cargo` / `go` / `dotnet` / `tsc` / `pytest` / `mvn` / `gradle` are on PATH, gates run them. Skip: `VIBE_SKIP_PROJECT_TOOLS=1`.
+Language SDKs (Rust, Go, .NET, JDK) are **not** bundled. If `cargo` / `go` / `dotnet` / `tsc` / `pytest` / `mvn` / `gradle` / `Invoke-Pester` are on PATH, gates run them. **ast-grep** runs `sg scan` when `.ast-grep.yml` / `sgconfig.yml` exists.
 
-Those projects keep their own licenses and update cadence. GitHub binaries (`scc`, `tokei`) use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install). Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
+If a **test layout** exists (Cargo/Go/pytest/npm test/sln/csproj/pom/gradle/`*.Tests.ps1`) but tests were skipped (`VIBE_SKIP_PROJECT_TOOLS`, `VIBE_SKIP_PROJECT_TESTS`, timeout 0, or no runner), the gate **fails** unless `VIBE_ALLOW_SKIP_TESTS=1`.
+
+Those projects keep their own licenses and update cadence. GitHub binaries use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install): **scc v4.1.0**, **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). Serena PyPI pin is **1.7.0**. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
 
 ---
 
@@ -257,8 +261,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 1. Open a **new** terminal (PATH refresh).  
 2. `start-grok` (one Headroom `:8787`; built-in `grok-4.6` and `grok-gate` share it). Vanilla: `start-grok -m grok-4.6-direct`.  
-   Gates run sequential on the same proxy. Leftover dual `:8788`: `start-grok -StopProxy -Port 8788`.  
-   Liveness is **TCP listen** (`GetActiveTcpListeners`). `/readyz` blocks during SSE — do **not** restart the proxy because HTTP looks down.
+   Headroom models stay sequential on **any** `--port`. Leftover dual `:8788`: `start-grok -StopProxy -Port 8788`.  
+   Liveness is **TCP listen** (`GetActiveTcpListeners` + `GetExtendedTcpTable` LISTEN PIDs, IPv4 and IPv6). `/readyz` blocks during SSE — do **not** restart the proxy because HTTP looks down.  
+   Cwd has `.git` but no vibe pre-commit: `start-grok` / `doctor` print `start-grok -BootstrapRepo` (no silent install).
 3. **Grok session hooks** (`~\.grok\hooks\*.json`) load automatically on **new** Grok sessions.  
    - If Grok was **already running** while you installed or changed hooks: either restart Grok, **or** once run `/hooks` then `r` in that session.  
    - You do **not** need `/hooks` + `r` at the start of every session.
@@ -289,13 +294,17 @@ Optional aggressive flags (read script help first): `-RemoveWingetPackages`, `-R
 ```powershell
 start-grok                          # Headroom :8787 + Grok (grok-4.6; grok-gate alias)
 start-grok -Status
+start-grok -McpProfile coding       # deny mail/calendar/drive/tasks; keep Serena + Headroom
+start-grok -BootstrapRepo           # hooks + Serena yml + AGENTS stub in cwd (not silent)
 start-grok -StopProxy -Port 8788    # leftover dual-proxy cleanup
 doctor                              # or full path under token-saving\scripts\doctor.ps1
+doctor -Usage                       # timeout-bounded rtk gain --history + headroom savings
 vibe-review                         # full scans + standard AI gate on current diff
 & ...\scripts\run-vibe-scans.ps1    # scanners only
+& ...\scripts\Get-VibeAffectedTests.ps1 -Run
 ```
 
-Doctor shows: chat `:8787` up/down plus leftover `:8788`, live cmdline + fingerprint vs this stack, session hook JSON validity, gate profiles, cwd git-hook profile hints, latest gate report. **Do not kill `:8787` while reviewers stream** — `/readyz` hang ≠ crash.
+Doctor shows: chat `:8787` up/down plus leftover `:8788`, live cmdline + fingerprint vs this stack, keeper liveness, session hook JSON validity, MCP profile + fat-MCP / missing personal-deny warnings, cwd git-hook hint (`start-grok -BootstrapRepo`), latest gate report. **Do not kill `:8787` while reviewers stream** — `/readyz` hang ≠ crash.
 
 **Watch commit/push gates in this chat.** The agent backgrounds `git commit`/`git push` and starts `watch-gate-now.ps1 -Monitor`. Chat stays quiet until something new happens (scan result, vote, arbiter, fixer file, `GATE DONE`). Waiting ticks and "no new votes" never appear. First line of `gate-now.txt` is `RUN:` — ignore leftover `GATE DONE` until that new RUN appears. After the last gate of the pair the agent kills the watch. No extra window.
 
@@ -307,6 +316,8 @@ Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-status.txt -Wait   # 
 Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md` (overwritten each gate). Ledger: `reports/gate-open-advisories.json` — **next** must be fixed in the next commit; **later** is backlog (doctor lists).
 
 **Headroom MCP** (`headroom__*` tools) is **on by default**. Optional off: set `enabled = false` under `[mcp_servers.headroom]` in `~/.grok/config.toml`. Proxy + RTK stay on. Re-run installer to restore the managed block, or edit that key only.
+
+**MCP coding profile** (`start-grok -McpProfile coding` / `grok-mcp-coding`) denies mail/calendar/drive/tasks in `disabled_mcp_servers` + managed gateway connectors, keeps Serena + Headroom. Names are live-probed with `grok mcp list --json` (8s); static list if the CLI is missing. Unrelated custom denies are kept. Restore: `grok-mcp-personal`.
 
 Emergency:
 

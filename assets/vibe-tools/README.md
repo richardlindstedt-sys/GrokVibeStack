@@ -11,7 +11,6 @@ High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** ar
 - Biome           → JS/TS/JSON lint + format (`biome check .`)
 - tsc → JS/TS types (`tsc --noEmit` when `tsconfig.json` exists; global npm `typescript`)
 - project compile/tests → cargo / go / dotnet / pytest / npm test / mvn / gradle / Pester **if present** (tests on commit + push; fail if skipped)
-- ast-grep project rules → `sg scan` when `.ast-grep.yml` exists
 - markdownlint-cli→ Markdown/docs quality
 - Semgrep         → multi-lang rules + security (`semgrep scan`)
 - Ruff + Vulture  → Python lint + dead code
@@ -19,7 +18,7 @@ High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** ar
 - yamllint + checkov → YAML + IaC / cloud security
 - ShellCheck      → shell scripts
 - Hadolint        → Dockerfiles
-- ast-grep (`sg`) → structural code search/rewrite
+- ast-grep (`sg`) → structural search; **project rules** (`sg scan`) when `.ast-grep.yml` / `.ast-grep.yaml` / `sgconfig.yml` exists
 - gh              → GitHub CLI (PRs, issues, checks)
 - Serena MCP      → symbolic nav/edit (`find_symbol`, rename, diagnostics)
 - Git             → commit hooks
@@ -43,9 +42,9 @@ Serena CLI: `~\.local\bin\serena.exe` (MCP wired in `~\.grok\config.toml`). Inst
 
 | Profile | Reviewers | Max rounds | Fix loop | Used by |
 |---------|-----------|------------|----------|---------|
-| `fast` | correctness only | 1 | off | **pre-push** |
+| `fast` | correctness (+ security if sensitive paths) | 1 | off | **pre-push**, docs-only commit |
 | `standard` | correctness, security, simplicity | 2 | on | **pre-commit**, default `vibe-review` |
-| `strict` | same as standard | 3 | on | manual / release |
+| `strict` | same as standard | 3 | on | version-tag push / `vibe-review -Profile strict` |
 
 Env: `VIBE_GATE_PROFILE`, `VIBE_GATE_NO_CACHE=1`.
 
@@ -53,7 +52,7 @@ Env: `VIBE_GATE_PROFILE`, `VIBE_GATE_NO_CACHE=1`.
 
 ```text
 static scans
-    → reviewer panel (profile roles; parallel unless Sequential/fast)
+    → reviewer panel (profile roles; sequential for Headroom models on any port)
     → arbiter merges findings, resolves blocker vs next vs later
     → if blockers: implementer fixes → re-stage → re-review (until max rounds)
     → pass only on APPROVE / STRONG_APPROVE / APPROVE_WITH_CHANGES
@@ -77,7 +76,7 @@ Grok should still use in-session subagents; the **git gate enforces** the panel 
 ## Always-on Behavior (via rules)
 Grok must:
 1. Explore with grep / Serena / small subagents when the work is non-trivial.
-2. After writing code, run affected tests + diagnostics. On-edit hooks already run secrets + linters.
+2. After writing code, run affected tests + diagnostics. On-edit hooks already run secrets + linters + parser diagnostics.
 3. **Not** spawn a full multi-reviewer panel in chat — pre-commit runs that (`standard`). Use `vibe-review` only when asked or before a risky push.
 4. Prefer Serena MCP for symbol-level navigation when available.
 5. Look specifically for: duplication, dead code, unwired/incomplete features, security issues, bugs.
@@ -117,12 +116,12 @@ install-vibe-hooks.ps1 .
 
 | Gate | When | What runs | Blocks? |
 |------|------|-----------|---------|
-| **On edit** | Grok `PostToolUse` after write / `search_replace` / Serena write tools | `run-vibe-on-edit.ps1` — secrets + linters; merge-by-file findings | No |
-| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings + GATE LIVE | No |
+| **On edit** | Grok `PostToolUse` after write / `search_replace` / Serena write tools | `run-vibe-on-edit.ps1` — secrets + linters + parser diagnostics (cap ~10); fail-open | No |
+| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings + SPEC PIN + GATE LIVE | No |
 | **Poll clamp** | `PreToolUse` `get_command_or_subagent_output` | Live gate: `timeout_ms` → 15000 | Rewrite |
 | **Stop keep-alive** | `Stop` | Block silent end while gate live | Keeps turn |
-| **pre-commit** | `git commit` | Full scanners + **profile=standard** on **staged** diff (intent + blast-radius) | Yes |
-| **pre-push** | `git push` | Full scanners + **fast** (version tags → **strict**, single-commit) | Yes |
+| **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests** (working tree; fail if skipped) + **profile=standard** on staged diff | Yes |
+| **pre-push** | `git push` | Full scanners + project compile/tests + **fast** (sensitive paths add security; version tags → **strict**) | Yes |
 
 Also deletes inert `*.sample` hooks from `.git/hooks/`.
 
@@ -130,17 +129,15 @@ If Grok was already open during install: `/hooks` then `r`, or restart. New sess
 
 Emergency bypass only: `git commit --no-verify` / `git push --no-verify`.
 
-Missing hooks: `doctor` (cwd) shows yellow if this repo has no vibe pre-commit. Install with `install-vibe-hooks.ps1 .`.
+Missing hooks: `doctor` / `start-grok` print `start-grok -BootstrapRepo` (or `Initialize-VibeRepo.ps1` / `install-vibe-hooks.ps1 .`). No silent install.
 
 ## Recommended Workflow (inside Grok)
 - Ask Grok to implement something.
 - Grok should:
-  1. Use explore subagent if needed.
-  2. Use plan subagent.
-  3. Implement.
-  4. Run scans.
-  5. Spawn reviewer + security-auditor (or run `vibe-review` for the full panel loop).
-  6. Only then present final result. Commit runs the same loop again via pre-commit.
+  1. Explore with grep / Serena / a small subagent if needed.
+  2. Implement.
+  3. Run affected tests + diagnostics.
+  4. **Not** spawn a full multi-reviewer panel in chat — **pre-commit** runs `standard`. Use `vibe-review` only when asked or before a risky push.
 
 ## Disable / Tone Down
 - Remove the pre-commit hook: `rm .git/hooks/pre-commit`
