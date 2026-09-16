@@ -97,6 +97,20 @@ try { $cwdNow = (Get-Location).Path } catch { $cwdNow = '' }
 $openAdvText = Format-GateOpenAdvisoriesInject -Cwd $cwdNow
 if ($openAdvText) { [void]$chunks.Add($openAdvText) }
 
+$specNames = @('TASKS.md', 'TASK.md', 'TODO.md', 'PLAN.md', 'plan.md', 'AGENTS.md')
+$specHits = New-Object System.Collections.Generic.List[string]
+foreach ($n in $specNames) {
+    if (Test-Path -LiteralPath (Join-Path (Get-Location).Path $n)) { [void]$specHits.Add($n) }
+}
+try {
+    Get-ChildItem -LiteralPath (Get-Location).Path -Filter '*plan*.md' -File -ErrorAction SilentlyContinue |
+        Select-Object -First 4 |
+        ForEach-Object { if (-not $specHits.Contains($_.Name)) { [void]$specHits.Add($_.Name) } }
+} catch {}
+if ($specHits.Count -gt 0) {
+    [void]$chunks.Add(('SPEC PIN: after auto-compact, re-read {0} before more edits. Do not rely on compacted memory of the plan.' -f ($specHits -join ', ')))
+}
+
 $stateDir = Get-VibeStateDir
 $findingsFile = Join-Path $stateDir 'on-edit-findings.json'
 if (Test-Path -LiteralPath $findingsFile) {

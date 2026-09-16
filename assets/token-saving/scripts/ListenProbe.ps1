@@ -18,26 +18,27 @@ function Get-VibeListenSocketPids {
     $ids = New-Object 'System.Collections.Generic.List[int]'
     if ($Port -le 0) { return $ids }
     try {
-        if (-not ('VibeListenTable2' -as [type])) {
+        if (-not ('VibeListenTable3' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-public static class VibeListenTable2 {
+public static class VibeListenTable3 {
     [DllImport("iphlpapi.dll", SetLastError = true)]
     static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, int tableClass, uint reserved);
     const int AF_INET = 2;
     const int AF_INET6 = 23;
     const int TCP_TABLE_OWNER_PID_LISTENER = 3;
+    const int TCP_TABLE_OWNER_PID_ALL = 5;
     const uint ERROR_INSUFFICIENT_BUFFER = 122;
-    static void Collect(int port, int ipVersion, int rowSize, int portOffset, int pidOffset, List<int> found) {
+    static void Collect(int port, int ipVersion, int tableClass, int rowSize, int portOffset, int pidOffset, List<int> found) {
         int len = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref len, false, ipVersion, TCP_TABLE_OWNER_PID_LISTENER, 0);
+        GetExtendedTcpTable(IntPtr.Zero, ref len, false, ipVersion, tableClass, 0);
         if (len <= 0) return;
         for (int attempt = 0; attempt < 4; attempt++) {
             IntPtr buf = Marshal.AllocHGlobal(len);
             try {
-                uint rc = GetExtendedTcpTable(buf, ref len, false, ipVersion, TCP_TABLE_OWNER_PID_LISTENER, 0);
+                uint rc = GetExtendedTcpTable(buf, ref len, false, ipVersion, tableClass, 0);
                 if (rc == ERROR_INSUFFICIENT_BUFFER) continue;
                 if (rc != 0) return;
                 int count = Marshal.ReadInt32(buf);
@@ -56,20 +57,47 @@ public static class VibeListenTable2 {
     public static int[] PidsOnPort(int port) {
         var found = new List<int>();
         if (port <= 0 || port > 65535) return found.ToArray();
-        Collect(port, AF_INET, 24, 8, 20, found);
-        Collect(port, AF_INET6, 56, 20, 52, found);
+        Collect(port, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 24, 8, 20, found);
+        Collect(port, AF_INET, TCP_TABLE_OWNER_PID_ALL, 24, 8, 20, found);
+        Collect(port, AF_INET6, TCP_TABLE_OWNER_PID_LISTENER, 56, 20, 52, found);
+        Collect(port, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 56, 20, 52, found);
         return found.ToArray();
     }
 }
 '@
         }
-        foreach ($id in @([VibeListenTable2]::PidsOnPort($Port))) {
+        foreach ($id in @([VibeListenTable3]::PidsOnPort($Port))) {
             if ($id -gt 0 -and -not $ids.Contains([int]$id)) { [void]$ids.Add([int]$id) }
         }
     } catch {
-        # P/Invoke or Add-Type failed: no socket PIDs (fail closed for owner/adopt).
+        # P/Invoke or Add-Type failed: fall through to netstat.
+    }
+    if ($ids.Count -eq 0) {
+        foreach ($id in @(Get-VibeListenSocketPidsViaNetstat -Port $Port)) {
+            if ($id -gt 0 -and -not $ids.Contains([int]$id)) { [void]$ids.Add([int]$id) }
+        }
     }
     return $ids
+}
+
+function Get-VibeListenSocketPidsViaNetstat {
+    param([int]$Port)
+    $found = New-Object 'System.Collections.Generic.List[int]'
+    if ($Port -le 0) { return $found }
+    $raw = $null
+    try {
+        $raw = & netstat.exe -ano -p tcp 2>$null
+    } catch { return $found }
+    $rx = [regex]('(?i)^\s*TCP\s+\S+[:.]' + [regex]::Escape([string]$Port) + '\s+\S+\s+LISTENING\s+(\d+)\s*$')
+    foreach ($line in @($raw)) {
+        $m = $rx.Match([string]$line)
+        if (-not $m.Success) { continue }
+        $pid = 0
+        if ([int]::TryParse($m.Groups[1].Value, [ref]$pid) -and $pid -gt 0 -and -not $found.Contains($pid)) {
+            [void]$found.Add($pid)
+        }
+    }
+    return $found
 }
 
 function Test-VibeHeadroomOwnerCandidate {
@@ -132,4 +160,90 @@ function Get-VibeListenOwnerPids {
         }
     } catch {}
     return $owners
+}
+
+function Test-VibeKeeperAlive {
+    param(
+        [int]$Port,
+        [string]$PidFile
+    )
+    if ($Port -le 0 -or [string]::IsNullOrWhiteSpace($PidFile)) { return $false }
+    if (-not (Test-Path -LiteralPath $PidFile)) { return $false }
+    $kr = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction SilentlyContinue)
+    if (-not $kr) { return $false }
+    $kr = $kr.Trim()
+    $kid = 0
+    if (-not [int]::TryParse($kr, [ref]$kid) -or $kid -le 0) { return $false }
+    $kp = Get-Process -Id $kid -ErrorAction SilentlyContinue
+    if (-not $kp) { return $false }
+    $kcl = ''
+    try {
+        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$kid" -OperationTimeoutSec 3 -ErrorAction SilentlyContinue
+        if ($wmi -and $wmi.CommandLine) { $kcl = [string]$wmi.CommandLine }
+    } catch {}
+    if (-not ($kcl -and $kcl -match 'keep-headroom-proxy')) { return $false }
+    if ($kcl -match ("-Port\s+$Port(?!\d)")) { return $true }
+    if ($Port -eq 8787 -and $kcl -notmatch '-Port\s+\d+') { return $true }
+    return $false
+}
+
+function Resolve-VibeProxyAdoptPid {
+    <#
+      Empty owner list: only a socket PID that is the wrapper or a descendant AND in OkPids.
+      Never adopt the wrapper just because the port is up.
+      Missing/non-int PIDs are skipped (fail closed).
+    #>
+    param(
+        [int]$WrapperPid,
+        [int[]]$SocketPids,
+        [int[]]$OwnerPids,
+        [int[]]$OkPids,
+        [int[]]$DescendantPids
+    )
+    if ($WrapperPid -le 0) { return $null }
+    $ok = @{}
+    foreach ($x in @($OkPids)) {
+        $n = 0
+        try { $n = [int]$x } catch { continue }
+        if ($n -gt 0) { $ok[$n] = $true }
+    }
+    $desc = @{}
+    foreach ($x in @($DescendantPids)) {
+        $n = 0
+        try { $n = [int]$x } catch { continue }
+        if ($n -gt 0) { $desc[$n] = $true }
+    }
+    $socks = New-Object 'System.Collections.Generic.List[int]'
+    foreach ($x in @($SocketPids)) {
+        $n = 0
+        try { $n = [int]$x } catch { continue }
+        if ($n -gt 0 -and -not $socks.Contains($n)) { [void]$socks.Add($n) }
+    }
+    $owners = New-Object 'System.Collections.Generic.List[int]'
+    foreach ($x in @($OwnerPids)) {
+        $n = 0
+        try { $n = [int]$x } catch { continue }
+        if ($n -gt 0 -and -not $owners.Contains($n)) { [void]$owners.Add($n) }
+    }
+    $consider = {
+        param([int]$id)
+        if ($id -le 0) { return $false }
+        if (-not $ok.ContainsKey($id)) { return $false }
+        if ($id -eq $WrapperPid) { return $true }
+        if ($desc.ContainsKey($id)) { return $true }
+        return $false
+    }
+    if ($owners.Count -eq 0) {
+        foreach ($sid in $socks) {
+            if (& $consider $sid) { return $sid }
+        }
+        return $null
+    }
+    foreach ($op in $owners) {
+        if ($op -eq $WrapperPid -and $ok.ContainsKey($op)) { return $op }
+    }
+    foreach ($op in $owners) {
+        if ($desc.ContainsKey($op) -and $ok.ContainsKey($op)) { return $op }
+    }
+    return $null
 }

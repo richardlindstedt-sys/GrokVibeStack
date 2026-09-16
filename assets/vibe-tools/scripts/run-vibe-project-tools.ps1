@@ -2,12 +2,15 @@
 .SYNOPSIS
     Detect-and-run project compilers/tests when the toolchain is already on PATH.
 .DESCRIPTION
-    No SDKs are installed. Missing cargo/go/dotnet/tsc/pytest/mvn/gradle = skip.
+    No SDKs are installed. Missing cargo/go/dotnet/tsc/pytest/mvn/gradle/Pester = skip that runner.
     Compile/tests need a full tree (not a staged-file snapshot).
+    If a test layout exists but tests were skipped (env skip, timeout 0, or no runner),
+    the gate FAILS unless VIBE_ALLOW_SKIP_TESTS=1.
     Timeout / skip env:
-      VIBE_SKIP_PROJECT_TOOLS=1     skip compile + tests
+      VIBE_SKIP_PROJECT_TOOLS=1     skip compile + tests (FAIL if tests exist)
       VIBE_SKIP_PROJECT_COMPILE=1
-      VIBE_SKIP_PROJECT_TESTS=1
+      VIBE_SKIP_PROJECT_TESTS=1     FAIL if tests exist unless VIBE_ALLOW_SKIP_TESTS=1
+      VIBE_ALLOW_SKIP_TESTS=1       override fail-closed skip
       VIBE_PROJECT_COMPILE_TIMEOUT  seconds (default 120; 0 = skip compile)
       VIBE_PROJECT_TEST_TIMEOUT     seconds (default 180; 0 = skip tests)
     Dot-source from run-vibe-scans.ps1 and run-vibe-on-edit.ps1.
@@ -297,7 +300,40 @@ function Get-VibeProjectTestPlan {
         }
     }
 
+    $pTest = Get-ChildItem -LiteralPath $Root -Recurse -Include *.Tests.ps1,*Spec.ps1 -File -Depth 5 -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '(?i)[\\/](node_modules|\.git|venv|\.venv|\.serena)[\\/]' } |
+        Select-Object -First 1
+    if ($pTest -and (Get-Command Invoke-Pester -ErrorAction SilentlyContinue)) {
+        $hostExe = Join-Path $PSHOME 'powershell.exe'
+        if (-not (Test-Path -LiteralPath $hostExe)) { $hostExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
+        if ($hostExe) {
+            $esc = $Root.Replace("'", "''")
+            $cmd = "`$ErrorActionPreference='Continue'; Import-Module Pester -ErrorAction Stop; `$c=New-PesterConfiguration; `$c.Run.Path='$esc'; `$c.Run.Exit=`$true; `$c.Output.Verbosity='Normal'; Invoke-Pester -Configuration `$c"
+            [void]$plan.Add(@{ Label = 'pester'; FilePath = $hostExe; Args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $cmd) })
+        }
+    }
+
     return @($plan)
+}
+
+function Test-VibeRepoHasTestLayout {
+    param([string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Root) -or -not (Test-Path -LiteralPath $Root)) { return $false }
+    if (Test-Path -LiteralPath (Join-Path $Root 'Cargo.toml')) { return $true }
+    if (Test-Path -LiteralPath (Join-Path $Root 'go.mod')) { return $true }
+    if (Test-VibeHasPytestLayout $Root) { return $true }
+    if (Get-VibeNpmTestInvocation -Root $Root) { return $true }
+    if (Get-ChildItem -LiteralPath $Root -Filter '*.sln' -File -ErrorAction SilentlyContinue | Select-Object -First 1) { return $true }
+    if (Get-ChildItem -LiteralPath $Root -Filter '*.csproj' -File -ErrorAction SilentlyContinue | Select-Object -First 1) { return $true }
+    if (Test-Path -LiteralPath (Join-Path $Root 'pom.xml')) { return $true }
+    foreach ($g in @('build.gradle', 'build.gradle.kts')) {
+        if (Test-Path -LiteralPath (Join-Path $Root $g)) { return $true }
+    }
+    $pTest = Get-ChildItem -LiteralPath $Root -Recurse -Include *.Tests.ps1,*Spec.ps1 -File -Depth 5 -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\node_modules\|\\.git\|\venv\' } |
+        Select-Object -First 1
+    if ($pTest) { return $true }
+    return $false
 }
 
 function Invoke-VibeTimedCommand {
@@ -421,12 +457,19 @@ function Invoke-VibeProjectCompileAndTests {
     )
     $failed = 0
     $advisory = 0
+    $wantTests = ($Mode -eq 'Test' -or $Mode -eq 'Both')
+    $hasLayout = $wantTests -and (Test-VibeRepoHasTestLayout $Root)
+    $allowSkip = Test-VibeEnvTruthy 'VIBE_ALLOW_SKIP_TESTS'
     if (Test-VibeEnvTruthy 'VIBE_SKIP_PROJECT_TOOLS') {
+        if ($hasLayout -and -not $allowSkip) {
+            if (-not $Quiet) { Write-Host '[project-tools] FAIL: tests exist but VIBE_SKIP_PROJECT_TOOLS (set VIBE_ALLOW_SKIP_TESTS=1 to override)' -ForegroundColor Yellow }
+            return @{ Failed = 1; Advisory = 0 }
+        }
         if (-not $Quiet) { Write-Host '[project-tools] skipped (VIBE_SKIP_PROJECT_TOOLS)' -ForegroundColor DarkGray }
         return @{ Failed = 0; Advisory = 0 }
     }
     $doCompile = ($Mode -eq 'Compile' -or $Mode -eq 'Both') -and -not (Test-VibeEnvTruthy 'VIBE_SKIP_PROJECT_COMPILE')
-    $doTest = ($Mode -eq 'Test' -or $Mode -eq 'Both') -and -not (Test-VibeEnvTruthy 'VIBE_SKIP_PROJECT_TESTS')
+    $doTest = $wantTests -and -not (Test-VibeEnvTruthy 'VIBE_SKIP_PROJECT_TESTS')
     $compileTimeout = Get-VibeTimeoutSec 'VIBE_PROJECT_COMPILE_TIMEOUT' 120
     $testTimeout = Get-VibeTimeoutSec 'VIBE_PROJECT_TEST_TIMEOUT' 180
     if ($compileTimeout -le 0) { $doCompile = $false }
@@ -445,12 +488,20 @@ function Invoke-VibeProjectCompileAndTests {
     if ($doTest) {
         $tPlan = @(Get-VibeProjectTestPlan -Root $Root)
         if ($tPlan.Count -eq 0) {
-            if (-not $Quiet) { Write-Host '[test] no project test runner detected (skip)' -ForegroundColor DarkGray }
+            if ($hasLayout -and -not $allowSkip) {
+                $failed++
+                if (-not $Quiet) { Write-Host '[test] FAIL: test layout present but no runner on PATH (set VIBE_ALLOW_SKIP_TESTS=1 to override)' -ForegroundColor Yellow }
+            } elseif (-not $Quiet) {
+                Write-Host '[test] no project test runner detected (skip)' -ForegroundColor DarkGray
+            }
         } else {
             $r = Invoke-VibeProjectToolPlan -Plan $tPlan -Root $Root -TimeoutSec $testTimeout -Quiet:$Quiet -Kind 'test'
             $failed += [int]$r.Failed
             $advisory += [int]$r.Advisory
         }
+    } elseif ($hasLayout -and -not $allowSkip) {
+        $failed++
+        if (-not $Quiet) { Write-Host '[test] FAIL: tests exist but skipped (VIBE_SKIP_PROJECT_TESTS or timeout 0). Set VIBE_ALLOW_SKIP_TESTS=1 to override.' -ForegroundColor Yellow }
     }
     return @{ Failed = $failed; Advisory = $advisory }
 }
@@ -521,5 +572,59 @@ function Invoke-VibeOnEditFileLinters {
         }
     }
 
-    return @($hits)
+    foreach ($d in @(Get-VibeOnEditDiagnostics -FullPath $FullPath)) {
+        [void]$hits.Add($d)
+    }
+
+    return @($hits | Select-Object -First 10)
+}
+
+function Get-VibeOnEditDiagnostics {
+    <#
+      Cheap parse/type diagnostics for the edited path. Cap 10 lines. Fail-open.
+      Serena MCP stays in-session; this hook uses language parsers so the agent sees errors next prompt.
+    #>
+    param([string]$FullPath)
+    $hits = New-Object System.Collections.ArrayList
+    if (-not $FullPath -or -not (Test-Path -LiteralPath $FullPath)) { return @() }
+    $ext = [System.IO.Path]::GetExtension($FullPath).ToLowerInvariant()
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if ($ext -in @('.ps1', '.psm1', '.psd1')) {
+            $tok = $null
+            $err = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($FullPath, [ref]$tok, [ref]$err)
+            foreach ($e in @($err | Select-Object -First 8)) {
+                $ln = 0
+                try { $ln = [int]$e.Extent.StartLineNumber } catch {}
+                [void]$hits.Add(('[psparse] {0}:{1} {2}' -f $FullPath, $ln, [string]$e.Message))
+            }
+        }
+        if ($ext -eq '.py') {
+            $py = Get-VibeProjectPythonExe (Split-Path -Parent $FullPath)
+            if (-not $py) { $py = Resolve-VibeCommandPath 'python' }
+            if ($py) {
+                $out = & $py -m py_compile $FullPath 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    foreach ($l in @($out | Select-Object -First 6)) {
+                        [void]$hits.Add("[py_compile] $l")
+                    }
+                }
+            }
+        }
+        if ($ext -in @('.js', '.mjs', '.cjs')) {
+            $node = Resolve-VibeCommandPath 'node'
+            if ($node) {
+                $out = & $node --check $FullPath 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    foreach ($l in @($out | Select-Object -First 6)) {
+                        [void]$hits.Add("[node --check] $l")
+                    }
+                }
+            }
+        }
+    } catch {}
+    finally { $ErrorActionPreference = $prev }
+    return @($hits | Select-Object -First 10)
 }

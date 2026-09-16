@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-16
+
+### Added
+
+- Tests on commit: project tests run against the working tree on staged-first scans (not only Full/push). Fail-closed if a test layout exists but tests were skipped (`VIBE_SKIP_PROJECT_*` / timeout 0 / no runner) unless `VIBE_ALLOW_SKIP_TESTS=1`.
+- Pester in `Get-VibeProjectTestPlan` (timeout-bounded via project-tools).
+- On-edit parser diagnostics (PowerShell `ParseFile`, `py_compile`, `node --check`), cap 10 lines, still fail-open.
+- ast-grep project rules as a scanner when `.ast-grep.yml` / `sgconfig.yml` exists.
+- `start-grok` / doctor one-line hook install hint when cwd has `.git` but no vibe pre-commit (`start-grok -BootstrapRepo`). No silent install.
+- Doctor: fat-MCP warning, coding-profile personal-deny check, `-Usage` (timeout-bounded `rtk gain --history` + `headroom savings`).
+- MCP coding profile live-probes `grok mcp list --json` (8s) to extend the personal-name list; static names stay if CLI is missing.
+- Prompt inject: SPEC PIN (re-read `TASKS.md` / plan files after compact).
+- Gate: on `strict` or sensitive paths, security `next` for exploitable/secret issues is raised to blocker language. Simplicity hunts clear quadratic / unbounded work.
+
+### Fixed
+
+- Sequential reviewers for Headroom models (`grok-4.6` / `grok-gate` / `grok-via-headroom`) on **any** proxy port, not only `:8787`. `grok-4.6-direct` stays parallel-capable.
+- IPv6 listen PIDs: `GetExtendedTcpTable` ALL table + `netstat -ano` fallback. Smoke **fails** if IPv6 is listen-up but PID is missing (no skip-as-success).
+- `Test-VibeKeeperAlive` shared in `ListenProbe.ps1`; smoke asserts 8788 cmdline is not 8787-alive and a live PID with the wrong script is dead.
+- Empty-owner adopt extracted as `Resolve-VibeProxyAdoptPid` (fail-closed: never adopt wrapper without a socket PID). Smoke covers foreign / descendant / wrapper-without-socket.
+- MCP personal profile smoke now seeds an unrelated deny and asserts it survives (filter names, do not wipe the key).
+
 ## [2.1.0] - 2026-08-29
 
 ### Added

@@ -462,6 +462,29 @@ function Stop-HeadroomProxy {
     if ($stopped) { Write-Ok "Proxy stopped." } else { Write-Warn "No Headroom proxy was running." }
 }
 
+function Write-MissingVibeHookHint {
+    $cwd = ''
+    try { $cwd = (Get-Location).Path } catch { return }
+    if (-not $cwd) { return }
+    $inside = $false
+    try { $inside = ((git -C $cwd rev-parse --is-inside-work-tree 2>$null | Select-Object -First 1) -eq 'true') } catch {}
+    if (-not $inside) { return }
+    $hooksDirRepo = $null
+    try { $hooksDirRepo = (git -C $cwd rev-parse --git-path hooks 2>$null | Select-Object -First 1) } catch {}
+    if ([string]::IsNullOrWhiteSpace($hooksDirRepo)) { $hooksDirRepo = Join-Path $cwd '.git\hooks' }
+    if (-not [System.IO.Path]::IsPathRooted($hooksDirRepo)) { $hooksDirRepo = Join-Path $cwd $hooksDirRepo }
+    $pre = Join-Path $hooksDirRepo 'pre-commit'
+    $hasVibe = $false
+    if (Test-Path -LiteralPath $pre) {
+        $txt = Get-Content -LiteralPath $pre -Raw -ErrorAction SilentlyContinue
+        if ($txt -match 'Vibe pre-') { $hasVibe = $true }
+    }
+    if ($hasVibe) { return }
+    Write-Warn "cwd has .git but no vibe pre-commit. One-line install (not silent):"
+    Write-Host '  start-grok -BootstrapRepo' -ForegroundColor Yellow
+    Write-Host '  # or: Initialize-VibeRepo.ps1 / install-vibe-hooks.ps1 .' -ForegroundColor DarkGray
+}
+
 function Show-Status {
     Ensure-Dirs
     Ensure-Path
@@ -512,6 +535,7 @@ function Show-Status {
     Write-Host "upstream:     $(Resolve-HeadroomUpstream)"
     Write-Host "proxy flags:  token + lossless + code-aware + ratio 0.35 + no-http2 + no-rate-limit"
     Write-Host "keeper:       $(if (Test-HeadroomKeeperRunning) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })"
+    Write-MissingVibeHookHint
     Write-Host "context tool: rtk (auto-enforce hook + HEADROOM_CONTEXT_TOOL=rtk)"
     Write-Host "XAI_API_KEY:  $(if ($env:XAI_API_KEY) { 'set (api.x.ai)' } else { 'not set — session auth via cli-chat-proxy.grok.com' })"
     Write-Host ""
@@ -634,40 +658,29 @@ function Start-HeadroomProxyIfNeeded {
             # :8787. Start-Process PID is the wrapper - never require it == TCP owner.
             $owners = @(Get-ListenOwnerPids $Port)
             $adopted = $null
-            if ($owners.Count -eq 0) {
-                # Foreign listener or CIM race. Never adopt the wrapper PID just
-                # because the port is up. Socket PID must be us or our descendant.
+            # Foreign listener or CIM race. Never adopt the wrapper PID just
+            # because the port is up. Missing Get-VibeListenSocketPids => skip adopt (fail closed).
+            if (Get-Command Resolve-VibeProxyAdoptPid -ErrorAction SilentlyContinue) {
+                $sock = @()
                 if (Get-Command Get-VibeListenSocketPids -ErrorAction SilentlyContinue) {
-                    foreach ($sp in @(Get-VibeListenSocketPids -Port $Port)) {
-                        $sid = 0
-                        try { $sid = [int]$sp } catch { continue }
-                        if ($sid -le 0) { continue }
-                        if ($sid -eq [int]$proc.Id -and (Test-ProxyProcessOk $proc.Id)) {
-                            $adopted = $sid
-                            break
-                        }
-                        if ((Test-IsDescendantOf -AncestorId ([int]$proc.Id) -ProcId $sid) -and (Test-ProxyProcessOk $sid)) {
-                            $adopted = $sid
-                            break
-                        }
+                    $sock = @(Get-VibeListenSocketPids -Port $Port)
+                }
+                $okIds = New-Object 'System.Collections.Generic.List[int]'
+                $descIds = New-Object 'System.Collections.Generic.List[int]'
+                $cand = New-Object 'System.Collections.Generic.List[int]'
+                foreach ($x in @($sock + $owners + @([int]$proc.Id))) {
+                    $n = 0
+                    try { $n = [int]$x } catch { continue }
+                    if ($n -le 0) { continue }
+                    if (-not $cand.Contains($n)) { [void]$cand.Add($n) }
+                }
+                foreach ($n in $cand) {
+                    if (Test-ProxyProcessOk $n -and -not $okIds.Contains($n)) { [void]$okIds.Add($n) }
+                    if ($n -ne [int]$proc.Id -and (Test-IsDescendantOf -AncestorId ([int]$proc.Id) -ProcId $n) -and -not $descIds.Contains($n)) {
+                        [void]$descIds.Add($n)
                     }
                 }
-            } else {
-                foreach ($op in $owners) {
-                    if ($op -eq [int]$proc.Id -and (Test-ProxyProcessOk $proc.Id)) {
-                        $adopted = $op
-                        break
-                    }
-                }
-                if ($null -eq $adopted) {
-                    foreach ($op in $owners) {
-                        if (-not (Test-IsDescendantOf -AncestorId ([int]$proc.Id) -ProcId $op)) { continue }
-                        if (Test-ProxyProcessOk $op) {
-                            $adopted = $op
-                            break
-                        }
-                    }
-                }
+                $adopted = Resolve-VibeProxyAdoptPid -WrapperPid ([int]$proc.Id) -SocketPids $sock -OwnerPids $owners -OkPids @($okIds) -DescendantPids @($descIds)
             }
             if ($null -eq $adopted) {
                 foreach ($op in $owners) {
@@ -814,6 +827,7 @@ Write-Info "Caveman level: $cavemanLevel (rules + skills auto-load)"
 Write-Info "RTK:           $(if ($rtkVer) { $rtkVer } else { 'not found — shell compression limited' })"
 Write-Info "Token rules:   ~/.grok/rules/token-efficiency.md + rtk.md"
 Write-Info "Headroom MCP:  on by default in config (optional off: [mcp_servers.headroom] enabled = false)"
+if (-not $BootstrapRepo) { Write-MissingVibeHookHint }
 
 if (-not $NoProxy) {
     Start-HeadroomProxyIfNeeded

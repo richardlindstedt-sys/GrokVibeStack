@@ -30,8 +30,9 @@
 
 ## Vibe coding (short)
 
-- Chat: after logic edits, run affected tests + diagnostics. On-edit hooks handle secrets/linters.
+- Chat: after logic edits, run affected tests + diagnostics. On-edit hooks handle secrets/linters/parser diagnostics.
 - Done = tests green + diagnostics clean + light self-check. Not an in-session reviewer panel.
+- Commit hook runs project tests (fail if a test layout exists but was skipped).
 - Full multi-reviewer + full scanner suite = **commit/push hooks** or explicit `vibe-review` — not every turn.
 - **Gate in chat:** background commit/push. Start `monitor` on `watch-gate-now.ps1 -Monitor` when a gate starts (only wake). Keep it through the commit+push pair. Speak: scan result, vote, arbiter, fixer file, GATE DONE, and PROGRESS (one line: phase + elapsed). Never "still waiting" or "no new votes". Recap votes+arbiter+DONE before next git. AWC ships this commit. **next** must be fixed in the next commit (`gate-open-advisories.json`, not auto-fixed, not droppable). **later** is ledger-only (doctor lists; no auto-fail). Latch new `RUN:`. Kill watch after last gate of the pair. Stop does not nag on wait ticks. No popup unless `VIBE_GATE_POPUP=1`.
 - Serena MCP on by default (symbol nav). Serena **remind hooks** stay off unless opted in.

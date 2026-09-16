@@ -245,6 +245,7 @@ $script:ResolvedProfile = Resolve-GateProfile -Name $baseName
 if ($script:PathAwareRoles -and $script:PathAwareRoles.Count -gt 0) {
     $script:ResolvedProfile.Roles = @($script:PathAwareRoles)
 }
+$script:RaiseSecurityNext = ($script:ResolvedProfile.Name -eq 'strict') -or [bool]$script:PathAwareSensitive
 if ($MaxRounds -le 0) { $MaxRounds = [int]$script:ResolvedProfile.MaxRounds }
 if ($ReviewerMaxTurns -le 0) { $ReviewerMaxTurns = [int]$script:ResolvedProfile.ReviewerMaxTurns }
 if ($ArbiterMaxTurns -le 0) { $ArbiterMaxTurns = [int]$script:ResolvedProfile.ArbiterMaxTurns }
@@ -271,8 +272,10 @@ if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.No
     $NoFix = $true
 }
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
-    # One Headroom (:8787 / grok-4.6). Sequential so 3 SSE do not kill the TUI.
-    $sharesChatProxy = ($ProxyPort -eq 8787)
+    # Headroom chat proxy cannot take parallel SSE, on any --port (not only :8787).
+    $mn = [string]$Model
+    $sharesChatProxy = ($mn -match '(?i)^(grok-4\.6|grok-gate|grok-via-headroom)$')
+    if ($mn -match '(?i)direct') { $sharesChatProxy = $false }
     if ($sharesChatProxy) {
         $SequentialReviewers = $true
     } elseif ($script:ResolvedProfile.SequentialDefault) {
@@ -794,7 +797,7 @@ function Invoke-GrokHeadless {
 }
 
 function New-ReviewerPrompt {
-    param([string]$Role, [string]$DiffText, [int]$Round, [string]$PriorBlockers)
+    param([string]$Role, [string]$DiffText, [int]$Round, [string]$PriorBlockers, [bool]$RaiseSecurityNext = $false)
     $focusCorrectness = @(
         'ROLE: CORRECTNESS reviewer (bugs, logic, edge cases, races, error handling, tests).',
         'You vote BLOCK only for real correctness defects that would break behavior or corrupt data.',
@@ -807,10 +810,14 @@ function New-ReviewerPrompt {
         'Hunt: secrets in the diff, command/SQL/XSS injection, path traversal, missing authz, SSRF, unsafe deser, weak RNG for security, open redirect, installing unsigned binaries, logging credentials.',
         'Theoretical hardening with no exploit path = later. Likely-but-unproven issues = next.'
     ) -join "`n"
+    if ($RaiseSecurityNext) {
+        $focusSecurity = $focusSecurity + "`n" + 'THIS GATE: exploitable or secret-leak issues MUST be blocker, not next. next is only for unproven-but-likely issues with no working exploit path in the diff.'
+    }
     $focusSimplicity = @(
         'ROLE: SIMPLICITY / QUALITY reviewer (duplication, dead code, unwired features, complexity, naming, incomplete stubs).',
         'You vote BLOCK for unwired/half-implemented features, dead dangerous paths, or complexity that hides bugs.',
         'Hunt: unwired/stub features, new TODOs left in shipped paths, dead dangerous code, duplicate security-sensitive logic, half-migrated APIs, catch-all that swallows errors.',
+        'Hunt: accidental quadratic work on hot paths, unbounded alloc/copy, N+1 queries, busy-wait. Prefer simpler correct code; flag only clear complexity/perf defects, not micro-opts.',
         'Pure style preference = later.'
     ) -join "`n"
     $focus = switch ($Role) {
@@ -1232,7 +1239,7 @@ function Invoke-ReviewerPanel {
             }
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
-            Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers)
+            Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers -RaiseSecurityNext:([bool]$script:RaiseSecurityNext))
             $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -OutLog $lf
             Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn (($left | ForEach-Object { "vibe-$_" }) -join ', ')
         }
@@ -1241,7 +1248,7 @@ function Invoke-ReviewerPanel {
         foreach ($role in $roles) {
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
-            Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers)
+            Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers -RaiseSecurityNext:([bool]$script:RaiseSecurityNext))
             $jobs += Start-Job -Name "vibe-$role" -ScriptBlock {
                 param($Exe, $Model, $PromptFile, $LogFile, $Effort, $MaxTurns, $Role, $ProxyPort)
                 function Invoke-One([string]$UseModel) {

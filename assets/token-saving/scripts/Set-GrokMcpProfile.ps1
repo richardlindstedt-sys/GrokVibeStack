@@ -58,8 +58,48 @@ $script:PersonalMcpNames = @(
 )
 $script:CodingKeepServers = @('headroom', 'serena')
 
+function Get-LivePersonalMcpNames {
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($n in $script:PersonalMcpNames) { [void]$names.Add($n) }
+    $grok = Get-Command grok -ErrorAction SilentlyContinue
+    if (-not $grok) { return @($names) }
+    $txt = ''
+    try {
+        $job = Start-Job -ScriptBlock {
+            param($exe)
+            & $exe mcp list --json 2>&1
+        } -ArgumentList $grok.Source
+        $null = Wait-Job -Job $job -Timeout 8
+        if ($job.State -eq 'Completed') {
+            $txt = @(Receive-Job -Job $job | ForEach-Object { "$_" }) -join "`n"
+        }
+        Stop-Job -Job $job -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    } catch {}
+    if ([string]::IsNullOrWhiteSpace($txt)) { return @($names) }
+    $rx = [regex]'(?i)(gmail|google_calendar|google-calendar|google_drive|google-drive|outlook_calendar|outlook-calendar|outlook|tasks|calendar|drive)'
+    foreach ($m in $rx.Matches($txt)) {
+        $v = [string]$m.Value
+        if ($v -and -not ($names -contains $v)) { [void]$names.Add($v) }
+    }
+    try {
+        $j = $txt | ConvertFrom-Json -ErrorAction Stop
+        foreach ($item in @($j)) {
+            $n = $null
+            if ($item.name) { $n = [string]$item.name }
+            elseif ($item.Name) { $n = [string]$item.Name }
+            elseif ($item.id) { $n = [string]$item.id }
+            if ($n -and $n -match '(?i)(gmail|calendar|drive|outlook|tasks|mail)' -and -not ($names -contains $n)) {
+                [void]$names.Add($n)
+            }
+        }
+    } catch {}
+    return @($names)
+}
+
 function Get-PersonalNameSet {
     $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in @(Get-LivePersonalMcpNames)) { [void]$set.Add($n) }
     foreach ($n in $script:PersonalMcpNames) { [void]$set.Add($n) }
     return $set
 }
@@ -214,12 +254,13 @@ $raw = Read-Utf8NoBomFile -Path $ConfigPath
 $doc = ConvertFrom-VibeTomlDocument -Raw $raw
 $pre = Get-PreambleSection $doc
 $personalSet = Get-PersonalNameSet
+$livePersonal = @($personalSet)
 $existingDisabled = @(Get-CurrentDisabledServers $pre)
 
 $keep = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach ($k in $script:CodingKeepServers) { [void]$keep.Add($k) }
 if ($Profile -eq 'coding') {
-    $newDisabled = Merge-NameLists $existingDisabled $script:PersonalMcpNames
+    $newDisabled = Merge-NameLists $existingDisabled $livePersonal
     $newDisabled = Remove-NamesFromList $newDisabled $keep
 } else {
     $newDisabled = Remove-NamesFromList $existingDisabled $personalSet
@@ -244,7 +285,7 @@ if ($null -eq $gwSec) {
 }
 $gwExisting = @(Get-QuotedStrings (Get-SectionAssignmentText -Section $gwSec -Bare '__managed_gateway_connectors'))
 if ($Profile -eq 'coding') {
-    $gwNew = Merge-NameLists $gwExisting $script:PersonalMcpNames
+    $gwNew = Merge-NameLists $gwExisting $livePersonal
 } else {
     $gwNew = Remove-NamesFromList $gwExisting $personalSet
 }
@@ -270,7 +311,7 @@ if ($gwNew.Count -gt 0) {
 
 if ($Profile -eq 'coding') {
     foreach ($n in $script:CodingKeepServers) { Set-McpServerEnabledFlag $doc $n $true }
-    foreach ($n in $script:PersonalMcpNames) { Set-McpServerEnabledFlag $doc $n $false }
+    foreach ($n in $livePersonal) { Set-McpServerEnabledFlag $doc $n $false }
 }
 
 $newRaw = ConvertTo-VibeTomlDocument -Doc $doc

@@ -4,7 +4,8 @@
 .DESCRIPTION
     Runs: Trivy, Gitleaks, PSScriptAnalyzer, Pester (if tests), jscpd, Biome (JS/TS), tsc --noEmit (if tsconfig),
           markdownlint, Semgrep, Ruff/mypy/bandit/vulture (Python), yamllint/checkov (YAML/IaC), ShellCheck, Hadolint,
-          project compile/tests when cargo/go/dotnet/pytest/npm/mvn/gradle exist on PATH,
+          project compile/tests when cargo/go/dotnet/pytest/npm/mvn/gradle/Pester exist on PATH,
+          ast-grep when .ast-grep.yml exists,
           + rg hints for TODOs/unwired code.
     Exits non-zero on critical findings (secrets, HIGH/CRITICAL vulns, analyzer errors, failed tests).
 #>
@@ -529,12 +530,7 @@ try {
     # --- Lang / project scanners scoped to $scanRoot (staged tree or repo) ---
     Run-PSScriptAnalyzer -ScanRoot $scanRoot
 
-    # Pester only on full tree (tests need project context; staged snapshot is incomplete)
-    if (-not $useStaged) {
-        Run-Pester -ScanRoot $scanRoot
-    } elseif (-not $Quiet) {
-        Write-Host "[Pester] skipped in staged-first mode (run full scope / push)" -ForegroundColor DarkGray
-    }
+    # Pester runs via Get-VibeProjectTestPlan (timeout-bounded), not a second unscoped pass.
 
     # jscpd — blocking only when JS/TS (or similar) is in scope; else advisory
     if (Get-Command jscpd -ErrorAction SilentlyContinue) {
@@ -628,6 +624,17 @@ try {
             }
             Run 'markdownlint' $mdlArgs 'markdownlint' -Advisory
         }
+    }
+
+    # ast-grep project rules (optional .ast-grep.yml / sgconfig.yml) — local, $0 tokens
+    $sgCfg = $null
+    foreach ($c in @('.ast-grep.yml', '.ast-grep.yaml', 'sgconfig.yml')) {
+        $p = Join-Path $root $c
+        if (Test-Path -LiteralPath $p) { $sgCfg = $p; break }
+    }
+    if ($sgCfg -and (Get-Command sg -ErrorAction SilentlyContinue)) {
+        $sgScanRoot = if ($stagedTree) { $stagedTree } else { '.' }
+        Run 'sg' @('scan', '-c', $sgCfg, $sgScanRoot) 'ast-grep project rules'
     }
 
     # Semgrep
@@ -730,25 +737,22 @@ rules:
         Run 'shellcheck' @($shFiles.FullName) 'ShellCheck'
     }
 
-    # Project compile/tests: full tree (tip or checkout). Staged snapshot is incomplete.
-    # Tests follow Pester: Full/push only. Compile also runs on staged-first when typed sources are staged.
+    # Project compile/tests. Tests always run against a full tree (working copy on
+    # commit, push-tip worktree on pre-push). Staged snapshot is incomplete for tests.
+    # Compile also runs on staged-first when typed sources are staged.
     $compileHere = -not $useStaged
-    $testHere = -not $useStaged
+    $testHere = $true
     if ($useStaged -and $stagedNames.Count -gt 0) {
         foreach ($n in $stagedNames) {
             if ("$n" -match '(?i)\.(rs|go|cs|fs|ts|tsx|java|kt)$') { $compileHere = $true; break }
             if ("$n" -match '(?i)(Cargo\.toml|go\.mod|tsconfig\.json|\.csproj|\.sln|pom\.xml|build\.gradle)') { $compileHere = $true; break }
         }
     }
-    if ($compileHere -or $testHere) {
-        $ptMode = if ($compileHere -and $testHere) { 'Both' } elseif ($compileHere) { 'Compile' } else { 'Test' }
-        $ptRoot = if ($tipTree) { $tipTree } else { $root }
-        $pt = Invoke-VibeProjectCompileAndTests -Root $ptRoot -Mode $ptMode -Quiet:$Quiet
-        $script:failed += [int]$pt.Failed
-        $script:advisory += [int]$pt.Advisory
-    } elseif (-not $Quiet) {
-        Write-Host '[project-tools] skipped in staged-first mode (tests on full/push; compile when typed sources staged)' -ForegroundColor DarkGray
-    }
+    $ptRoot = if ($tipTree) { $tipTree } else { $root }
+    $ptMode = if ($compileHere -and $testHere) { 'Both' } elseif ($compileHere) { 'Compile' } else { 'Test' }
+    $pt = Invoke-VibeProjectCompileAndTests -Root $ptRoot -Mode $ptMode -Quiet:$Quiet
+    $script:failed += [int]$pt.Failed
+    $script:advisory += [int]$pt.Advisory
 
     # Hints
     if (Get-Command rg -ErrorAction SilentlyContinue) {

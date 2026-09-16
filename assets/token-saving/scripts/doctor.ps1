@@ -1,4 +1,5 @@
 # Quick health check for the token-saving + vibe stack
+param([switch]$Usage)
 $ErrorActionPreference = 'Continue'
 $scripts = Join-Path $env:USERPROFILE '.grok\token-saving\venv\Scripts'
 $grokBin = Join-Path $env:USERPROFILE '.grok\bin'
@@ -50,18 +51,9 @@ function Get-KeeperPidFile([int]$p) {
 
 function Test-KeeperAlive([int]$p) {
     $f = Get-KeeperPidFile $p
-    if (-not (Test-Path -LiteralPath $f)) { return $false }
-    $kr = (Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue)
-    if (-not $kr) { return $false }
-    $kr = $kr.Trim()
-    $kid = 0
-    if (-not [int]::TryParse($kr, [ref]$kid) -or $kid -le 0) { return $false }
-    $kp = Get-Process -Id $kid -ErrorAction SilentlyContinue
-    if (-not $kp) { return $false }
-    $kcl = Get-ProcessCommandLine $kid
-    if (-not ($kcl -and $kcl -match 'keep-headroom-proxy')) { return $false }
-    if ($kcl -match ("-Port\s+$p(?!\d)")) { return $true }
-    if ($p -eq 8787 -and $kcl -notmatch '-Port\s+\d+') { return $true }
+    if (Get-Command Test-VibeKeeperAlive -ErrorAction SilentlyContinue) {
+        return [bool](Test-VibeKeeperAlive -Port $p -PidFile $f)
+    }
     return $false
 }
 
@@ -389,7 +381,7 @@ if ($insideGit) {
         Write-Host "  pre-push:   MISSING - run install-vibe-hooks.ps1 ." -ForegroundColor Yellow
     }
     if (-not $pcOk -and (Test-Path $hooksInstall)) {
-        Write-Host ('  fix: run install-vibe-hooks.ps1 on this repo: {0}' -f $hooksInstall) -ForegroundColor Yellow
+        Write-Host '  fix: start-grok -BootstrapRepo   (or Initialize-VibeRepo.ps1 / install-vibe-hooks.ps1 .)' -ForegroundColor Yellow
     }
 } else {
     Write-Host "  no .git in cwd - per-repo gates N/A here" -ForegroundColor DarkGray
@@ -462,6 +454,19 @@ if (Test-Path -LiteralPath $cfg) {
     $disN = 0
     if ($dis.Success) { $disN = @([regex]::Matches($dis.Groups[1].Value, '"[^"]+"')).Count }
     Write-Host ("  MCP profile: {0}  (disabled_mcp_servers={1}; grok-mcp-coding / grok-mcp-personal)" -f $mcpProf, $disN)
+    $personalNeedles = @('gmail', 'google_calendar', 'google_drive', 'outlook', 'outlook_calendar', 'tasks')
+    if ($mcpProf -eq 'coding') {
+        $disBlob = if ($dis.Success) { $dis.Groups[1].Value } else { '' }
+        $missingPersonal = @($personalNeedles | Where-Object { $disBlob -notmatch [regex]::Escape($_) })
+        if ($missingPersonal.Count -gt 0) {
+            Write-Host ("  WARN: coding profile but personal MCP not denied: {0}" -f ($missingPersonal -join ', ')) -ForegroundColor Yellow
+        }
+    }
+    $mcpTables = @([regex]::Matches([string]$cfgTxt, '(?m)^\s*\[mcp_servers\.([^\]]+)\]') | ForEach-Object { $_.Groups[1].Value })
+    $extraMcp = @($mcpTables | Where-Object { $_ -and $_ -notmatch '^(?i)(serena|headroom)$' } | Select-Object -Unique)
+    if ($extraMcp.Count -ge 2) {
+        Write-Host ("  WARN: fat MCP ({0} servers besides serena/headroom): {1}" -f $extraMcp.Count, ($extraMcp -join ', ')) -ForegroundColor Yellow
+    }
 }
 
 Write-Host ""
@@ -531,6 +536,44 @@ if (Test-Path -LiteralPath $ledgerPath) {
     }
 } else {
     Write-Host 'Ledger:  (none)'
+}
+if ($Usage) {
+    Write-Host ''
+    Write-Host '--- Usage snapshot (timeout-bounded) ---' -ForegroundColor Cyan
+    $rtkGainCmd2 = Get-Command rtk -ErrorAction SilentlyContinue
+    if ($rtkGainCmd2) {
+        try {
+            $uj = Start-Job -ScriptBlock { & rtk gain --history 2>&1 | Select-Object -First 8 }
+            $null = Wait-Job -Job $uj -Timeout 8
+            if ($uj.State -eq 'Completed') {
+                @(Receive-Job -Job $uj | ForEach-Object { "$_" }) | Select-Object -First 8 | ForEach-Object { Write-Host ("  rtk: {0}" -f $_) }
+            } else {
+                Write-Host '  rtk gain --history: timed out' -ForegroundColor DarkYellow
+                Stop-Job -Job $uj -ErrorAction SilentlyContinue
+            }
+            Remove-Job -Job $uj -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "  rtk usage: $_" -ForegroundColor DarkYellow
+        }
+    } else {
+        Write-Host '  rtk: missing' -ForegroundColor DarkGray
+    }
+    if (Test-Path -LiteralPath $headroom) {
+        try {
+            $hj = Start-Job -ScriptBlock { param($exe) & $exe savings 2>&1 | Select-Object -First 12 } -ArgumentList $headroom
+            $null = Wait-Job -Job $hj -Timeout 12
+            if ($hj.State -eq 'Completed') {
+                @(Receive-Job -Job $hj | ForEach-Object { "$_" }) | Select-Object -First 12 | ForEach-Object { Write-Host ("  headroom: {0}" -f $_) }
+            } else {
+                Write-Host '  headroom savings: timed out' -ForegroundColor DarkYellow
+                Stop-Job -Job $hj -ErrorAction SilentlyContinue
+            }
+            Remove-Job -Job $hj -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "  headroom savings: $_" -ForegroundColor DarkYellow
+        }
+    }
+    Write-Host '  Grok /usage is in the TUI (not exposed as a CLI here).' -ForegroundColor DarkGray
 }
 Write-Host 'Launch: start-grok (or start-grok -Status)'
 Write-Host 'Hooks:  new sessions auto-load; reload only if Grok was open during install (/hooks r)'

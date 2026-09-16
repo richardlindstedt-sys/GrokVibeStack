@@ -230,6 +230,22 @@ if ($onEditEarly -match 'Invoke-VibeOnEditFileLinters') {
 } else {
     Bad 'on-edit missing Invoke-VibeOnEditFileLinters'
 }
+$ptSrcEarly = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-project-tools.ps1') -Raw -ErrorAction SilentlyContinue
+if ($ptSrcEarly -match 'Get-VibeOnEditDiagnostics' -and $ptSrcEarly -match 'ParseFile' -and $ptSrcEarly -match 'py_compile') {
+    Ok 'on-edit: parser diagnostics (ps/py/js) cap 10'
+} else {
+    Bad 'on-edit missing Get-VibeOnEditDiagnostics'
+}
+if ($scanSrc -match 'ast-grep' -and $scanSrc -match '\.ast-grep\.yml') {
+    Ok 'scans: ast-grep project rules when config present'
+} else {
+    Bad 'scans missing ast-grep project config hook'
+}
+if ($scanSrc -match '\$testHere = \$true' -and $ptSrcEarly -match 'VIBE_ALLOW_SKIP_TESTS' -and $ptSrcEarly -match 'Label = ''pester''') {
+    Ok 'scans: tests on commit; skip fail-closed; pester in test plan'
+} else {
+    Bad 'scans/tests-on-commit / skip fail-closed / pester plan missing'
+}
 $ciYml = Join-Path $RepoRoot 'assets\ci\vibe-user-repo.yml'
 if ((Test-Path -LiteralPath $ciYml) -and ((Get-Content -LiteralPath $ciYml -Raw) -match 'gitleaks') -and ((Get-Content -LiteralPath $ciYml -Raw) -notmatch 'grok-ai-review')) {
     Ok 'user-repo CI template: gitleaks, no LLM'
@@ -276,6 +292,24 @@ if (Test-Path -LiteralPath $ptLib) {
         } else {
             if ($pyHits.Count -eq 0) { Ok 'project-tools: test_*.py without pytest runner skipped' } else { Bad 'project-tools: pytest planned without runner' }
         }
+        if (Get-Command Test-VibeRepoHasTestLayout -ErrorAction SilentlyContinue) {
+            $prevSkip = $env:VIBE_SKIP_PROJECT_TESTS
+            $prevAllow = $env:VIBE_ALLOW_SKIP_TESTS
+            $env:VIBE_SKIP_PROJECT_TESTS = '1'
+            Remove-Item Env:VIBE_ALLOW_SKIP_TESTS -ErrorAction SilentlyContinue
+            $skipR = Invoke-VibeProjectCompileAndTests -Root $ptDir -Mode Test -Quiet
+            $env:VIBE_ALLOW_SKIP_TESTS = '1'
+            $skipAllow = Invoke-VibeProjectCompileAndTests -Root $ptDir -Mode Test -Quiet
+            if ($prevSkip) { $env:VIBE_SKIP_PROJECT_TESTS = $prevSkip } else { Remove-Item Env:VIBE_SKIP_PROJECT_TESTS -ErrorAction SilentlyContinue }
+            if ($prevAllow) { $env:VIBE_ALLOW_SKIP_TESTS = $prevAllow } else { Remove-Item Env:VIBE_ALLOW_SKIP_TESTS -ErrorAction SilentlyContinue }
+            if ([int]$skipR.Failed -ge 1 -and [int]$skipAllow.Failed -eq 0) {
+                Ok 'project-tools: skip-with-layout fails closed; ALLOW overrides'
+            } else {
+                Bad ("project-tools skip-fail closed skip={0} allow={1}" -f $skipR.Failed, $skipAllow.Failed)
+            }
+        } else {
+            Bad 'project-tools missing Test-VibeRepoHasTestLayout'
+        }
         Remove-Item -LiteralPath (Join-Path $testsDir 'test_sample.py') -Force
         $fx = Join-Path $RepoRoot 'assets\vibe-tools\fixtures'
         Copy-Item -LiteralPath (Join-Path $fx 'npm-placeholder.json') -Destination (Join-Path $ptDir 'package.json') -Force
@@ -303,9 +337,11 @@ if (Test-Path -LiteralPath $ptLib) {
             if ($cCargo.Count -eq 0) { Ok 'project-tools: Cargo.toml without cargo skipped' } else { Bad 'project-tools: scheduled cargo with no cargo.exe' }
         }
         $env:VIBE_SKIP_PROJECT_TOOLS = '1'
+        $env:VIBE_ALLOW_SKIP_TESTS = '1'
         $skipR = Invoke-VibeProjectCompileAndTests -Root $ptDir -Mode Both -Quiet
         Remove-Item Env:VIBE_SKIP_PROJECT_TOOLS -ErrorAction SilentlyContinue
-        if ([int]$skipR.Failed -eq 0 -and [int]$skipR.Advisory -eq 0) { Ok 'project-tools: skip env skips run' } else { Bad 'project-tools: skip env still failed' }
+        Remove-Item Env:VIBE_ALLOW_SKIP_TESTS -ErrorAction SilentlyContinue
+        if ([int]$skipR.Failed -eq 0 -and [int]$skipR.Advisory -eq 0) { Ok 'project-tools: skip env skips run (ALLOW)' } else { Bad 'project-tools: skip env still failed' }
     } catch {
         Bad ('project-tools smoke: ' + $_.Exception.Message)
         Remove-Item Env:VIBE_SKIP_PROJECT_TOOLS -ErrorAction SilentlyContinue
@@ -508,6 +544,16 @@ if ($vibeHookTpl -match 'UserPromptSubmit' -and $vibeHookTpl -match 'run-vibe-pr
     Ok 'on-edit findings -> UserPromptSubmit additionalContext'
 }
 $promptCtx = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-prompt-context.ps1') -Raw
+if ($promptCtx -match 'SPEC PIN' -and $promptCtx -match 'TASKS.md') {
+    Ok 'prompt-context: spec pin after compact'
+} else {
+    Bad 'prompt-context missing SPEC PIN'
+}
+if ($rawReview -match 'RaiseSecurityNext' -and $rawReview -match 'quadratic' -and $rawReview -match 'THIS GATE: exploitable') {
+    Ok 'review: strict/sensitive security next->blocker; simplicity perf hunt'
+} else {
+    Bad 'review missing RaiseSecurityNext / perf hunt'
+}
 if ($promptCtx -match 'GATE LIVE' -and $promptCtx -match 'gate-now\.txt' -and $progSrc -match 'VibeGateNowWrite' -and $progSrc -match 'VIBE_GATE_CHILD' -and $prePushSrc -match 'VIBE_GATE_CHILD' -and $hooksInstSrc -match 'VIBE_GATE_INHERIT') {
     Ok 'gate chat stream: mutex + child/inherit RUN + prompt inject'
 } else {
@@ -847,10 +893,10 @@ try {
     }
 }
 $schemaSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-schema.ps1') -Raw
-if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree' -and $schemaSrc -match 'GATE_SCHEMA_VERSION = 4') {
-    Ok 'review: schema 4 cache + intent/blast + token estimate + worktree fixer'
+if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree' -and $schemaSrc -match 'GATE_SCHEMA_VERSION = 5') {
+    Ok 'review: schema 5 cache + intent/blast + token estimate + worktree fixer'
 } else {
-    Bad 'review missing schema 4 / intent / tokens / worktree wiring'
+    Bad 'review missing schema 5 / intent / tokens / worktree wiring'
 }
 if ($prePushSrc -match 'Get-VibePushReviewPlan' -and $prePushSrc -match 'TAG:' -and $prePushSrc -match 'Get-TagCommitDiff') {
     Ok 'pre-push: version-tag strict + single-commit tag diff'
@@ -923,7 +969,7 @@ if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwn
     Bad 'start-grok missing ListenProbe / Save-ProxyFingerprint / adopted PID write / still has Test-ProxyHttpReady'
 }
 $probeSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1') -Raw
-if ($probeSrc -match 'GetActiveTcpListeners' -and $probeSrc -match 'AF_INET6' -and $probeSrc -match 'VibeListenTable2' -and $probeSrc -match 'ERROR_INSUFFICIENT_BUFFER' -and $probeSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $startSrc -match 'Test-VibePortListening' -and $keepSrc -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibePortListening' -and $startSrc -notmatch 'GetActiveTcpListeners' -and $keepSrc -notmatch 'GetActiveTcpListeners' -and $rawReview -notmatch 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect') {
+if ($probeSrc -match 'GetActiveTcpListeners' -and $probeSrc -match 'AF_INET6' -and $probeSrc -match 'VibeListenTable3' -and $probeSrc -match 'ERROR_INSUFFICIENT_BUFFER' -and $probeSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $startSrc -match 'Test-VibePortListening' -and $keepSrc -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibePortListening' -and $startSrc -notmatch 'GetActiveTcpListeners' -and $keepSrc -notmatch 'GetActiveTcpListeners' -and $rawReview -notmatch 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect') {
     Ok 'tcp probe: ListenProbe GetActiveTcpListeners; start/keep/review wrap it (no connect/Get-NetTCPConnection)'
 } else {
     Bad 'tcp probe missing ListenProbe wrap or still connects / Get-NetTCPConnection'
@@ -943,6 +989,11 @@ if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'head
     Ok 'doctor: live proxy cmdline / fingerprint + leftover :8788 stop; ListenProbe; no Get-NetTCPConnection'
 } else {
     Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / ListenProbe / still Get-NetTCPConnection'
+}
+if ($startSrc -match 'Write-MissingVibeHookHint' -and $startSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'param\(\[switch\]\$Usage\)' -and $docSrc -match 'fat MCP' -and $startSrc -match 'Resolve-VibeProxyAdoptPid') {
+    Ok 'start-grok/doctor: missing-hook one-liner + doctor -Usage + fat MCP + adopt helper'
+} else {
+    Bad 'missing-hook / doctor Usage / fat MCP / adopt helper wiring'
 }
 if ($unSrc -match 'New-Object System.Collections.Generic.List\[string\]' -and $unSrc -notmatch '\$lines = \$raw\.Split\(') {
     Ok 'uninstall fallback: List[string] (no 1-line Split unwrap)'
@@ -1012,27 +1063,63 @@ if (Test-Path -LiteralPath $probePs1) {
             if ($v6up -and $v6has) {
                 Ok 'ListenProbe: IPv6 loopback listen has socket PID'
             } elseif ($v6up) {
-                Ok 'ListenProbe: IPv6 loopback listen-up (socket PID skipped)'
+                Bad 'ListenProbe: IPv6 loopback listen-up but no socket PID (offsets/netstat miss)'
             } else {
                 Bad 'ListenProbe: IPv6 loopback not listening'
             }
         } catch {
-            Ok 'ListenProbe: IPv6 unavailable (skipped)'
+            Ok 'ListenProbe: IPv6 unavailable (bind threw)'
             if ($v6) { try { $v6.Stop() } catch {} }
         }
     } catch {
         Bad "ListenProbe runtime bind: $_"
         if ($listener) { try { $listener.Stop() } catch {} }
     }
+    # Adopt decision (empty owner / wrapper-without-socket / descendant)
+    $a1 = Resolve-VibeProxyAdoptPid -WrapperPid 111 -SocketPids @(222) -OwnerPids @() -OkPids @(111, 222) -DescendantPids @()
+    $a2 = Resolve-VibeProxyAdoptPid -WrapperPid 111 -SocketPids @(111) -OwnerPids @() -OkPids @(111) -DescendantPids @()
+    $a3 = Resolve-VibeProxyAdoptPid -WrapperPid 111 -SocketPids @(222) -OwnerPids @() -OkPids @(111, 222) -DescendantPids @(222)
+    $a4 = Resolve-VibeProxyAdoptPid -WrapperPid 111 -SocketPids @() -OwnerPids @() -OkPids @(111) -DescendantPids @()
+    $a5 = Resolve-VibeProxyAdoptPid -WrapperPid 111 -SocketPids @(222) -OwnerPids @(111) -OkPids @(111) -DescendantPids @()
+    if ($null -eq $a1 -and $a2 -eq 111 -and $a3 -eq 222 -and $null -eq $a4 -and $a5 -eq 111) {
+        Ok 'adopt: empty-owner foreign=null; wrapper+socket; descendant; wrapper-no-socket=null; owner wrapper'
+    } else {
+        Bad ("adopt matrix a1={0} a2={1} a3={2} a4={3} a5={4}" -f $a1, $a2, $a3, $a4, $a5)
+    }
 } else {
     Bad 'ListenProbe.ps1 missing'
+}
+
+# Keeper liveness: 8788 cmdline is not 8787-alive; live PID with wrong script is dead
+$kTmp = Join-Path $env:TEMP ('vibe-keeper-smoke-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
+New-Item -ItemType Directory -Force -Path $kTmp | Out-Null
+$kProc = $null
+try {
+    $kFile = Join-Path $kTmp 'headroom-keeper.pid'
+    Set-Content -LiteralPath $kFile -Value "$PID" -Encoding ascii -NoNewline
+    $deadScript = Test-VibeKeeperAlive -Port 8787 -PidFile $kFile
+    $kProc = Start-Process -FilePath "$PSHOME\powershell.exe" -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 40; # keep-headroom-proxy.ps1 -Port 8788') -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 400
+    Set-Content -LiteralPath $kFile -Value "$($kProc.Id)" -Encoding ascii -NoNewline
+    $k8788 = Test-VibeKeeperAlive -Port 8788 -PidFile $kFile
+    $k8787 = Test-VibeKeeperAlive -Port 8787 -PidFile $kFile
+    if ((-not $deadScript) -and $k8788 -and (-not $k8787)) {
+        Ok 'keeper: wrong-script dead; 8788 cmdline not 8787-alive; matching -Port is up'
+    } else {
+        Bad ("keeper runtime deadScript={0} k8788={1} k8787={2}" -f $deadScript, $k8788, $k8787)
+    }
+} catch {
+    Bad "keeper runtime: $_"
+} finally {
+    if ($kProc -and -not $kProc.HasExited) { try { Stop-Process -Id $kProc.Id -Force -ErrorAction SilentlyContinue } catch {} }
+    Remove-Item -LiteralPath $kTmp -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '0\.36' -and $docSrc -match '--no-http2' -and $docSrc -match 'env_key') {
     Ok 'doctor: hr v3 fingerprint + readyz + env_key warn'
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.6'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match '\$sharesChatProxy = \(\$ProxyPort -eq 8787\)' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.6'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'grok-4\\.6\|grok-gate\|grok-via-headroom' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
     Ok 'review: grok-4.6 :8787 one proxy; stream fail retries Headroom; listen-only preflight'
 } else {
     Bad 'review missing grok-4.6 :8787 / Headroom retry / listen-only preflight'
@@ -1267,6 +1354,8 @@ base_url = "http://127.0.0.1:8787/v1"
 [ui]
 yolo = false
 
+disabled_mcp_servers = ["my-custom-deny"]
+
 [mcp_servers.headroom]
 command = "C:/hr.cmd"
 enabled = true
@@ -1274,17 +1363,17 @@ enabled = true
         Set-Content -LiteralPath $mcpCfg -Value $seed -Encoding utf8
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $mcpPs1 -Profile coding -ConfigPath $mcpCfg -StatePath $mcpState 2>&1 | Out-Null
         $c1 = Get-Content -LiteralPath $mcpCfg -Raw -ErrorAction SilentlyContinue
-        if ($c1 -match 'gmail' -and $c1 -match 'disabled_mcp_servers' -and $c1 -match '__managed_gateway_connectors') {
-            Ok 'MCP coding profile writes disabled_mcp_servers + gateway connectors'
+        if ($c1 -match 'gmail' -and $c1 -match 'disabled_mcp_servers' -and $c1 -match '__managed_gateway_connectors' -and $c1 -match 'my-custom-deny') {
+            Ok 'MCP coding profile writes deny lists and keeps unrelated denies'
         } else {
-            Bad 'MCP coding profile did not write deny lists'
+            Bad 'MCP coding profile did not write deny lists / dropped custom deny'
         }
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $mcpPs1 -Profile personal -ConfigPath $mcpCfg -StatePath $mcpState 2>&1 | Out-Null
         $c2 = Get-Content -LiteralPath $mcpCfg -Raw -ErrorAction SilentlyContinue
-        if ($c2 -notmatch 'disabled_mcp_servers' -and $c2 -notmatch '__managed_gateway_connectors') {
-            Ok 'MCP personal profile removes personal deny lists'
+        if ($c2 -match 'my-custom-deny' -and $c2 -notmatch 'gmail' -and $c2 -notmatch '__managed_gateway_connectors') {
+            Ok 'MCP personal profile removes personal names and keeps unrelated denies'
         } else {
-            Bad 'MCP personal profile left coding deny lists'
+            Bad 'MCP personal profile wiped custom deny or left personal names'
         }
     } catch {
         Bad "MCP profile smoke: $_"

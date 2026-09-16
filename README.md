@@ -14,7 +14,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.1.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.2.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -146,7 +146,7 @@ Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **
 |------|---------|--------|---------|
 | On-edit | Grok file write/edit | Secrets + linters; findings saved for next prompt | No |
 | Prompt inject | Next user prompt | Pending on-edit findings as additionalContext | No |
-| **pre-commit** | `git commit` | Scanners + project compile (if toolchain + typed files) + **profile=standard** LLM loop on staged diff | **Yes** |
+| **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests** (working tree; fail if skipped) + **profile=standard** LLM loop | **Yes** |
 | **pre-push** | `git push` | Scanners + project compile/tests (if toolchain) + **fast** LLM (version tags → **strict**, single-commit) | **Yes** |
 | Stop / gate-live | Turn end | Block silent end while `gate-now` is live; remind if edited | Keeps turn |
 | Poll clamp | `get_command_or_subagent_output` | Live gate: rewrite `timeout_ms` to 15000 | Rewrite |

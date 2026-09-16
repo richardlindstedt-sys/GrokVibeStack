@@ -10,7 +10,8 @@ High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** ar
 - jscpd           → duplicate code (`jscpd .`)
 - Biome           → JS/TS/JSON lint + format (`biome check .`)
 - tsc → JS/TS types (`tsc --noEmit` when `tsconfig.json` exists; global npm `typescript`)
-- project compile/tests → cargo / go / dotnet / pytest / npm test / mvn / gradle **if present** (no extra SDKs)
+- project compile/tests → cargo / go / dotnet / pytest / npm test / mvn / gradle / Pester **if present** (tests on commit + push; fail if skipped)
+- ast-grep project rules → `sg scan` when `.ast-grep.yml` exists
 - markdownlint-cli→ Markdown/docs quality
 - Semgrep         → multi-lang rules + security (`semgrep scan`)
 - Ruff + Vulture  → Python lint + dead code
@@ -65,7 +66,7 @@ static scans
 | (default) | **standard**: full loop with auto-fix |
 | `-NoFix` | Panel + arbiter only (block on blockers; no implementer) |
 | `-MaxRounds N` | Cap fix/re-review rounds (0 = profile default) |
-| `-SequentialReviewers` | Run reviewers one-by-one (debug; default parallel except fast) |
+| `-SequentialReviewers` | Run reviewers one-by-one (default on for Headroom models on any port) |
 | `-NoCache` / `-NoReport` | Skip pass cache or report files |
 
 **Reports:** `~\.grok\vibe-tools\reports\latest.md` (+ `latest.html`, `latest.json`).  

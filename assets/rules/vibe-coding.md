@@ -22,7 +22,7 @@ Ship solid code. Prefer quality at the **commit gate**; keep chat light.
 
 | When | What |
 |------|------|
-| `git commit` | pre-commit: scans + AI panel (path-aware profile) |
+| `git commit` | pre-commit: scans + project tests (fail if skipped) + AI panel (path-aware profile) |
 | `git push` | pre-push: scans + fast AI (security role if sensitive paths) |
 | Explicit | `vibe-review` / `grok-ai-review.ps1 -Profile standard\|strict\|fast` |
 

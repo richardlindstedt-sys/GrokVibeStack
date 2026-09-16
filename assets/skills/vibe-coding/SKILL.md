@@ -73,7 +73,9 @@ After install: if Grok was already open → `/hooks` then `r`, or restart.
 
 trivy, gitleaks, PSScriptAnalyzer, Pester, jscpd, biome, tsc (if tsconfig), markdownlint (advisory),
 semgrep, ruff/mypy/bandit/vulture, yamllint/checkov, shellcheck, hadolint,
-project compile/tests if cargo/go/dotnet/pytest/npm/mvn/gradle exist,
+ast-grep (when `.ast-grep.yml` exists),
+project compile/tests if cargo/go/dotnet/pytest/npm/mvn/gradle/Pester exist
+(tests on commit + Full/push; fail if a test layout exists but was skipped),
 rg for TODO/FIXME/unwired.
 
 Prefer orchestrator `run-vibe-scans.ps1` over inventing one-off commands.
