@@ -26,6 +26,11 @@ All notable changes to this project are documented in this file.
 - Empty-owner adopt extracted as `Resolve-VibeProxyAdoptPid` (fail-closed: never adopt wrapper without a socket PID). Smoke covers foreign / descendant / wrapper-without-socket.
 - MCP personal profile smoke now seeds an unrelated deny and asserts it survives (filter names, do not wipe the key).
 
+### Changed
+
+- GitHub binary `scc` `v4.1.0` (Windows zip SHA256 + dest exe SHA256). `tokei` still `v13.0.0-alpha.0` — `v15.0.0` GitHub release ships no Windows exe.
+- Requirement floors: `headroom-ai[proxy]>=0.37.0`, `ast-grep-cli>=0.45.3`, `ruff>=0.16.8`, `semgrep>=1.177.0`. Serena stays `1.7.0` (PyPI latest). Tokenizers still `>=0.22.0,<=0.23.0`.
+
 ## [2.1.0] - 2026-08-29
 
 ### Added

@@ -4,10 +4,10 @@
     {
       "dest": "scc.exe",
       "repo": "boyter/scc",
-      "tag": "v4.0.0",
+      "tag": "v4.1.0",
       "asset": "scc_Windows_x86_64.zip",
-      "sha256": "bfd4f956f6c23917fee3a0ed0d950b80ee914fb4555effe9c6abbe0c30f1ec2f",
-      "destSha256": "8c523124abfa47a88baa6fd80845a3bcfe4467eed1ea2e1ad29fbe672306c731"
+      "sha256": "4a433984f45ff29c94eeb3af6db5b511c58f5bf74063dccedafcbf473cb8ff31",
+      "destSha256": "b22c38e5bd888d98cdc3987cd125b0041fa1154ed4ef59238052d156461324e8"
     },
     {
       "dest": "tokei.exe",
@@ -16,7 +16,7 @@
       "asset": "tokei-x86_64-pc-windows-msvc.exe",
       "sha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
       "destSha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
-      "note": "v14.0.0 (latest) ships no assets; v13/v14 source-only. This alpha is still the newest x64 exe."
+      "note": "v15.0.0 (latest) still ships no assets (source tarball only). This alpha remains the newest Windows x64 exe."
     }
   ]
 }
