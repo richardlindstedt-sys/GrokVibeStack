@@ -8,7 +8,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Always-on vuln runner records a job only after `Confirm-VibeVulnJob` matches, and Confirm runs only if `Run` actually invoked the binary (skip ≠ confirm). Skip-gitleaks runner throws.
+- Always-on vuln runner records a job only after `Confirm-VibeVulnJob` matches, and Confirm runs only if `Run` actually invoked the binary (skip is not confirm). Skip-gitleaks runner throws.
 - Removed tautological `Test-VibeShouldStopHeadroomOnReadyzFail` (always false). Keeper liveness is listen-only.
 
 ## [2.3.0] - 2026-09-19

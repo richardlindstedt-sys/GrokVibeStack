@@ -1750,8 +1750,10 @@ $invoked = @(Invoke-VibeAlwaysOnVulnScanners -Runner { param([string]$j) [void]$
 $skipThrew = $false
 try {
     [void](Invoke-VibeAlwaysOnVulnScanners -Runner { param([string]$j) if ($j -eq 'trivy') { Confirm-VibeVulnJob $j } })
-} catch { $skipThrew = $true }
-if (-not $skipThrew) { Bad 'vuln runner skip-gitleaks did not throw' }
+} catch {
+    $skipThrew = ([string]$_.Exception.Message -match 'did not confirm gitleaks')
+}
+if (-not $skipThrew) { Bad 'vuln runner skip-gitleaks did not throw did not confirm gitleaks' }
 $env:VIBE_REQUIRE_SCANNERS = '0'
 $setReq = Set-VibePushRequireScanners
 $writeNo = Test-VibeMayWriteFullScanCache -VulnOnly $true -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
