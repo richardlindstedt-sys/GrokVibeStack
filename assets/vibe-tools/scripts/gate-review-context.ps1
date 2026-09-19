@@ -206,15 +206,26 @@ function Get-PriorOpenAdvisoriesBlock {
         $doc = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
     } catch { return '' }
     $cwd = ''
-    try { $cwd = [System.IO.Path]::GetFullPath((Get-Location).Path).TrimEnd('\', '/').ToLowerInvariant() } catch { return '' }
+    try {
+        if (Get-Command Normalize-VibeAdvisoryCwd -ErrorAction SilentlyContinue) {
+            $cwd = Normalize-VibeAdvisoryCwd (Get-Location).Path
+        } else {
+            $cwd = [System.IO.Path]::GetFullPath((Get-Location).Path).TrimEnd('\', '/').Replace('/', '\').ToLowerInvariant()
+        }
+    } catch { return '' }
     $open = @($doc.items | Where-Object {
             if (-not $_) { return $false }
             if ([string]$_.status -eq 'resolved') { return $false }
             $oc = [string]$_.cwd
             if (-not $oc) { return $false }
-            try {
-                $ocn = [System.IO.Path]::GetFullPath($oc).TrimEnd('\', '/').ToLowerInvariant()
-            } catch { $ocn = $oc.TrimEnd('\', '/').ToLowerInvariant() }
+            $ocn = $oc
+            if (Get-Command Normalize-VibeAdvisoryCwd -ErrorAction SilentlyContinue) {
+                $ocn = Normalize-VibeAdvisoryCwd $oc
+            } else {
+                try {
+                    $ocn = [System.IO.Path]::GetFullPath($oc).TrimEnd('\', '/').Replace('/', '\').ToLowerInvariant()
+                } catch { $ocn = $oc.TrimEnd('\', '/').Replace('/', '\').ToLowerInvariant() }
+            }
             return $ocn -eq $cwd
         })
     if ($open.Count -eq 0) { return '' }
@@ -232,12 +243,12 @@ function Get-PriorOpenAdvisoriesBlock {
     $sb = New-Object System.Text.StringBuilder
     if ($nextCarry.Count -gt 0 -or ($later.Count - $laterIn.Count) -gt 0) {
         [void]$sb.AppendLine(('## CARRY-FORWARD ({0} next, {1} later on files not in this diff)' -f $nextCarry.Count, ($later.Count - $laterIn.Count)))
-        [void]$sb.AppendLine('Host keeps these open. Do not re-score, copy into findings, or spend turns on them.')
+        [void]$sb.AppendLine('Host keeps these open. Do not re-score or copy into findings. Next stamped with openedHead fails the next commit until those files are staged and fixed.')
         [void]$sb.AppendLine('')
     }
     if ($nextIn.Count -gt 0) {
         [void]$sb.AppendLine('## PRIOR OPEN NEXT (files in this diff — re-evaluate)')
-        [void]$sb.AppendLine('Re-state if still present. Omit if this diff fixed it. Do not list carry-forward IDs.')
+        [void]$sb.AppendLine('Omit if this SHA added a production lock + smoke that addresses it. Blocker only if the production defect remains. Do not restate a fixed smoke-lock as blocker.')
         foreach ($a in @($nextIn)) {
             $id = (([string]$a.id) -replace '[\r\n\t]', ' ').Trim()
             $title = (([string]$a.title) -replace '[\r\n\t]', ' ').Trim()

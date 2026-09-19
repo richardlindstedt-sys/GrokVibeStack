@@ -845,7 +845,8 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine('Rules:')
     [void]$sb.AppendLine('- SCOPE: review THIS diff and BLAST RADIUS callers only. Do not audit unrelated unchanged files.')
     [void]$sb.AppendLine('- CARRY-FORWARD ledger items are host-persisted. Do not copy them into findings or spend turns re-scoring them.')
-    [void]$sb.AppendLine('- PRIOR OPEN NEXT listed as in-diff: re-state if still present; omit if this diff fixed it.')
+    [void]$sb.AppendLine('- PRIOR OPEN NEXT listed as in-diff: omit if this SHA added a production lock + smoke that addresses it. Blocker only if the production defect remains in the diff. Do not restate a fixed smoke-lock as blocker.')
+    [void]$sb.AppendLine('- Host fails the next commit if previous-SHA next remains open. Fix those files in this SHA.')
     [void]$sb.AppendLine('- Be specific: file path + line when possible.')
     [void]$sb.AppendLine('- Do NOT edit files. Tools that write or run shell are disabled.')
     [void]$sb.AppendLine('- Do NOT spend turns chunking, grepping, or re-reading the diff. The brief below is complete.')
@@ -891,7 +892,8 @@ function New-ArbiterPrompt {
     [void]$sb.AppendLine('2) RESOLVE DISPUTES on bucket: blocker vs next vs later, with explicit rationale.')
     [void]$sb.AppendLine('   - Prefer blocker when a plausible production break or security issue exists.')
     [void]$sb.AppendLine('   - Never downgrade in-support data corruption, encoding/round-trip loss, or a fail-closed bypass to next or later.')
-    [void]$sb.AppendLine('   - next: real defect that can ship this SHA but must be fixed in the next commit.')
+    [void]$sb.AppendLine('   - next: real defect that can ship this SHA but must be fixed in the next commit. Host fails that next commit if it stays open.')
+    [void]$sb.AppendLine('   - PRIOR OPEN NEXT still present in this diff: blocker, not next again. Do not downgrade prior next to later.')
     [void]$sb.AppendLine('   - later: style, optional refactors, speculative issues without a clear failure mode. Ledger only.')
     [void]$sb.AppendLine('   - Panels may have 1-3 reviewers (fast can be correctness+security). Do not require three votes.')
     [void]$sb.AppendLine('3) Produce a final gate verdict.')
@@ -2030,10 +2032,6 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
         $script:GateRun.verdict = $arb.Verdict
         $script:overallSw.Stop()
         $elapsed = [math]::Round($script:overallSw.Elapsed.TotalSeconds, 1)
-        Write-Host ""
-        Write-Host "============================================================" -ForegroundColor Green
-        Write-Host (" GATE PASSED - {0} after {1} round(s) in {2}s [{3}]" -f $arb.Verdict, $round, $elapsed, $script:ResolvedProfile.Name) -ForegroundColor Green
-        Write-Host "============================================================" -ForegroundColor Green
         $cwdNow = ''
         try { $cwdNow = (Get-Location).Path } catch { $cwdNow = [string]$script:GateCwd }
         if (Get-Command Save-GateOpenAdvisories -ErrorAction SilentlyContinue) {
@@ -2047,8 +2045,32 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
             if (Get-Command Get-ChangedPathsFromDiff -ErrorAction SilentlyContinue) {
                 $savePaths = @(Get-ChangedPathsFromDiff $rawDiff)
             }
-            Save-GateOpenAdvisories -Items $ledgerNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow -ChangedPaths $savePaths
+            try {
+                Save-GateOpenAdvisories -Items $ledgerNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow -ChangedPaths $savePaths
+            } catch {
+                Write-GateFail ("ledger save failed (fail-closed): {0}" -f $_.Exception.Message)
+                Exit-Gate -Code 1 -Reason 'ledger save failed'
+            }
+            $allowOpenNext = ($env:VIBE_ALLOW_OPEN_NEXT -eq '1')
+            if ($StagedOnly -and -not $allowOpenNext -and (Get-Command Get-UnfixedPriorNext -ErrorAction SilentlyContinue)) {
+                try {
+                    $leftover = @(Get-UnfixedPriorNext -Cwd $cwdNow)
+                } catch {
+                    Write-GateFail ("ledger read failed (fail-closed): {0}" -f $_.Exception.Message)
+                    Exit-Gate -Code 1 -Reason 'ledger read failed'
+                    $leftover = @()
+                }
+                if ($leftover.Count -gt 0) {
+                    $ids = @($leftover | ForEach-Object { [string]$_.id } | Where-Object { $_ }) -join ', '
+                    Write-GateFail ("OPEN NEXT from a previous SHA still open ({0}). Fix in this commit (stage those files). Emergency: VIBE_ALLOW_OPEN_NEXT=1" -f $ids)
+                    Exit-Gate -Code 1 -Reason 'unfixed prior next'
+                }
+            }
         }
+        Write-Host ""
+        Write-Host "============================================================" -ForegroundColor Green
+        Write-Host (" GATE PASSED - {0} after {1} round(s) in {2}s [{3}]" -f $arb.Verdict, $round, $elapsed, $script:ResolvedProfile.Name) -ForegroundColor Green
+        Write-Host "============================================================" -ForegroundColor Green
         $nNext = @($(if ($arb.Next) { $arb.Next } else { @() })).Count
         $nLater = @($(if ($arb.Later) { $arb.Later } else { @() })).Count
         if ($nNext -gt 0) {

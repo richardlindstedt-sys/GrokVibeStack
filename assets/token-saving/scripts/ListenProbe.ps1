@@ -249,3 +249,26 @@ function Resolve-VibeProxyAdoptPid {
     }
     return $null
 }
+
+function Test-VibeShouldStopHeadroomOnReadyzFail {
+    # Listen-up + HTTP-down must not kill Headroom. /readyz blocks during SSE.
+    return $false
+}
+
+function Test-VibeProxyAliveListenOnly {
+    param([int]$Port)
+    if ($Port -le 0) { return $false }
+    $listen = $false
+    if (Get-Command Test-VibePortListening -ErrorAction SilentlyContinue) {
+        $listen = [bool](Test-VibePortListening -Port $Port)
+    }
+    if (-not $listen) { return $false }
+    # HTTP/readyz is not consulted. TCP listen up => alive (SSE-safe).
+    return $true
+}
+
+function Assert-VibeHeadroomReadyzKillPolicy {
+    if (Test-VibeShouldStopHeadroomOnReadyzFail) {
+        throw 'policy: listen-up HTTP-down must not stop Headroom'
+    }
+}

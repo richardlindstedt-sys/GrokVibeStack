@@ -4,8 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-19
+
+### Added
+
+- Host-fail leftover gate **next** on the following **commit** (pre-commit/`-StagedOnly`): items stamped with `openedHead` from a previous SHA block until those files are staged and omitted (fixed). Push does not re-fail the shipping SHA. Legacy rows without `openedHead` stay carry-forward. Emergency: `VIBE_ALLOW_OPEN_NEXT=1`. Prior next cannot be downgraded to `later`. Unreadable ledger refuses to wipe (fail-closed).
+- Doctor treats hooks as missing unless they contain `Vibe pre-` (sample/other hooks no longer look installed) and prints `start-grok -BootstrapRepo`.
+- Doctor `Test-KeeperAlive` falls back to pid-file + cmdline when `Test-VibeKeeperAlive` is not loaded.
+- Pester plan uses the current host (`$PID` path / pwsh) instead of only Windows PowerShell 5.1.
+- Headroom listen-up + HTTP-down kill policy (`Test-VibeShouldStopHeadroomOnReadyzFail` always false; keeper/start assert).
+- Always-on vuln jobs + push `Set-VibePushRequireScanners` + `Test-VibeMayWriteFullScanCache` (VulnOnly cannot write Full skip cache).
+
+### Fixed
+
+- Proxy cmdline adopt fallback requires a socket-table PID (`Get-VibeListenSocketPids` missing = skip adopt).
+- Vuln-only skip cannot wrap Trivy/Gitleaks (marker `VULN_ALWAYS_BEFORE_LANG_SKIP`); Full cache write stays `-not $VulnOnly`; push `VIBE_REQUIRE_SCANNERS=1` is an unconditional assignment.
+- Smoke: ALL-table LISTEN filter + Headroom `--host 127.0.0.1`; vitest args `test -- run`; dual-proxy names pinned as literals; empty-file ledger persist no longer deletes the fake cwd before e2; corrupt ledger throws.
+
 ### Changed
 
+- README: why this beats plain Grok Build (gates vs chat-only, token split, no fourth LLM).
 - Requirement floors (2026-09-19): `checkov>=3.3.19`. Tokenizers now `>=0.23.1,<0.24.0` (transformers 5.17 requires it; old `<=0.23.0` pin is unsatisfiable). GitHub binaries still **scc v4.1.0** and **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). Serena stays `1.7.0`.
 - Regenerated `*-freeze.txt` from those floors (`headroom-ai==0.37.0`, `ast-grep-cli==0.45.3`, `ruff==0.16.8`, `semgrep==1.177.0`, `tokenizers==0.23.2`, `transformers==5.17.0`). Freeze still overrides checkov's `asteval==1.0.6` to `1.0.10`.
 - **Push always vulnerability-scans:** Trivy (`vuln,secret,misconfig` HIGH/CRITICAL) + Gitleaks on the tip tree. Full scan-pass cache no longer skips that pass. `VIBE_REQUIRE_SCANNERS=0` is commit-only; push forces require.

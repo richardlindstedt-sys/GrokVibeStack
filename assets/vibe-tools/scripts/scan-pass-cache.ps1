@@ -128,3 +128,53 @@ function Test-ScanPassCache {
         return $false
     }
 }
+
+function Get-VibeAlwaysOnVulnJobs {
+    # Names that must run before any VulnOnly lang skip.
+    @('trivy', 'gitleaks')
+}
+
+function Test-VibeMayWriteFullScanCache {
+    param(
+        [bool]$VulnOnly,
+        [string]$Scope,
+        [string]$TreeIsh
+    )
+    return ($Scope -eq 'Full' -and -not [string]::IsNullOrWhiteSpace($TreeIsh) -and -not $VulnOnly)
+}
+
+function Set-VibePushRequireScanners {
+    $env:VIBE_REQUIRE_SCANNERS = '1'
+    return $env:VIBE_REQUIRE_SCANNERS
+}
+
+function Invoke-VibeAlwaysOnVulnScanners {
+    param([scriptblock]$Runner)
+    if (-not $Runner) { throw 'Invoke-VibeAlwaysOnVulnScanners requires a Runner' }
+    $ran = [System.Collections.Generic.List[string]]::new()
+    foreach ($job in @(Get-VibeAlwaysOnVulnJobs)) {
+        [void]$ran.Add([string]$job)
+        & $Runner ([string]$job)
+    }
+    if ($ran -notcontains 'trivy' -or $ran -notcontains 'gitleaks') {
+        throw 'always-on vuln runner did not invoke trivy and gitleaks'
+    }
+    return @($ran)
+}
+
+function Write-VibeScanPassCacheIfAllowed {
+    param(
+        [bool]$VulnOnly,
+        [string]$Scope,
+        [string]$TreeIsh,
+        [string]$Cwd,
+        [string[]]$Paths
+    )
+    if (-not (Test-VibeMayWriteFullScanCache -VulnOnly $VulnOnly -Scope $Scope -TreeIsh $TreeIsh)) {
+        return $false
+    }
+    $th = Get-TreeHashForScanCache -TreeIsh $TreeIsh
+    if (-not $th) { return $false }
+    Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $Cwd -Paths $Paths
+    return $true
+}

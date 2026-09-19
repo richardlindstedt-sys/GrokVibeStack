@@ -8,7 +8,7 @@
 #>
 
 if (-not $script:GATE_SCHEMA_VERSION) {
-    $script:GATE_SCHEMA_VERSION = 5
+    $script:GATE_SCHEMA_VERSION = 6
 }
 
 function Get-GateSchemaVersion {

@@ -1,6 +1,6 @@
 ﻿# Grok Build - Vibe Coding Tools & Self-Review
 
-High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** argues bucket (`blocker` / `next` / `later`), an **arbiter** decides, and a **fix → re-review loop** runs until blockers are gone (or max rounds).
+High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** argues bucket (`blocker` / `next` / `later`), an **arbiter** decides, and a **fix → re-review loop** runs until blockers are gone (or max rounds). **next** ships this SHA then host-fails the next commit if still open (`openedHead`; push does not re-fail).
 
 ## Installed Tools
 - Trivy           → vulns, secrets, misconfigs, SAST (`trivy fs .`)

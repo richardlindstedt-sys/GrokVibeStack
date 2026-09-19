@@ -1,6 +1,10 @@
 # GrokVibeStack
 
-Self-contained **Windows** installer for maximum **quality gates** + **token savings** on [Grok Build](https://x.ai).
+**Grok Build writes. This stack decides what is allowed to leave the machine.**
+
+Vanilla Grok Build is a strong coding agent with almost no *product* around git: chat can approve sloppy diffs, context bloats, and nothing forces scanners, tests, or a second opinion before `origin` moves. GrokVibeStack is the missing Windows layer: **fail-closed quality at commit/push**, **cheap chat the rest of the time**.
+
+Self-contained installer for [Grok Build](https://x.ai). One script. Two lanes.
 
 **This repository is the full product.** Clone it, run `Install-GrokVibeStack.ps1`. All stack scripts, rules, skills, hook templates, and requirements live under `assets/`. The installer copies them onto the machine (`~\.grok\…`) and may download **third-party** tools (Python, scanners, Headroom, etc.). You do not need any other project or pack.
 
@@ -14,7 +18,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.2.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.3.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -23,11 +27,30 @@ GrokVibeStack/ (this repo)
 
 ---
 
+## Why this beats plain Grok Build
+
+Plain Grok Build is the engine. This is the drivetrain: the agent still writes, but **git will not ship** what the chat merely felt good about.
+
+| | Plain Grok Build | With GrokVibeStack |
+|--|--|--|
+| **What “done” means** | The model said it was done | Affected tests + diagnostics in chat; **commit still has to pass** |
+| **Secrets / vulns** | Hope the model noticed | **Trivy** (HIGH/CRITICAL vuln, secret, misconfig) + **Gitleaks** on commit; **always on push** (cache cannot skip that pass) |
+| **Project tests** | Optional, if you remember | **On every commit** against the working tree. Test layout present but skipped → **fail** (unless `VIBE_ALLOW_SKIP_TESTS=1`) |
+| **Review** | One chat, one opinion | **3-role panel** (correctness, security, simplicity) + **arbiter** + fixer loop. Fail-closed if grok/proxy/votes are missing or unparseable |
+| **“Fix it later”** | Forgotten | `next` **ships this SHA**, then **host-fails the next commit** until those files are actually fixed. `later` is ledger-only (doctor lists) |
+| **Chat cost** | Full dumps, fat MCP, long sessions | **RTK** on noisy shell, Headroom keep-ratio **~0.35**, caveman replies, compact at **55%**, MCP cap **20 KB**, coding profile = Serena+Headroom only |
+| **Where tokens go** | Every turn | Chat stays **medium** effort. **High-effort multi-reviewer spend is at git** — on purpose |
+| **Hooks** | None | Per-repo pre-commit / pre-push. Doctor / `start-grok` **tell you** if `.git` has no vibe hooks (no silent install) |
+
+That is the product bet: **do not add a fourth LLM**. Add scanners, tests, fail-closed host checks, and spend the expensive panel **once per SHA**, not once per keystroke.
+
+It is still not a proof of correctness and not a human pentest. It *is* the difference between “the agent shipped it” and “the gate let it through.”
+
 ## Who this is for
 
 - You use **Grok Build on Windows** and want commit/push quality gates + aggressive token compression.
 - You are fine with first install pulling scanners and Python/Node tooling (network + disk + time).
-- You accept that **AI review on commit/push spends tokens and can take minutes**.
+- You accept that **AI review on commit/push spends tokens and can take minutes** — that spend is the quality feature.
 
 ## Who this is not for (yet)
 
@@ -88,10 +111,12 @@ Offline smoke (no AI spend):
 
 ## Design goals
 
+Vanilla Grok is optimized to *answer*. This stack is optimized to *ship*.
+
 | Goal | How |
 |------|-----|
-| **Quality** | On-edit secrets/linters/diagnostics · static scanners + project tests (fail if skipped) · multi-reviewer panel + arbiter + fix/re-review (fail-closed) |
-| **Token savings** | Headroom max-coding profile · RTK auto-enforce · caveman · early compact · MCP caps |
+| **Quality** | On-edit secrets/linters/diagnostics · static scanners + project tests (fail if skipped) · multi-reviewer panel + arbiter + fix/re-review (fail-closed) · leftover `next` fails the following commit |
+| **Token savings** | Headroom max-coding profile · RTK auto-enforce · caveman · early compact · MCP caps · **no in-session 3-reviewer panel** (pre-commit already runs standard) |
 | **Fresh machines** | One installer applies full gates + max-savings defaults |
 
 ---
@@ -196,7 +221,7 @@ $env:VIBE_REQUIRE_SCANNERS = '0'   # commit only: soft-warn if trivy/gitleaks mi
 
 - **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, leftover blockers → block commit/push  
 - **Critical scanners** (`trivy`, `gitleaks`) required by default on commit; `VIBE_REQUIRE_SCANNERS=0` soft-warns on **commit only**. **Push always runs Trivy (vuln/secret/misconfig) + Gitleaks** on the tip tree — Full scan-pass cache cannot skip them.  
-- **Buckets:** `blocker` fails this SHA; `next` ships then must be fixed in the next commit; `later` is ledger-only (doctor lists, cap 40, no auto-fail). Panel `severity=blocker` forces BLOCK even if vote disagrees.  
+- **Buckets:** `blocker` fails this SHA; `next` ships then **host-fails the next commit** if still open (`openedHead` stamp; legacy rows without stamp stay carry-forward). `later` is ledger-only (doctor lists, cap 40, no auto-fail). Emergency: `VIBE_ALLOW_OPEN_NEXT=1`. Panel `severity=blocker` forces BLOCK even if vote disagrees.  
 - Reports: `~\.grok\vibe-tools\reports\latest.md` (wall-time + token estimate + schema)  
 - Scanners in gates are **read-only** (Biome does not auto-write)  
 - **Serena MCP** installs by default (`ensure-serena.ps1`: PyPI `serena-agent`, verify `--version`, infer/repair `.serena/project.yml` language servers — empty list breaks symbol tools). **Remind hooks stay off**. Opt-in: `Enable-SerenaRemindHooks.ps1`  
@@ -313,7 +338,7 @@ Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-now.txt
 Get-Content $env:USERPROFILE\.grok\vibe-tools\reports\gate-status.txt -Wait   # append-only events
 ```
 
-Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md` (overwritten each gate). Ledger: `reports/gate-open-advisories.json` — **next** must be fixed in the next commit; **later** is backlog (doctor lists).
+Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Report: `reports/latest.md` (overwritten each gate). Ledger: `reports/gate-open-advisories.json` — **next** must be fixed in the next commit (host-fail on pre-commit if `openedHead` is a previous SHA); **later** is backlog (doctor lists).
 
 **Headroom MCP** (`headroom__*` tools) is **on by default**. Optional off: set `enabled = false` under `[mcp_servers.headroom]` in `~/.grok/config.toml`. Proxy + RTK stay on. Re-run installer to restore the managed block, or edit that key only.
 

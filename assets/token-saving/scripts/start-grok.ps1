@@ -64,6 +64,9 @@ if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
 $ListenProbePs1 = Join-Path $TokenRoot 'scripts\ListenProbe.ps1'
 if (-not (Test-Path -LiteralPath $ListenProbePs1)) { $ListenProbePs1 = Join-Path $PSScriptRoot 'ListenProbe.ps1' }
 if (Test-Path -LiteralPath $ListenProbePs1) { . $ListenProbePs1 }
+if (Get-Command Assert-VibeHeadroomReadyzKillPolicy -ErrorAction SilentlyContinue) {
+    Assert-VibeHeadroomReadyzKillPolicy
+}
 # Upstream: session login (auth.json) uses cli-chat-proxy.grok.com.
 # api.x.ai needs XAI_API_KEY — without it the proxy 401s and the TUI sits on
 # "waiting for response". OPENAI_TARGET_API_URL is an explicit override only
@@ -683,13 +686,27 @@ function Start-HeadroomProxyIfNeeded {
                 $adopted = Resolve-VibeProxyAdoptPid -WrapperPid ([int]$proc.Id) -SocketPids $sock -OwnerPids $owners -OkPids @($okIds) -DescendantPids @($descIds)
             }
             if ($null -eq $adopted) {
-                foreach ($op in $owners) {
-                    $cl = Get-ProcessCommandLine $op
-                    if (-not (Test-ProxyCommandLineIsHeadroom $cl)) { continue }
-                    if (Test-PortListening $Port) {
-                        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-                        $adopted = $op
-                        break
+                # Cmdline fallback only when the socket table confirms the owner.
+                # Missing Get-VibeListenSocketPids => skip adopt (fail closed).
+                if (Get-Command Get-VibeListenSocketPids -ErrorAction SilentlyContinue) {
+                    $sock2 = @(Get-VibeListenSocketPids -Port $Port)
+                    $sockSet = @{}
+                    foreach ($s in $sock2) {
+                        $n = 0
+                        try { $n = [int]$s } catch { continue }
+                        if ($n -gt 0) { $sockSet[$n] = $true }
+                    }
+                    foreach ($op in $owners) {
+                        $oid = 0
+                        try { $oid = [int]$op } catch { continue }
+                        if ($oid -le 0 -or -not $sockSet.ContainsKey($oid)) { continue }
+                        $cl = Get-ProcessCommandLine $op
+                        if (-not (Test-ProxyCommandLineIsHeadroom $cl)) { continue }
+                        if (Test-PortListening $Port) {
+                            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                            $adopted = $op
+                            break
+                        }
                     }
                 }
             }

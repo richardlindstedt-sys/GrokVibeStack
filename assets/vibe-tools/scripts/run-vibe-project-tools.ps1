@@ -304,9 +304,19 @@ function Get-VibeProjectTestPlan {
         Where-Object { $_.FullName -notmatch '(?i)[\\/](node_modules|\.git|venv|\.venv|\.serena)[\\/]' } |
         Select-Object -First 1
     if ($pTest -and (Get-Command Invoke-Pester -ErrorAction SilentlyContinue)) {
-        $hostExe = Join-Path $PSHOME 'powershell.exe'
-        if (-not (Test-Path -LiteralPath $hostExe)) { $hostExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
-        if ($hostExe) {
+        $hostExe = $null
+        try { $hostExe = (Get-Process -Id $PID).Path } catch { $hostExe = $null }
+        if (-not $hostExe) { $hostExe = Join-Path $PSHOME 'pwsh.exe' }
+        if (-not (Test-Path -LiteralPath $hostExe)) { $hostExe = Join-Path $PSHOME 'powershell.exe' }
+        if (-not (Test-Path -LiteralPath $hostExe)) {
+            $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+            if ($pwsh) { $hostExe = $pwsh.Source }
+        }
+        if (-not (Test-Path -LiteralPath $hostExe)) {
+            $ps = Get-Command powershell.exe -ErrorAction SilentlyContinue
+            if ($ps) { $hostExe = $ps.Source }
+        }
+        if ($hostExe -and (Test-Path -LiteralPath $hostExe)) {
             $esc = $Root.Replace("'", "''")
             $cmd = "`$ErrorActionPreference='Continue'; Import-Module Pester -ErrorAction Stop; `$c=New-PesterConfiguration; `$c.Run.Path='$esc'; `$c.Run.Exit=`$true; `$c.Output.Verbosity='Normal'; Invoke-Pester -Configuration `$c"
             [void]$plan.Add(@{ Label = 'pester'; FilePath = $hostExe; Args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $cmd) })
@@ -330,7 +340,7 @@ function Test-VibeRepoHasTestLayout {
         if (Test-Path -LiteralPath (Join-Path $Root $g)) { return $true }
     }
     $pTest = Get-ChildItem -LiteralPath $Root -Recurse -Include *.Tests.ps1,*Spec.ps1 -File -Depth 5 -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\node_modules\|\\.git\|\venv\' } |
+        Where-Object { $_.FullName -notmatch '(?i)[\\/](node_modules|\.git|venv|\.venv|\.serena)[\\/]' } |
         Select-Object -First 1
     if ($pTest) { return $true }
     return $false

@@ -109,6 +109,58 @@ function Get-GateOpenAdvisoriesFile {
     Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-open-advisories.json'
 }
 
+function Normalize-VibeAdvisoryCwd {
+    param([string]$Cwd)
+    if ([string]::IsNullOrWhiteSpace($Cwd)) { return '' }
+    $t = $Cwd.Trim()
+    try { $t = [System.IO.Path]::GetFullPath($t) } catch {}
+    return $t.TrimEnd('\', '/').Replace('/', '\').ToLowerInvariant()
+}
+
+function Get-VibeGateHeadSha {
+    if ($env:VIBE_GATE_HEAD_SHA -eq '-') { return '' }
+    if (-not [string]::IsNullOrWhiteSpace($env:VIBE_GATE_HEAD_SHA)) {
+        return $env:VIBE_GATE_HEAD_SHA.Trim()
+    }
+    try {
+        $h = git rev-parse HEAD 2>$null
+        if ($h) { return ([string]$h).Trim() }
+    } catch {}
+    return ''
+}
+
+function Get-UnfixedPriorNext {
+    # Open next stamped with openedHead from a previous SHA. Missing openedHead =
+    # legacy carry-forward (not host-fail). Unborn HEAD cannot enforce.
+    param(
+        [string]$Cwd,
+        [string]$CurrentHead
+    )
+    $Cwd = Normalize-VibeAdvisoryCwd $Cwd
+    if (-not $Cwd) { return @() }
+    if (-not $CurrentHead) { $CurrentHead = Get-VibeGateHeadSha }
+    if (-not $CurrentHead) { return @() }
+    $path = Get-GateOpenAdvisoriesFile
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    try {
+        $doc = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+    } catch {
+        throw "Unreadable gate-open-advisories.json (fail-closed): $path"
+    }
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($row in @($doc.items)) {
+        if (-not $row) { continue }
+        if ([string]$row.status -eq 'resolved') { continue }
+        if ((Normalize-VibeAdvisoryCwd ([string]$row.cwd)) -ne $Cwd) { continue }
+        if ((Get-GateFindingBucket $row) -eq 'later') { continue }
+        $oh = [string]$row.openedHead
+        if (-not $oh) { continue }
+        if ($oh -eq $CurrentHead) { continue }
+        [void]$out.Add($row)
+    }
+    return @($out)
+}
+
 function Test-GateAdvisoryFileInPaths {
     param([string]$File, [string[]]$ChangedPaths)
     if (@($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
@@ -163,17 +215,21 @@ function Save-GateOpenAdvisories {
         try { $Cwd = (Get-Location).Path } catch { $Cwd = '' }
     }
     if (-not $Cwd) { return }
+    $Cwd = Normalize-VibeAdvisoryCwd $Cwd
     $path = Get-GateOpenAdvisoriesFile
+    $headNow = Get-VibeGateHeadSha
     $prevItems = @()
     if (Test-Path -LiteralPath $path) {
         try {
             $prev = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
             if ($prev -and $prev.items) { $prevItems = @($prev.items) }
-        } catch { $prevItems = @() }
+        } catch {
+            throw "Unreadable open-advisories ledger (fail-closed, will not wipe): $path"
+        }
     }
     $byKey = @{}
     foreach ($old in $prevItems) {
-        $oc = [string]$old.cwd
+        $oc = Normalize-VibeAdvisoryCwd ([string]$old.cwd)
         $oid = [string]$old.id
         if (-not $oc -or -not $oid) { continue }
         $byKey[('{0}|{1}' -f $oc, $oid)] = $old
@@ -190,27 +246,33 @@ function Save-GateOpenAdvisories {
         $k = '{0}|{1}' -f $Cwd, $id
         $seen[$k] = $true
         $opened = $nowIso
+        $openedHead = $headNow
         if ($byKey.ContainsKey($k)) {
             $prevOpened = [string]$byKey[$k].opened
             if ($prevOpened) { $opened = $prevOpened }
+            $prevOH = [string]$byKey[$k].openedHead
+            if ($prevOH) { $openedHead = $prevOH }
+            $prevBucket = Get-GateFindingBucket $byKey[$k]
+            if ($prevBucket -eq 'next' -and $bucket -eq 'later') { $bucket = 'next' }
         }
         $byKey[$k] = [pscustomobject]@{
-            cwd     = $Cwd
-            id      = $id
-            title   = [string]$raw.title
-            detail  = [string]$raw.detail
-            file    = [string]$raw.file
-            run     = $RunId
-            bucket  = $bucket
-            status  = 'open'
-            opened  = $opened
-            updated = $nowIso
+            cwd        = $Cwd
+            id         = $id
+            title      = [string]$raw.title
+            detail     = [string]$raw.detail
+            file       = [string]$raw.file
+            run        = $RunId
+            bucket     = $bucket
+            status     = 'open'
+            opened     = $opened
+            openedHead = $openedHead
+            updated    = $nowIso
         }
     }
     $haveChangedPaths = @($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
     foreach ($k in @($byKey.Keys)) {
         $row = $byKey[$k]
-        if ([string]$row.cwd -ne $Cwd) { continue }
+        if ((Normalize-VibeAdvisoryCwd ([string]$row.cwd)) -ne $Cwd) { continue }
         if ($seen.ContainsKey($k)) { continue }
         if ([string]$row.status -eq 'resolved') { continue }
         # Empty path list: keep ALL old open rows (unknown scope must not wipe carry-forward).

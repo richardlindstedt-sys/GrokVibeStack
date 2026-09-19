@@ -135,10 +135,14 @@ if (-not $diff) {
 Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 1/2 static scans' }
 # Push never soft-warns missing Trivy/Gitleaks (commit may still use VIBE_REQUIRE_SCANNERS=0).
-$env:VIBE_REQUIRE_SCANNERS = '1'
 
 # Scan/cache the push tip tree(s), not the current checkout (write-tree / HEAD).
 . (Join-Path $vibeScripts 'scan-pass-cache.ps1')
+if (-not (Get-Command Set-VibePushRequireScanners -ErrorAction SilentlyContinue)) {
+    Write-Host 'PRE-PUSH BLOCKED: missing Set-VibePushRequireScanners' -ForegroundColor Red
+    exit 1
+}
+[void](Set-VibePushRequireScanners)
 $repoRoot = (Get-Location).Path
 $pushTips = @(Get-VibePushTipShas $ranges)
 $tipJobs = [System.Collections.Generic.List[string]]::new()

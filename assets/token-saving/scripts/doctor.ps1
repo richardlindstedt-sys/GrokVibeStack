@@ -54,6 +54,19 @@ function Test-KeeperAlive([int]$p) {
     if (Get-Command Test-VibeKeeperAlive -ErrorAction SilentlyContinue) {
         return [bool](Test-VibeKeeperAlive -Port $p -PidFile $f)
     }
+    # Helper missing: same pid-file + cmdline check (never always-dead).
+    if ($p -le 0 -or [string]::IsNullOrWhiteSpace($f)) { return $false }
+    if (-not (Test-Path -LiteralPath $f)) { return $false }
+    $kr = (Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue)
+    if (-not $kr) { return $false }
+    $kr = $kr.Trim()
+    $kid = 0
+    if (-not [int]::TryParse($kr, [ref]$kid) -or $kid -le 0) { return $false }
+    if (-not (Get-Process -Id $kid -ErrorAction SilentlyContinue)) { return $false }
+    $kcl = Get-ProcessCommandLine $kid
+    if (-not ($kcl -and $kcl -match 'keep-headroom-proxy')) { return $false }
+    if ($kcl -match ("-Port\s+$p(?!\d)")) { return $true }
+    if ($p -eq 8787 -and $kcl -notmatch '-Port\s+\d+') { return $true }
     return $false
 }
 
@@ -363,24 +376,31 @@ if ($insideGit) {
     }
     $preCommit = Join-Path $hooksDirRepo 'pre-commit'
     $prePush = Join-Path $hooksDirRepo 'pre-push'
-    $pcOk = Test-Path $preCommit
-    $ppOk = Test-Path $prePush
+    $pcTxt = ''
+    $ppTxt = ''
+    if (Test-Path $preCommit) { $pcTxt = Get-Content $preCommit -Raw -ErrorAction SilentlyContinue }
+    if (Test-Path $prePush) { $ppTxt = Get-Content $prePush -Raw -ErrorAction SilentlyContinue }
+    $pcOk = [bool]($pcTxt -match 'Vibe pre-')
+    $ppOk = [bool]($ppTxt -match 'Vibe pre-')
     Write-Host "  repo: $cwd"
     if ($pcOk) {
-        $pcTxt = Get-Content $preCommit -Raw -ErrorAction SilentlyContinue
         $prof = if ($pcTxt -match 'Profile standard') { 'standard' } elseif ($pcTxt -match 'Profile fast') { 'fast' } else { 'legacy/unspecified' }
-        Write-Host "  pre-commit: present (profile hint: $prof)" -ForegroundColor Green
+        Write-Host "  pre-commit: vibe hook present (profile hint: $prof)" -ForegroundColor Green
+    } elseif (Test-Path $preCommit) {
+        Write-Host "  pre-commit: present but not a vibe hook (missing 'Vibe pre-')" -ForegroundColor Yellow
     } else {
-        Write-Host "  pre-commit: MISSING - run install-vibe-hooks.ps1 ." -ForegroundColor Yellow
+        Write-Host "  pre-commit: MISSING" -ForegroundColor Yellow
     }
     if ($ppOk) {
-        $ppTxt = Get-Content $prePush -Raw -ErrorAction SilentlyContinue
         $prof = if ($ppTxt -match 'profile=fast' -or $ppTxt -match 'Profile fast') { 'fast' } else { 'present' }
-        Write-Host "  pre-push:   present (profile hint: $prof)" -ForegroundColor Green
+        Write-Host "  pre-push:   vibe hook present (profile hint: $prof)" -ForegroundColor Green
+    } elseif (Test-Path $prePush) {
+        Write-Host "  pre-push:   present but not a vibe hook (missing 'Vibe pre-')" -ForegroundColor Yellow
     } else {
-        Write-Host "  pre-push:   MISSING - run install-vibe-hooks.ps1 ." -ForegroundColor Yellow
+        Write-Host "  pre-push:   MISSING" -ForegroundColor Yellow
     }
-    if (-not $pcOk -and (Test-Path $hooksInstall)) {
+    if ((-not $pcOk -or -not $ppOk) -and (Test-Path $hooksInstall)) {
+        Write-Host '  cwd has .git but no vibe hooks. One-line install (not silent):' -ForegroundColor Yellow
         Write-Host '  fix: start-grok -BootstrapRepo   (or Initialize-VibeRepo.ps1 / install-vibe-hooks.ps1 .)' -ForegroundColor Yellow
     }
 } else {

@@ -479,31 +479,31 @@ if ($useStaged) {
 if ($tipTree) { $stagedTree = $tipTree }
 
 try {
-    # Trivy
-    if ($stagedTree) {
-        $trivyTarget = @($stagedTree)
-    } elseif ($Paths -and @($Paths).Count -gt 0) {
-        $trivyTarget = @($Paths)
-    } else {
-        $trivyTarget = @($root)
-    }
-    $trivyArgs = @(
-        'fs', '--exit-code', '1', '--severity', 'HIGH,CRITICAL',
-        '--scanners', 'vuln,secret,misconfig',
-        '--skip-dirs', '.git,.serena,node_modules,venv,.venv'
-    ) + $trivyTarget
-    Run 'trivy' $trivyArgs 'Trivy'
-
-    # Gitleaks
-    if (Get-Command gitleaks -ErrorAction SilentlyContinue) {
-        if ($stagedTree) {
-            Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)'
-        } else {
-            Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks'
-            Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory
+    $null = Invoke-VibeAlwaysOnVulnScanners -Runner {
+        param([string]$job)
+        if ($job -eq 'trivy') {
+            if ($stagedTree) {
+                $trivyTarget = @($stagedTree)
+            } elseif ($Paths -and @($Paths).Count -gt 0) {
+                $trivyTarget = @($Paths)
+            } else {
+                $trivyTarget = @($root)
+            }
+            $trivyArgs = @(
+                'fs', '--exit-code', '1', '--severity', 'HIGH,CRITICAL',
+                '--scanners', 'vuln,secret,misconfig',
+                '--skip-dirs', '.git,.serena,node_modules,venv,.venv'
+            ) + $trivyTarget
+            Run 'trivy' $trivyArgs 'Trivy'
         }
-    } else {
-        if (-not $Quiet) { Write-Host "[Gitleaks] SKIPPED (not installed)" -ForegroundColor DarkGray }
+        elseif ($job -eq 'gitleaks') {
+            if ($stagedTree) {
+                Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)'
+            } else {
+                Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks'
+                Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory
+            }
+        }
     }
 
     # Heuristic secret pass on staged tree
@@ -530,6 +530,7 @@ try {
         }
     }
 
+    # VULN_ALWAYS_BEFORE_LANG_SKIP: Trivy/Gitleaks/heuristic above must stay outside this skip.
     if ($VulnOnly) {
         if (-not $Quiet) {
             Write-Host '[VulnOnly] Trivy + Gitleaks (+ staged secret heuristic); skipping lang/project scanners' -ForegroundColor DarkCyan
@@ -812,10 +813,7 @@ if ($failed -gt 0) {
 
 # Only Full + explicit TreeIsh may write cache. Worktree Full (no tip) hashes
 # write-tree/HEAD, which is not the tree that was scanned — must not authorize push skip.
-if ($Scope -eq 'Full' -and -not [string]::IsNullOrWhiteSpace($TreeIsh) -and -not $VulnOnly) {
-    $th = Get-TreeHashForScanCache -TreeIsh $TreeIsh
-    if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
-}
+[void](Write-VibeScanPassCacheIfAllowed -VulnOnly $VulnOnly -Scope $Scope -TreeIsh $TreeIsh -Cwd $root -Paths $Paths)
 if (-not $Quiet) { Write-Host "Static scans passed (or only low/advisory findings)." -ForegroundColor Green }
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
     Write-GateProgress ("scans passed ({0} advisory)" -f $advisory) `

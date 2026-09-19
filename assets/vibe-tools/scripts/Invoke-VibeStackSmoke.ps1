@@ -209,7 +209,7 @@ if ($vibeRule -and $vibeRule.Length -lt 2500 -and $vibeRule -match 'pre-commit' 
 $scanSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1') -Raw
 $cacheSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1') -Raw -ErrorAction SilentlyContinue
 $prePushSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-pre-push.ps1') -Raw
-if ($scanSrc -match 'checkout-index' -and $scanSrc -match 'Save-ScanPassCache' -and $scanSrc -match "Scope = 'Auto'") {
+if ($scanSrc -match 'checkout-index' -and ($scanSrc -match 'Save-ScanPassCache' -or $scanSrc -match 'Write-VibeScanPassCacheIfAllowed') -and $scanSrc -match "Scope = 'Auto'") {
     Ok 'scans: binary staged tree + pass cache + Scope'
 } else {
     Bad 'scans missing checkout-index / scan cache / Scope'
@@ -241,8 +241,8 @@ if ($scanSrc -match 'ast-grep' -and $scanSrc -match '\.ast-grep\.yml') {
 } else {
     Bad 'scans missing ast-grep project config hook'
 }
-if ($scanSrc -match '\$testHere = \$true' -and $ptSrcEarly -match 'VIBE_ALLOW_SKIP_TESTS' -and $ptSrcEarly -match 'Label = ''pester''') {
-    Ok 'scans: tests on commit; skip fail-closed; pester in test plan'
+if ($scanSrc -match '\$testHere = \$true' -and $ptSrcEarly -match 'VIBE_ALLOW_SKIP_TESTS' -and $ptSrcEarly -match 'Label = ''pester''' -and $ptSrcEarly -match 'Get-Process -Id \$PID' -and $ptSrcEarly -match '\*\.Tests\.ps1') {
+    Ok 'scans: tests on commit; skip fail-closed; pester in test plan (current host)'
 } else {
     Bad 'scans/tests-on-commit / skip fail-closed / pester plan missing'
 }
@@ -311,6 +311,14 @@ if (Test-Path -LiteralPath $ptLib) {
             Bad 'project-tools missing Test-VibeRepoHasTestLayout'
         }
         Remove-Item -LiteralPath (Join-Path $testsDir 'test_sample.py') -Force
+        $pesterOnly = Join-Path $ptDir 'Foo.Tests.ps1'
+        Set-Content -LiteralPath $pesterOnly -Value '# vibe-smoke-pester' -Encoding utf8
+        if (Test-VibeRepoHasTestLayout $ptDir) {
+            Ok 'project-tools: pester-only *.Tests.ps1 is a test layout'
+        } else {
+            Bad 'project-tools: pester-only layout not detected'
+        }
+        Remove-Item -LiteralPath $pesterOnly -Force
         $fx = Join-Path $RepoRoot 'assets\vibe-tools\fixtures'
         Copy-Item -LiteralPath (Join-Path $fx 'npm-placeholder.json') -Destination (Join-Path $ptDir 'package.json') -Force
         if ($null -eq (Get-VibeNpmTestInvocation -Root $ptDir)) { Ok 'project-tools: npm placeholder test skipped' } else { Bad 'project-tools: npm placeholder test was scheduled' }
@@ -320,10 +328,12 @@ if (Test-Path -LiteralPath $ptLib) {
         $npmVitest = Get-VibeNpmTestInvocation -Root $ptDir
         $npmApp = @(Get-Command npm -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(cmd|exe|bat)$' })
         if ($npmApp.Count -gt 0) {
-            if ($npmVitest -and $npmVitest.FilePath -and ($npmVitest.FilePath -notmatch '\.ps1$')) {
-                Ok 'project-tools: npm FilePath is Win32 not ps1 shim'
+            $vitestArgs = @()
+            if ($npmVitest -and $npmVitest.Args) { $vitestArgs = @($npmVitest.Args) }
+            if ($npmVitest -and $npmVitest.FilePath -and ($npmVitest.FilePath -notmatch '\.ps1$') -and ($vitestArgs -contains 'test') -and ($vitestArgs -contains 'run')) {
+                Ok 'project-tools: npm FilePath is Win32 not ps1 shim; vitest args test -- run'
             } else {
-                Bad 'project-tools: npm FilePath is missing or a .ps1 shim'
+                Bad 'project-tools: npm FilePath/shim or vitest args missing test/run'
             }
         } else {
             if ($null -eq $npmVitest) { Ok 'project-tools: npm absent so vitest plan skipped' } else { Bad 'project-tools: npm plan without Win32 npm' }
@@ -584,10 +594,10 @@ if ($ctxSrc -match 'GIT_INDEX_FILE' -and $ctxSrc -match 'fromFile -eq \$head') {
 } else {
     Bad 'Get-StatedIntent still uses leftover HEAD message as this SHA intent'
 }
-if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'ChangedPaths' -and $progSrc -match 'function Get-GateFindingBucket' -and $progSrc -match 'later-cap' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $rawReview -match 'SCOPE: review THIS diff' -and $rawReview -match 'CARRY-FORWARD' -and $rawReview -match 'blocker\|next\|later' -and $rawReview -match 'Get-FindingBucket' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN NEXT' -and $chatLibSrc -match 'LATER backlog' -and $ctxSrc -match 'PRIOR OPEN NEXT' -and $ctxSrc -match 'CARRY-FORWARD' -and $ctxSrc -match 'function Test-VibeAdvisoryTouchesDiff' -and $ctxSrc -match 'function Get-PriorOpenAdvisoriesBlock') {
-    Ok 'gate ledger: persist + inject; review scoped to this diff; carry-forward untouched next'
+if ($progSrc -match 'function Save-GateOpenAdvisories' -and $progSrc -match 'ChangedPaths' -and $progSrc -match 'function Get-GateFindingBucket' -and $progSrc -match 'later-cap' -and $progSrc -match 'gate-open-advisories\.json' -and $rawReview -match 'Save-GateOpenAdvisories' -and $rawReview -match 'SCOPE: review THIS diff' -and $rawReview -match 'CARRY-FORWARD' -and $rawReview -match 'blocker\|next\|later' -and $rawReview -match 'Get-FindingBucket' -and $promptCtx -match 'Format-GateOpenAdvisoriesInject' -and $chatLibSrc -match 'OPEN NEXT' -and $chatLibSrc -match 'LATER backlog' -and $ctxSrc -match 'PRIOR OPEN NEXT' -and $ctxSrc -match 'CARRY-FORWARD' -and $ctxSrc -match 'function Test-VibeAdvisoryTouchesDiff' -and $ctxSrc -match 'function Get-PriorOpenAdvisoriesBlock' -and $progSrc -match 'function Get-UnfixedPriorNext' -and $progSrc -match 'openedHead' -and $rawReview -match 'VIBE_ALLOW_OPEN_NEXT' -and $rawReview -match 'unfixed prior next') {
+    Ok 'gate ledger: persist + inject; review scoped to this diff; carry-forward untouched next; host fail leftover next'
 } else {
-    Bad 'gate ledger missing persist/inject or diff-scoped carry-forward'
+    Bad 'gate ledger missing persist/inject or prior-next host fail'
 }
 if ($progSrc -match 'keep ALL old open' -and $progSrc -match 'function Test-GateAdvisoryFileInPaths' -and $progSrc -match 'VIBE_OPEN_ADVISORIES_FILE' -and $chatLibSrc -match 'VIBE_OPEN_ADVISORIES_FILE' -and $ctxSrc -notmatch 'Split-Path -Leaf' -and $progSrc -match 'In-diff and omitted: resolve' -and $progSrc -match 'cannot grow forever' -and $progSrc -match 'Empty path cannot carry-forward' -and $ctxSrc -notmatch 'Select-Object -First 12' -and $ctxSrc -match 'Test-GateAdvisoryFileInPaths') {
     Ok 'gate ledger: keep-untouched persist; empty-paths keep-all; no leaf false-positive'
@@ -603,6 +613,7 @@ try {
 param($Ledger, $Progress, $Ctx)
 $ErrorActionPreference = 'Stop'
 $env:VIBE_OPEN_ADVISORIES_FILE = $Ledger
+$env:VIBE_GATE_HEAD_SHA = '-'
 . $Progress
 . $Ctx
 $cwd = 'D:\Repos\vibe-adv-smoke-cwd'
@@ -646,7 +657,6 @@ try {
     if ($idxP -lt 0 -or $idxE -lt 0 -or $idxE -lt $idxP) { Write-Output 'empty-file-not-prior-next'; exit 1 }
 } finally {
     Set-Location -LiteralPath $here
-    Remove-Item -LiteralPath $cwd -Recurse -Force -ErrorAction SilentlyContinue
 }
 Save-GateOpenAdvisories -Items @(
     [pscustomobject]@{ id = 'new-1'; title = 'new on diff'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
@@ -675,6 +685,35 @@ $resCount = @($docP.items | Where-Object { [string]$_.status -eq 'resolved' }).C
 if ($resCount -gt 80) { Write-Output ('resolved-cap-failed:{0}' -f $resCount); exit 1 }
 $openKept = @($docP.items) | Where-Object { $_.id -eq 'new-1' } | Select-Object -First 1
 if (-not $openKept -or [string]$openKept.status -ne 'open') { Write-Output 'prune-dropped-open'; exit 1 }
+$env:VIBE_GATE_HEAD_SHA = 'aaa'
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'stamp-1'; title = 'stamped next'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'next' }
+) -RunId 'stamp' -Cwd $cwd -ChangedPaths $changed
+$same = @(Get-UnfixedPriorNext -Cwd $cwd -CurrentHead 'aaa')
+if (@($same | Where-Object { $_.id -eq 'stamp-1' }).Count -ne 0) { Write-Output 'same-head-should-pass'; exit 1 }
+$later = @(Get-UnfixedPriorNext -Cwd $cwd -CurrentHead 'bbb')
+if (@($later | Where-Object { $_.id -eq 'stamp-1' }).Count -eq 0) { Write-Output 'next-head-should-block'; exit 1 }
+$slashCwd = ($cwd -replace '\\','/')
+$slashHit = @(Get-UnfixedPriorNext -Cwd $slashCwd -CurrentHead 'bbb')
+if (@($slashHit | Where-Object { $_.id -eq 'stamp-1' }).Count -eq 0) { Write-Output 'slash-cwd-should-match'; exit 1 }
+$legacyOpen = @($docP.items | Where-Object { $_.id -eq 'carry-1' -and [string]$_.status -eq 'open' })
+if ($legacyOpen.Count -gt 0) {
+    $leg = @(Get-UnfixedPriorNext -Cwd $cwd -CurrentHead 'bbb')
+    if (@($leg | Where-Object { $_.id -eq 'carry-1' }).Count -ne 0) { Write-Output 'legacy-no-openedHead-should-not-block'; exit 1 }
+}
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'stamp-1'; title = 'downgrade attempt'; file = 'assets/vibe-tools/scripts/gate-progress.ps1'; severity = 'later' }
+) -RunId 'down' -Cwd $cwd -ChangedPaths $changed
+$docD = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$stamped = @($docD.items) | Where-Object { $_.id -eq 'stamp-1' } | Select-Object -First 1
+if (-not $stamped -or [string]$stamped.bucket -ne 'next') { Write-Output 'later-downgrade-of-next-allowed'; exit 1 }
+[System.IO.File]::WriteAllText($Ledger, 'NOT-JSON', $utf8)
+$threw = $false
+try {
+    Save-GateOpenAdvisories -Items @() -RunId 'corrupt' -Cwd $cwd -ChangedPaths $changed
+} catch { $threw = $true }
+if (-not $threw) { Write-Output 'corrupt-ledger-did-not-throw'; exit 1 }
+Remove-Item -LiteralPath $cwd -Recurse -Force -ErrorAction SilentlyContinue
 Write-Output 'ok'
 exit 0
 '@
@@ -684,7 +723,7 @@ exit 0
     $code = $LASTEXITCODE
     $txt = ($out | Out-String).Trim()
     if ($code -eq 0 -and $txt -match '(?m)^ok$') {
-        Ok 'gate ledger runtime: carry-forward; omit-resolve; empty-file PRIOR OPEN NEXT then resolve; resolved prune/cap'
+        Ok 'gate ledger runtime: carry-forward; omit-resolve; empty-file persist; prior-next host fail matrix; no later-downgrade; corrupt throw'
     } else {
         Bad ("gate ledger runtime failed (exit {0}): {1}" -f $code, $txt)
     }
@@ -893,10 +932,10 @@ try {
     }
 }
 $schemaSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-schema.ps1') -Raw
-if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree' -and $schemaSrc -match 'GATE_SCHEMA_VERSION = 5') {
-    Ok 'review: schema 5 cache + intent/blast + token estimate + worktree fixer'
+if ($rawReview -match 'Get-GateSchemaVersion' -and $rawReview -match 'schemaVersion' -and $rawReview -match 'tokenEstimate' -and $rawReview -match 'Add-ReviewContext' -and $rawReview -match 'New-FixerWorktree' -and $schemaSrc -match 'GATE_SCHEMA_VERSION = 6') {
+    Ok 'review: schema 6 cache + intent/blast + token estimate + worktree fixer'
 } else {
-    Bad 'review missing schema 5 / intent / tokens / worktree wiring'
+    Bad 'review missing schema 6 / intent / tokens / worktree wiring'
 }
 if ($prePushSrc -match 'Get-VibePushReviewPlan' -and $prePushSrc -match 'TAG:' -and $prePushSrc -match 'Get-TagCommitDiff') {
     Ok 'pre-push: version-tag strict + single-commit tag diff'
@@ -969,6 +1008,30 @@ if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwn
     Bad 'start-grok missing ListenProbe / Save-ProxyFingerprint / adopted PID write / still has Test-ProxyHttpReady'
 }
 $probeSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1') -Raw
+if ($probeSrc -match 'state == MIB_TCP_STATE_LISTEN' -and $probeSrc -match 'TCP_TABLE_OWNER_PID_ALL' -and $startSrc -match "'--host', '127.0.0.1'") {
+    Ok 'listen: ALL-table rows require LISTEN state; Headroom binds 127.0.0.1'
+} else {
+    Bad 'listen missing ALL-table LISTEN filter or Headroom --host 127.0.0.1'
+}
+. (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1')
+$killHttp = Test-VibeShouldStopHeadroomOnReadyzFail
+$listener = $null
+$tcpUpAlive = $false
+$tcpDownDead = $false
+try {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $ep = [System.Net.IPEndPoint]$listener.LocalEndpoint
+    $tcpUpAlive = [bool](Test-VibeProxyAliveListenOnly -Port $ep.Port)
+} finally {
+    if ($listener) { try { $listener.Stop() } catch {} }
+}
+if ($ep) { $tcpDownDead = -not [bool](Test-VibeProxyAliveListenOnly -Port $ep.Port) }
+if ((-not $killHttp) -and $tcpUpAlive -and $tcpDownDead -and $probeSrc -match 'function Test-VibeProxyAliveListenOnly' -and $keepSrc -match 'Test-VibeProxyAliveListenOnly' -and $startSrc -match 'Assert-VibeHeadroomReadyzKillPolicy' -and $keepSrc -match 'Never probe /readyz' -and $startSrc -notmatch 'function Test-ProxyHttpReady') {
+    Ok 'runtime: TCP-up HTTP-down stays alive (listen-only liveness; no HTTP kill)'
+} else {
+    Bad 'TCP-up HTTP-down runtime hatch failed or keeper not wired to listen-only liveness'
+}
 if ($probeSrc -match 'GetActiveTcpListeners' -and $probeSrc -match 'AF_INET6' -and $probeSrc -match 'VibeListenTable4' -and $probeSrc -match 'ERROR_INSUFFICIENT_BUFFER' -and $probeSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $startSrc -match 'Test-VibePortListening' -and $keepSrc -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibePortListening' -and $startSrc -notmatch 'GetActiveTcpListeners' -and $keepSrc -notmatch 'GetActiveTcpListeners' -and $rawReview -notmatch 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect') {
     Ok 'tcp probe: ListenProbe GetActiveTcpListeners; start/keep/review wrap it (no connect/Get-NetTCPConnection)'
 } else {
@@ -990,10 +1053,10 @@ if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'head
 } else {
     Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / ListenProbe / still Get-NetTCPConnection'
 }
-if ($startSrc -match 'Write-MissingVibeHookHint' -and $startSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'param\(\[switch\]\$Usage\)' -and $docSrc -match 'fat MCP' -and $startSrc -match 'Resolve-VibeProxyAdoptPid') {
-    Ok 'start-grok/doctor: missing-hook one-liner + doctor -Usage + fat MCP + adopt helper'
+if ($startSrc -match 'Write-MissingVibeHookHint' -and $startSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'param\(\[switch\]\$Usage\)' -and $docSrc -match 'fat MCP' -and $startSrc -match 'Resolve-VibeProxyAdoptPid' -and $docSrc -match "Vibe pre-" -and $docSrc -match 'not a vibe hook' -and $startSrc -match 'Missing Get-VibeListenSocketPids => skip adopt') {
+    Ok 'start-grok/doctor: missing-hook one-liner + Vibe pre- marker + doctor -Usage + fat MCP + adopt fail-closed'
 } else {
-    Bad 'missing-hook / doctor Usage / fat MCP / adopt helper wiring'
+    Bad 'missing-hook / Vibe pre- / doctor Usage / fat MCP / adopt fail-closed wiring'
 }
 if ($unSrc -match 'New-Object System.Collections.Generic.List\[string\]' -and $unSrc -notmatch '\$lines = \$raw\.Split\(') {
     Ok 'uninstall fallback: List[string] (no 1-line Split unwrap)'
@@ -1140,22 +1203,25 @@ if ($hatchFns.Count -eq 2) {
 } else {
     Bad ('review hatch functions not extractable (count={0})' -f $hatchFns.Count)
 }
+$isoWant = @(
+    'headroom-proxy.pid',
+    'headroom-keeper.pid',
+    'Local\GrokVibeHeadroomKeeper',
+    'headroom-proxy-8788.pid',
+    'headroom-keeper-8788.pid',
+    'Local\GrokVibeHeadroomKeeper-8788',
+    'headroom-proxy-9999.pid',
+    'headroom-keeper-9999.pid',
+    'Local\GrokVibeHeadroomKeeper-9999'
+)
 $isoHit = @{}
 $isoOk = $true
-foreach ($p in 8787, 8788, 9999) {
-    $tag = if ($p -eq 8787) { '' } else { "-$p" }
-    $names = @(
-        ("headroom-proxy{0}.pid" -f $tag),
-        ("headroom-keeper{0}.pid" -f $tag),
-        $(if ($p -eq 8787) { 'Local\GrokVibeHeadroomKeeper' } else { "Local\GrokVibeHeadroomKeeper-$p" })
-    )
-    foreach ($n in $names) {
-        if ($isoHit.ContainsKey($n)) { $isoOk = $false }
-        $isoHit[$n] = $p
-    }
+foreach ($n in $isoWant) {
+    if ($isoHit.ContainsKey($n)) { $isoOk = $false }
+    $isoHit[$n] = $true
 }
-if ($isoOk -and $startSrc -match 'headroom-proxy\$portTag' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $isoHit.Count -eq 9) {
-    Ok 'dual-proxy isolation: port-scoped pid/keeper/mutex names unique'
+if ($isoOk -and $isoWant.Count -eq 9 -and $isoHit.Count -eq 9 -and $startSrc -match 'headroom-proxy\$portTag' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $startSrc -match '\$Port -eq 8787' -and $startSrc -notmatch 'headroom-proxy-\$Port\.pid' -and $keepSrc -match 'GrokVibeHeadroomKeeper-\$Port') {
+    Ok 'dual-proxy isolation: pinned 8787/8788/9999 names unique; 8787 is empty tag'
 } else {
     Bad 'dual-proxy isolation names collide or missing portTag'
 }
@@ -1664,10 +1730,34 @@ if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoPr
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
 }
-if ($prePushPs1 -match "VIBE_REQUIRE_SCANNERS = '1'" -and $prePushPs1 -match '-VulnOnly' -and $prePushPs1 -match 'still running Trivy\+Gitleaks' -and $prePushPs1 -notmatch 'Skipping full scans \(Full cache hit' -and $prePushPs1 -match '(?m)^\$scanTargets = if' -and $prePushPs1 -notmatch '(?m)^\{\s*$' -and $scanSrc -match '\[switch\]\$VulnOnly' -and $scanSrc -match 'if \(\$VulnOnly\)') {
-    Ok 'pre-push always Trivy+Gitleaks (cache cannot skip vuln)'
+if ($prePushPs1 -match 'Set-VibePushRequireScanners' -and $prePushPs1 -match '-VulnOnly' -and $prePushPs1 -match 'still running Trivy\+Gitleaks' -and $prePushPs1 -notmatch 'Skipping full scans \(Full cache hit' -and $prePushPs1 -match '(?m)^\$scanTargets = if' -and $prePushPs1 -notmatch '(?m)^\{\s*$' -and $scanSrc -match '\[switch\]\$VulnOnly' -and $scanSrc -match 'VULN_ALWAYS_BEFORE_LANG_SKIP' -and $scanSrc -match 'Invoke-VibeAlwaysOnVulnScanners' -and $scanSrc -match 'Write-VibeScanPassCacheIfAllowed') {
+    $trivyAt = $scanSrc.IndexOf("Run 'trivy'")
+    $glAt = $scanSrc.IndexOf("Run 'gitleaks'")
+    $skipAt = $scanSrc.IndexOf('VULN_ALWAYS_BEFORE_LANG_SKIP')
+    $jobsAt = $scanSrc.IndexOf('Invoke-VibeAlwaysOnVulnScanners')
+    if ($trivyAt -ge 0 -and $glAt -ge 0 -and $skipAt -gt $trivyAt -and $skipAt -gt $glAt -and $jobsAt -ge 0 -and $jobsAt -lt $skipAt) {
+        Ok 'pre-push always Trivy+Gitleaks (Set-VibePushRequireScanners; jobs before lang skip)'
+    } else {
+        Bad 'pre-push Trivy/Gitleaks not locked before VULN_ALWAYS_BEFORE_LANG_SKIP'
+    }
 } else {
-    Bad 'pre-push can skip Trivy/Gitleaks on cache hit, missing -VulnOnly, or scan loop is a scriptblock'
+    Bad 'pre-push can skip Trivy/Gitleaks on cache hit, missing Set-VibePushRequireScanners, or vuln scanners inside skip'
+}
+$cacheSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1') -Raw
+. (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1')
+$alwaysJobs = @(Get-VibeAlwaysOnVulnJobs)
+$script:VibeSmokeVulnRan = [System.Collections.Generic.List[string]]::new()
+$invoked = @(Invoke-VibeAlwaysOnVulnScanners -Runner { param([string]$j) [void]$script:VibeSmokeVulnRan.Add($j) })
+$env:VIBE_REQUIRE_SCANNERS = '0'
+$setReq = Set-VibePushRequireScanners
+$writeNo = Test-VibeMayWriteFullScanCache -VulnOnly $true -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$writeYes = Test-VibeMayWriteFullScanCache -VulnOnly $false -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$writeWork = Test-VibeMayWriteFullScanCache -VulnOnly $false -Scope 'Full' -TreeIsh ''
+$wrote = Write-VibeScanPassCacheIfAllowed -VulnOnly $true -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -Cwd $RepoRoot -Paths @('.')
+if ($alwaysJobs -contains 'trivy' -and $alwaysJobs -contains 'gitleaks' -and $invoked -contains 'trivy' -and $invoked -contains 'gitleaks' -and $script:VibeSmokeVulnRan -contains 'trivy' -and $script:VibeSmokeVulnRan -contains 'gitleaks' -and $setReq -eq '1' -and $env:VIBE_REQUIRE_SCANNERS -eq '1' -and -not $writeNo -and $writeYes -and -not $writeWork -and -not $wrote -and $scanSrc -match 'Invoke-VibeAlwaysOnVulnScanners' -and $scanSrc -match 'Write-VibeScanPassCacheIfAllowed' -and $prePushPs1 -match 'Set-VibePushRequireScanners') {
+    Ok 'vuln policy runtime: runner invoked trivy+gitleaks; REQUIRE_SCANNERS forced; VulnOnly cannot write Full cache'
+} else {
+    Bad 'vuln policy runtime missing jobs / REQUIRE_SCANNERS force / cache-write skip'
 }
 if ($planSrc -match 'function Get-VibePushTipShas' -and $planSrc -match '\[0-9a-fA-F\]\{7,64\}' -and $prePushPs1 -match 'Where-Object \{ \$_ -match ''\^\[0-9a-fA-F\]\{7,64\}\$'' \}') {
     Ok 'push tips: hex allowlist on NEW/TAG/range + rev-list'
