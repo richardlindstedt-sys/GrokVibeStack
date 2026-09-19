@@ -1,3 +1,5 @@
+![GrokVibeStack](grokvibestack.jpg)
+
 # GrokVibeStack
 
 **Grok Build writes. This stack decides what is allowed to leave the machine.**
