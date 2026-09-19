@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-09-19
+
+### Fixed
+
+- Always-on vuln runner records a job only after `Confirm-VibeVulnJob` matches, and Confirm runs only if `Run` actually invoked the binary (skip ≠ confirm). Skip-gitleaks runner throws.
+- Removed tautological `Test-VibeShouldStopHeadroomOnReadyzFail` (always false). Keeper liveness is listen-only.
+
 ## [2.3.0] - 2026-09-19
 
 ### Added

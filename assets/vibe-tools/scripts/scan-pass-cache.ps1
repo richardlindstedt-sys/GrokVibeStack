@@ -148,13 +148,23 @@ function Set-VibePushRequireScanners {
     return $env:VIBE_REQUIRE_SCANNERS
 }
 
+function Confirm-VibeVulnJob {
+    param([string]$Name)
+    $script:VibeVulnJobConfirmed = [string]$Name
+}
+
 function Invoke-VibeAlwaysOnVulnScanners {
     param([scriptblock]$Runner)
     if (-not $Runner) { throw 'Invoke-VibeAlwaysOnVulnScanners requires a Runner' }
     $ran = [System.Collections.Generic.List[string]]::new()
     foreach ($job in @(Get-VibeAlwaysOnVulnJobs)) {
-        [void]$ran.Add([string]$job)
-        & $Runner ([string]$job)
+        $want = [string]$job
+        $script:VibeVulnJobConfirmed = $null
+        & $Runner $want
+        if ($script:VibeVulnJobConfirmed -ne $want) {
+            throw "always-on vuln runner did not confirm $want"
+        }
+        [void]$ran.Add($want)
     }
     if ($ran -notcontains 'trivy' -or $ran -notcontains 'gitleaks') {
         throw 'always-on vuln runner did not invoke trivy and gitleaks'

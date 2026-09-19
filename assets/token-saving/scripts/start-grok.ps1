@@ -64,9 +64,6 @@ if (Test-Path -LiteralPath $GrokTomlPs1) { . $GrokTomlPs1 }
 $ListenProbePs1 = Join-Path $TokenRoot 'scripts\ListenProbe.ps1'
 if (-not (Test-Path -LiteralPath $ListenProbePs1)) { $ListenProbePs1 = Join-Path $PSScriptRoot 'ListenProbe.ps1' }
 if (Test-Path -LiteralPath $ListenProbePs1) { . $ListenProbePs1 }
-if (Get-Command Assert-VibeHeadroomReadyzKillPolicy -ErrorAction SilentlyContinue) {
-    Assert-VibeHeadroomReadyzKillPolicy
-}
 # Upstream: session login (auth.json) uses cli-chat-proxy.grok.com.
 # api.x.ai needs XAI_API_KEY — without it the proxy 401s and the TUI sits on
 # "waiting for response". OPENAI_TARGET_API_URL is an explicit override only

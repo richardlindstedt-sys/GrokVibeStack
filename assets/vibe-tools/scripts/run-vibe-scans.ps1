@@ -306,14 +306,14 @@ function Run {
     )
     if (-not (Test-ToolRunnable $cmd)) {
         if (-not $Quiet) { Write-Host "[$name] SKIPPED (not installed or broken shim)" -ForegroundColor DarkGray }
-        return
+        return $false
     }
     if (-not $Quiet) { Write-Host "`n[$name] $cmd $cmdArgs" -ForegroundColor Cyan }
     if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
         Write-GateProgress ("scan: {0}..." -f $name) -Now ("Scanning: $name") -Phase 'scans'
     }
     & $cmd @cmdArgs 2>&1 | ForEach-Object {
-        if (-not $Quiet) { $_ }
+        if (-not $Quiet) { Write-Host $_ }
     }
     if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
         if ($Advisory) {
@@ -332,6 +332,7 @@ function Run {
     } elseif (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
         Write-GateProgress ("scan: {0} ok" -f $name)
     }
+    return $true
 }
 
 function Run-PSScriptAnalyzer {
@@ -494,15 +495,17 @@ try {
                 '--scanners', 'vuln,secret,misconfig',
                 '--skip-dirs', '.git,.serena,node_modules,venv,.venv'
             ) + $trivyTarget
-            Run 'trivy' $trivyArgs 'Trivy'
+            if (Run 'trivy' $trivyArgs 'Trivy') { Confirm-VibeVulnJob 'trivy' }
         }
         elseif ($job -eq 'gitleaks') {
+            $glRan = $false
             if ($stagedTree) {
-                Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)'
+                $glRan = [bool](Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)')
             } else {
-                Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks'
-                Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory
+                $glRan = [bool](Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks')
+                [void](Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory)
             }
+            if ($glRan) { Confirm-VibeVulnJob 'gitleaks' }
         }
     }
 

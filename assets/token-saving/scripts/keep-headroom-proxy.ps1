@@ -31,9 +31,6 @@ $MutexName = if ($Port -eq 8787) { 'Local\GrokVibeHeadroomKeeper' } else { "Loca
 $ListenProbePs1 = Join-Path $TokenRoot 'scripts\ListenProbe.ps1'
 if (-not (Test-Path -LiteralPath $ListenProbePs1)) { $ListenProbePs1 = Join-Path $PSScriptRoot 'ListenProbe.ps1' }
 if (Test-Path -LiteralPath $ListenProbePs1) { . $ListenProbePs1 }
-if (Get-Command Assert-VibeHeadroomReadyzKillPolicy -ErrorAction SilentlyContinue) {
-    Assert-VibeHeadroomReadyzKillPolicy
-}
 
 function Write-KeepLog([string]$msg) {
     $line = '{0} {1}' -f (Get-Date).ToString('o'), $msg

@@ -1014,7 +1014,6 @@ if ($probeSrc -match 'state == MIB_TCP_STATE_LISTEN' -and $probeSrc -match 'TCP_
     Bad 'listen missing ALL-table LISTEN filter or Headroom --host 127.0.0.1'
 }
 . (Join-Path $RepoRoot 'assets\token-saving\scripts\ListenProbe.ps1')
-$killHttp = Test-VibeShouldStopHeadroomOnReadyzFail
 $listener = $null
 $tcpUpAlive = $false
 $tcpDownDead = $false
@@ -1027,7 +1026,7 @@ try {
     if ($listener) { try { $listener.Stop() } catch {} }
 }
 if ($ep) { $tcpDownDead = -not [bool](Test-VibeProxyAliveListenOnly -Port $ep.Port) }
-if ((-not $killHttp) -and $tcpUpAlive -and $tcpDownDead -and $probeSrc -match 'function Test-VibeProxyAliveListenOnly' -and $keepSrc -match 'Test-VibeProxyAliveListenOnly' -and $startSrc -match 'Assert-VibeHeadroomReadyzKillPolicy' -and $keepSrc -match 'Never probe /readyz' -and $startSrc -notmatch 'function Test-ProxyHttpReady') {
+if ($tcpUpAlive -and $tcpDownDead -and $probeSrc -match 'function Test-VibeProxyAliveListenOnly' -and $keepSrc -match 'Test-VibeProxyAliveListenOnly' -and $probeSrc -notmatch 'Test-VibeShouldStopHeadroomOnReadyzFail' -and $keepSrc -match 'Never probe /readyz' -and $startSrc -notmatch 'function Test-ProxyHttpReady') {
     Ok 'runtime: TCP-up HTTP-down stays alive (listen-only liveness; no HTTP kill)'
 } else {
     Bad 'TCP-up HTTP-down runtime hatch failed or keeper not wired to listen-only liveness'
@@ -1747,17 +1746,22 @@ $cacheSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scr
 . (Join-Path $RepoRoot 'assets\vibe-tools\scripts\scan-pass-cache.ps1')
 $alwaysJobs = @(Get-VibeAlwaysOnVulnJobs)
 $script:VibeSmokeVulnRan = [System.Collections.Generic.List[string]]::new()
-$invoked = @(Invoke-VibeAlwaysOnVulnScanners -Runner { param([string]$j) [void]$script:VibeSmokeVulnRan.Add($j) })
+$invoked = @(Invoke-VibeAlwaysOnVulnScanners -Runner { param([string]$j) [void]$script:VibeSmokeVulnRan.Add($j); Confirm-VibeVulnJob $j })
+$skipThrew = $false
+try {
+    [void](Invoke-VibeAlwaysOnVulnScanners -Runner { param([string]$j) if ($j -eq 'trivy') { Confirm-VibeVulnJob $j } })
+} catch { $skipThrew = $true }
+if (-not $skipThrew) { Bad 'vuln runner skip-gitleaks did not throw' }
 $env:VIBE_REQUIRE_SCANNERS = '0'
 $setReq = Set-VibePushRequireScanners
 $writeNo = Test-VibeMayWriteFullScanCache -VulnOnly $true -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 $writeYes = Test-VibeMayWriteFullScanCache -VulnOnly $false -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 $writeWork = Test-VibeMayWriteFullScanCache -VulnOnly $false -Scope 'Full' -TreeIsh ''
 $wrote = Write-VibeScanPassCacheIfAllowed -VulnOnly $true -Scope 'Full' -TreeIsh 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -Cwd $RepoRoot -Paths @('.')
-if ($alwaysJobs -contains 'trivy' -and $alwaysJobs -contains 'gitleaks' -and $invoked -contains 'trivy' -and $invoked -contains 'gitleaks' -and $script:VibeSmokeVulnRan -contains 'trivy' -and $script:VibeSmokeVulnRan -contains 'gitleaks' -and $setReq -eq '1' -and $env:VIBE_REQUIRE_SCANNERS -eq '1' -and -not $writeNo -and $writeYes -and -not $writeWork -and -not $wrote -and $scanSrc -match 'Invoke-VibeAlwaysOnVulnScanners' -and $scanSrc -match 'Write-VibeScanPassCacheIfAllowed' -and $prePushPs1 -match 'Set-VibePushRequireScanners') {
-    Ok 'vuln policy runtime: runner invoked trivy+gitleaks; REQUIRE_SCANNERS forced; VulnOnly cannot write Full cache'
+if ($skipThrew -and $alwaysJobs -contains 'trivy' -and $alwaysJobs -contains 'gitleaks' -and $invoked -contains 'trivy' -and $invoked -contains 'gitleaks' -and $script:VibeSmokeVulnRan -contains 'trivy' -and $script:VibeSmokeVulnRan -contains 'gitleaks' -and $setReq -eq '1' -and $env:VIBE_REQUIRE_SCANNERS -eq '1' -and -not $writeNo -and $writeYes -and -not $writeWork -and -not $wrote -and $scanSrc -match 'Invoke-VibeAlwaysOnVulnScanners' -and $scanSrc -match 'Write-VibeScanPassCacheIfAllowed' -and $scanSrc -match 'Confirm-VibeVulnJob' -and $scanSrc -match 'if \(\$glRan\) \{ Confirm-VibeVulnJob' -and $prePushPs1 -match 'Set-VibePushRequireScanners') {
+    Ok 'vuln policy runtime: runner confirms trivy+gitleaks; skip-gitleaks throws; REQUIRE_SCANNERS forced; VulnOnly cannot write Full cache'
 } else {
-    Bad 'vuln policy runtime missing jobs / REQUIRE_SCANNERS force / cache-write skip'
+    Bad 'vuln policy runtime missing confirm-after-runner / REQUIRE_SCANNERS force / cache-write skip'
 }
 if ($planSrc -match 'function Get-VibePushTipShas' -and $planSrc -match '\[0-9a-fA-F\]\{7,64\}' -and $prePushPs1 -match 'Where-Object \{ \$_ -match ''\^\[0-9a-fA-F\]\{7,64\}\$'' \}') {
     Ok 'push tips: hex allowlist on NEW/TAG/range + rev-list'
