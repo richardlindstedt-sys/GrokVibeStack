@@ -1160,10 +1160,28 @@ if ($isoOk -and $startSrc -match 'headroom-proxy\$portTag' -and $keepSrc -match 
     Bad 'dual-proxy isolation names collide or missing portTag'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
-if ($hrReq -match 'headroom-ai\[proxy\]>=0\.37\.0' -and $hrReq -match 'tokenizers>=0\.22\.0,<=0\.23\.0') {
+if ($hrReq -match 'headroom-ai\[proxy\]>=0\.37\.0' -and $hrReq -match 'tokenizers>=0\.23\.1,<0\.24\.0') {
     Ok 'reqs: headroom-ai[proxy] >= 0.37.0 + tokenizers pin'
 } else {
     Bad 'reqs missing headroom-ai[proxy] >= 0.37.0 / tokenizers pin'
+}
+$vtReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\vibe-tools.txt') -Raw
+$hrFreeze = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom-freeze.txt') -Raw
+$vtFreeze = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\vibe-tools-freeze.txt') -Raw
+if ($vtReq -match 'checkov>=3\.3\.19' -and $vtReq -match 'ruff>=0\.16\.8' -and $vtReq -match 'semgrep>=1\.177\.0') {
+    Ok 'reqs: vibe-tools floors (checkov/ruff/semgrep)'
+} else {
+    Bad 'reqs missing vibe-tools floors (checkov>=3.3.19 / ruff>=0.16.8 / semgrep>=1.177.0)'
+}
+if ($hrFreeze -match '(?m)^headroom-ai==0\.37\.0' -and $hrFreeze -match '(?m)^tokenizers==0\.23\.2' -and $hrFreeze -match '(?m)^ast-grep-cli==0\.45\.3') {
+    Ok 'freeze: headroom-ai 0.37.0 + tokenizers 0.23.2'
+} else {
+    Bad 'headroom-freeze.txt stale vs floors'
+}
+if ($vtFreeze -match '(?m)^checkov==3\.3\.19' -and $vtFreeze -match '(?m)^ruff==0\.16\.8' -and $vtFreeze -match '(?m)^semgrep==1\.177\.0' -and $vtFreeze -match '(?m)^asteval==1\.0\.10') {
+    Ok 'freeze: vibe-tools checkov 3.3.19 + asteval override 1.0.10'
+} else {
+    Bad 'vibe-tools-freeze.txt stale vs floors / asteval override'
 }
 $snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
 if ($snip -match '\[model\."grok-4.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8787' -and $snip -notmatch '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
