@@ -191,11 +191,11 @@ vibe-review
 & "$env:USERPROFILE\.grok\vibe-tools\scripts\grok-ai-review.ps1" -Profile strict
 $env:VIBE_GATE_PROFILE = 'strict'
 $env:VIBE_GATE_NO_CACHE = '1'
-$env:VIBE_REQUIRE_SCANNERS = '0'   # default is require trivy+gitleaks; 0 = soft-warn only
+$env:VIBE_REQUIRE_SCANNERS = '0'   # commit only: soft-warn if trivy/gitleaks missing. Push always requires them.
 ```
 
 - **Fail-closed:** missing grok/proxy, unparseable panel/arbiter, leftover blockers → block commit/push  
-- **Critical scanners** (`trivy`, `gitleaks`) required by default; `VIBE_REQUIRE_SCANNERS=0` soft-warns only  
+- **Critical scanners** (`trivy`, `gitleaks`) required by default on commit; `VIBE_REQUIRE_SCANNERS=0` soft-warns on **commit only**. **Push always runs Trivy (vuln/secret/misconfig) + Gitleaks** on the tip tree — Full scan-pass cache cannot skip them.  
 - **Buckets:** `blocker` fails this SHA; `next` ships then must be fixed in the next commit; `later` is ledger-only (doctor lists, cap 40, no auto-fail). Panel `severity=blocker` forces BLOCK even if vote disagrees.  
 - Reports: `~\.grok\vibe-tools\reports\latest.md` (wall-time + token estimate + schema)  
 - Scanners in gates are **read-only** (Biome does not auto-write)  

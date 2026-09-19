@@ -134,7 +134,8 @@ if (-not $diff) {
 
 Write-Host ">>> STEP 1/2 : STATIC SCANS" -ForegroundColor Cyan
 if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) { Write-GateProgress 'STEP 1/2 static scans' }
-if (-not $env:VIBE_REQUIRE_SCANNERS) { $env:VIBE_REQUIRE_SCANNERS = '1' }
+# Push never soft-warns missing Trivy/Gitleaks (commit may still use VIBE_REQUIRE_SCANNERS=0).
+$env:VIBE_REQUIRE_SCANNERS = '1'
 
 # Scan/cache the push tip tree(s), not the current checkout (write-tree / HEAD).
 . (Join-Path $vibeScripts 'scan-pass-cache.ps1')
@@ -173,20 +174,22 @@ try {
         }
         if ($allHit) {
             $skipScans = $true
-            Write-Host ("Skipping full scans (Full cache hit tip tree {0})" -f ($ages -join '; ')) -ForegroundColor DarkCyan
+            Write-Host ("Full-scan cache hit ({0}); still running Trivy+Gitleaks on push tip." -f ($ages -join '; ')) -ForegroundColor DarkCyan
         }
     }
 } catch {}
 
-if (-not $skipScans) {
-    $scanTargets = if ($tipJobs.Count -gt 0) { @($tipJobs) } else { @('') }
+# Vulnerability scan always runs on push. Cache may skip the rest of the Full suite only.
+$scanTargets = if ($tipJobs.Count -gt 0) { @($tipJobs) } else { @('') }
     foreach ($tip in $scanTargets) {
         $scanArgs = [System.Collections.Generic.List[string]]::new()
         [void]$scanArgs.AddRange([string[]]@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runScans, '-Scope', 'Full'))
+        if ($skipScans) { [void]$scanArgs.Add('-VulnOnly') }
         if ($tip) {
             [void]$scanArgs.Add('-TreeIsh')
             [void]$scanArgs.Add($tip)
-            Write-Host ("Scanning push tip {0}" -f $tip) -ForegroundColor DarkCyan
+            $kind = if ($skipScans) { 'vuln-only' } else { 'full' }
+            Write-Host ("Scanning push tip {0} ({1})" -f $tip, $kind) -ForegroundColor DarkCyan
         }
         $prevChild = $env:VIBE_GATE_CHILD
         $env:VIBE_GATE_CHILD = '1'
@@ -214,8 +217,7 @@ if (-not $skipScans) {
             exit 1
         }
     }
-    $global:LASTEXITCODE = 0
-}
+$global:LASTEXITCODE = 0
 
 if (-not $diff) {
     Write-Host ""

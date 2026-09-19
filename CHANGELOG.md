@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - Requirement floors (2026-09-19): `checkov>=3.3.19`. Tokenizers now `>=0.23.1,<0.24.0` (transformers 5.17 requires it; old `<=0.23.0` pin is unsatisfiable). GitHub binaries still **scc v4.1.0** and **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). Serena stays `1.7.0`.
 - Regenerated `*-freeze.txt` from those floors (`headroom-ai==0.37.0`, `ast-grep-cli==0.45.3`, `ruff==0.16.8`, `semgrep==1.177.0`, `tokenizers==0.23.2`, `transformers==5.17.0`). Freeze still overrides checkov's `asteval==1.0.6` to `1.0.10`.
+- **Push always vulnerability-scans:** Trivy (`vuln,secret,misconfig` HIGH/CRITICAL) + Gitleaks on the tip tree. Full scan-pass cache no longer skips that pass. `VIBE_REQUIRE_SCANNERS=0` is commit-only; push forces require.
 
 ## [2.2.0] - 2026-09-16
 

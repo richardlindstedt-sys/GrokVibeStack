@@ -121,7 +121,7 @@ install-vibe-hooks.ps1 .
 | **Poll clamp** | `PreToolUse` `get_command_or_subagent_output` | Live gate: `timeout_ms` → 15000 | Rewrite |
 | **Stop keep-alive** | `Stop` | Block silent end while gate live | Keeps turn |
 | **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests** (working tree; fail if skipped) + **profile=standard** on staged diff | Yes |
-| **pre-push** | `git push` | Full scanners + project compile/tests + **fast** (sensitive paths add security; version tags → **strict**) | Yes |
+| **pre-push** | `git push` | **Always** Trivy (vuln/secret/misconfig) + Gitleaks on the tip (cache cannot skip). Rest of Full suite + tests if no cache hit. AI **fast** (sensitive paths add security; version tags → **strict**) | Yes |
 
 Also deletes inert `*.sample` hooks from `.git/hooks/`.
 

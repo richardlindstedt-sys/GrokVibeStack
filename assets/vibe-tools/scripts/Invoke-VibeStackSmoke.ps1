@@ -1664,6 +1664,11 @@ if ($prePushPs1 -match 'Get-VibePushReviewPlan' -and $prePushPs1 -match "-AutoPr
 } else {
     Bad 'pre-push missing AutoProfile/Scope Full'
 }
+if ($prePushPs1 -match "VIBE_REQUIRE_SCANNERS = '1'" -and $prePushPs1 -match '-VulnOnly' -and $prePushPs1 -match 'still running Trivy\+Gitleaks' -and $prePushPs1 -notmatch 'Skipping full scans \(Full cache hit' -and $prePushPs1 -match '(?m)^\$scanTargets = if' -and $prePushPs1 -notmatch '(?m)^\{\s*$' -and $scanSrc -match '\[switch\]\$VulnOnly' -and $scanSrc -match 'if \(\$VulnOnly\)') {
+    Ok 'pre-push always Trivy+Gitleaks (cache cannot skip vuln)'
+} else {
+    Bad 'pre-push can skip Trivy/Gitleaks on cache hit, missing -VulnOnly, or scan loop is a scriptblock'
+}
 if ($planSrc -match 'function Get-VibePushTipShas' -and $planSrc -match '\[0-9a-fA-F\]\{7,64\}' -and $prePushPs1 -match 'Where-Object \{ \$_ -match ''\^\[0-9a-fA-F\]\{7,64\}\$'' \}') {
     Ok 'push tips: hex allowlist on NEW/TAG/range + rev-list'
 } else {

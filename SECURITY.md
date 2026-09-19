@@ -32,6 +32,7 @@ It does **not**:
 - **Pre-commit / pre-push hooks run scanners, optional project compile/tests (if cargo/go/dotnet/tsc/pytest/npm/mvn/gradle exist), and may invoke the Grok CLI** (network + model spend) on your diffs. Skip project tools: `VIBE_SKIP_PROJECT_TOOLS=1`.
 - **Session hooks** can run PowerShell on tool use (e.g. RTK enforce, on-edit checks).
 - Gates are **fail-closed** for critical scanner/AI failures: a broken proxy or missing verdict blocks commit/push.
+- **Push always vulnerability-scans** the tip (`trivy fs` HIGH/CRITICAL `vuln,secret,misconfig` + Gitleaks). Missing Trivy/Gitleaks blocks push even if `VIBE_REQUIRE_SCANNERS=0`. A Full scan-pass cache hit skips other scanners, not this pass.
 - Emergency escape hatches (use sparingly):
   - `git commit --no-verify` / `git push --no-verify`
   - `RTK_BYPASS=1` on a single shell command (disables RTK deny for that invocation)

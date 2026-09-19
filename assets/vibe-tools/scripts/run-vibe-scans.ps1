@@ -17,13 +17,16 @@ param(
     [ValidateSet('Auto', 'Staged', 'Full')]
     [string]$Scope = 'Auto',
     # Pre-push: scan this commit/tree instead of the current checkout.
-    [string]$TreeIsh = ''
+    [string]$TreeIsh = '',
+    # Trivy (vuln/secret/misconfig) + Gitleaks only. Push uses this when Full cache hits.
+    [switch]$VulnOnly
 )
 
 $ErrorActionPreference = 'Continue'
 $failed = 0
 $advisory = 0
 $root = (Get-Location).Path
+if ($VulnOnly) { $env:VIBE_REQUIRE_SCANNERS = '1' }
 if ($env:VIBE_SCAN_SCOPE -match '^(?i)auto$') { $Scope = 'Auto' }
 elseif ($env:VIBE_SCAN_SCOPE -match '^(?i)staged$') { $Scope = 'Staged' }
 elseif ($env:VIBE_SCAN_SCOPE -match '^(?i)full$') { $Scope = 'Full' }
@@ -527,6 +530,11 @@ try {
         }
     }
 
+    if ($VulnOnly) {
+        if (-not $Quiet) {
+            Write-Host '[VulnOnly] Trivy + Gitleaks (+ staged secret heuristic); skipping lang/project scanners' -ForegroundColor DarkCyan
+        }
+    } else {
     # --- Lang / project scanners scoped to $scanRoot (staged tree or repo) ---
     Run-PSScriptAnalyzer -ScanRoot $scanRoot
 
@@ -762,6 +770,7 @@ rules:
             rg -i --heading 'TODO|FIXME|XXX|HACK|UNIMPLEMENTED|NOT WIRED|STUB' --glob '!node_modules/**' $rgPath | Select-Object -First 30
         }
     }
+    }
 } finally {
     if ($tipTree -and (Test-Path -LiteralPath $tipTree)) {
         try { git worktree remove --force -- $tipTree 2>$null | Out-Null } catch {}
@@ -803,7 +812,7 @@ if ($failed -gt 0) {
 
 # Only Full + explicit TreeIsh may write cache. Worktree Full (no tip) hashes
 # write-tree/HEAD, which is not the tree that was scanned — must not authorize push skip.
-if ($Scope -eq 'Full' -and -not [string]::IsNullOrWhiteSpace($TreeIsh)) {
+if ($Scope -eq 'Full' -and -not [string]::IsNullOrWhiteSpace($TreeIsh) -and -not $VulnOnly) {
     $th = Get-TreeHashForScanCache -TreeIsh $TreeIsh
     if ($th) { Save-ScanPassCache -TreeHash $th -ScopeUsed $Scope -Cwd $root -Paths $Paths }
 }
