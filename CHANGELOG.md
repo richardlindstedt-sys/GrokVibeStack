@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-21
+
+### Added
+
+- **Grok 4.7** as the stack default: quoted `[model."grok-4.7"]` Headroom override on `:8787`, `[models].default = "grok-4.7"`, `start-grok -m grok-4.7`, gates default to `grok-4.7`. Vanilla hatch: `[model."grok-4.7-direct"]`. Optional Fast: `[model."grok-4.7-build-fast"]` (Headroom; Grok Build / Cursor; 2x token rates).
+- Grok 4.6 stays available: Headroom `[model."grok-4.6"]` and hatch `[model."grok-4.6-direct"]`.
+
+### Fixed
+
+- Scanner `Run` writes status with `Write-Host` only. Whether the tool actually ran is `$script:vibeToolRan`, so a statement-style call no longer leaks `$true` onto the success stream. Trivy and Gitleaks still confirm only after a real invoke. Smoke runs that contract (no bool return, no success-stream output, flag set only after a real invoke).
+- Doctor `env_key` warning names the `XAI_API_KEY` variable only. It does not print an assignment-shaped value.
+
+### Changed
+
+- `grok-gate` / `grok-via-headroom` now alias `grok-4.7`. Sequential Headroom panel includes 4.7 and 4.7 Fast. Proxy-down hatch is `grok-4.7-direct` (4.6 models still hatch to `grok-4.6-direct`).
+- Requirement floors re-checked 2026-09-21: still `headroom-ai[proxy]>=0.37.0`, `ast-grep-cli>=0.45.3`, `ruff>=0.16.8`, `semgrep>=1.177.0`, `checkov>=3.3.19`, Serena `1.7.0`. GitHub binaries still **scc v4.1.0** and **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). `mcp` stays 1.x (`headroom-ai[proxy]` requires `<2.0.0`).
+
 ## [2.3.1] - 2026-09-19
 
 ### Fixed

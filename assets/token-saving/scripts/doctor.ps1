@@ -259,7 +259,7 @@ if ($proxyUp) {
     Write-Host "  status: DOWN" -ForegroundColor Yellow
     Write-Host ("  fingerprint file: {0}" -f $(if ($fpOk) { 'ok (stale while down)' } elseif ($fpOnDisk) { 'stale/other' } else { 'missing' })) -ForegroundColor DarkGray
     Write-Host "  fix:    start-grok   (or start-headroom-proxy.ps1)" -ForegroundColor Yellow
-    Write-Host "  note:   default grok-4.6 is overridden to Headroom; needs proxy up" -ForegroundColor DarkGray
+    Write-Host "  note:   default grok-4.7 is overridden to Headroom; grok-4.6 Headroom stays; needs proxy up" -ForegroundColor DarkGray
 }
 $keepUp = Test-KeeperAlive 8787
 Write-Host ("  keeper: {0}" -f $(if ($keepUp) { 'up (auto-restart)' } else { 'DOWN — start-grok -ProxyOnly' })) -ForegroundColor (Get-StatusColor $keepUp)
@@ -418,7 +418,7 @@ if (Test-Path -LiteralPath $cfg) {
             $cfgTxt = Read-Utf8NoBomFile -Path $cfg
             $cfgCheck = Test-VibeToml -Raw ([string]$cfgTxt)
             if ($cfgCheck.Ok) {
-                Write-Host '  parse: ok (Headroom grok-4.6 + grok-gate alias :8787, no duplicate keys/tables)' -ForegroundColor Green
+                Write-Host '  parse: ok (Headroom grok-4.7 + grok-4.6 + grok-gate alias :8787, no duplicate keys/tables)' -ForegroundColor Green
             } else {
                 Write-Host ('  ERROR: {0}' -f ($cfgCheck.Errors -join '; ')) -ForegroundColor Red
                 Write-Host '        start-grok auto-repairs this; or re-run Install-GrokVibeStack.ps1' -ForegroundColor Yellow
@@ -435,16 +435,19 @@ if (Test-Path -LiteralPath $cfg) {
         Write-Host '        Not set by vibe stack. Change via /settings if undesired.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '127\.0\.0\.1:8787|grok-via-headroom' -and -not $proxyUp) {
-        Write-Host '  WARN: default grok-4.6 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
+        Write-Host '  WARN: default grok-4.7 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '127\.0\.0\.1:8788') {
         Write-Host '  WARN: config still points at :8788 (dual-proxy leftover). start-grok repairs to :8787; start-grok -StopProxy -Port 8788' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.6"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-gate"\]') {
+    if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.7"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-gate"\]') {
         Write-Host '  WARN: missing [model."grok-gate"] (:8787 alias). Re-run installer or start-grok to repair.' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match '(?m)^\s*\[model\.grok-4\.6(?:-direct)?\]\s*$') {
-        Write-Host '  WARN: unquoted [model.grok-4.6*] is ignored by Grok 1.0.3 (nested table). Use [model."grok-4.6"] / [model."grok-4.6-direct"]. Re-run installer.' -ForegroundColor Yellow
+    if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.6"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-4\.7"\]') {
+        Write-Host '  WARN: missing [model."grok-4.7"] Headroom override. Re-run installer or start-grok to repair.' -ForegroundColor Yellow
+    }
+    if ($cfgTxt -match '(?m)^\s*\[model\.grok-4\.[67](?:-direct|-build-fast)?\]\s*$') {
+        Write-Host '  WARN: unquoted [model.grok-4.7*] / [model.grok-4.6*] is ignored by Grok 1.0.3 (nested table). Use quoted [model."grok-4.7"] / [model."grok-4.7-direct"]. Re-run installer.' -ForegroundColor Yellow
     }
     $mcpCap = [regex]::Match([string]$cfgTxt, 'max_output_bytes\s*=\s*(\d+)')
     if ($mcpCap.Success) {
@@ -454,11 +457,11 @@ if (Test-Path -LiteralPath $cfg) {
     if ($effort.Success) {
         Write-Host ("  default_reasoning_effort: {0} (interactive chat; gates force high)" -f $effort.Groups[1].Value)
     }
-    if ($cfgTxt -match '(?s)\[model\."grok-4\.6"\].{0,400}env_key') {
-        Write-Host '  WARN: [model."grok-4.6"] still has env_key. Unset XAI_API_KEY => TUI waits forever. Re-run installer or start-grok repair.' -ForegroundColor Yellow
+    if ($cfgTxt -match '(?s)\[model\."grok-4\.[67]"\].{0,400}env_key') {
+        Write-Host '  WARN: Headroom model table still has env_key. Unset the XAI_API_KEY environment variable and remove env_key. Re-run installer or start-grok repair.' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match '(?m)^\s*default\s*=\s*"grok-4\.6-direct"') {
-        Write-Host '  WARN: [models].default is grok-4.6-direct (proxy bypassed). Switch to grok-4.6 after start-grok.' -ForegroundColor Yellow
+    if ($cfgTxt -match '(?m)^\s*default\s*=\s*"grok-4\.[67]-direct"') {
+        Write-Host '  WARN: [models].default is *-direct (proxy bypassed). Switch to grok-4.7 after start-grok.' -ForegroundColor Yellow
     }
     $hrMcp = [regex]::Match([string]$cfgTxt, '(?s)\[mcp_servers\.headroom\].*?enabled\s*=\s*(true|false)')
     if ($hrMcp.Success) {

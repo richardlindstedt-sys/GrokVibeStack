@@ -296,6 +296,7 @@ function Invoke-Checkov {
     return @{ Ok = $false; Ran = $false; Output = $null; ExitCode = $null }
 }
 
+# No success-stream output. "Tool actually ran" is $script:vibeToolRan (not a returned bool).
 function Run {
     param(
         [string]$cmd,
@@ -304,9 +305,10 @@ function Run {
         # style / noise tools: report but do not fail the gate
         [switch]$Advisory
     )
+    $script:vibeToolRan = $false
     if (-not (Test-ToolRunnable $cmd)) {
         if (-not $Quiet) { Write-Host "[$name] SKIPPED (not installed or broken shim)" -ForegroundColor DarkGray }
-        return $false
+        return
     }
     if (-not $Quiet) { Write-Host "`n[$name] $cmd $cmdArgs" -ForegroundColor Cyan }
     if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
@@ -332,7 +334,7 @@ function Run {
     } elseif (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
         Write-GateProgress ("scan: {0} ok" -f $name)
     }
-    return $true
+    $script:vibeToolRan = $true
 }
 
 function Run-PSScriptAnalyzer {
@@ -495,15 +497,18 @@ try {
                 '--scanners', 'vuln,secret,misconfig',
                 '--skip-dirs', '.git,.serena,node_modules,venv,.venv'
             ) + $trivyTarget
-            if (Run 'trivy' $trivyArgs 'Trivy') { Confirm-VibeVulnJob 'trivy' }
+            Run 'trivy' $trivyArgs 'Trivy'
+            if ($script:vibeToolRan) { Confirm-VibeVulnJob 'trivy' }
         }
         elseif ($job -eq 'gitleaks') {
             $glRan = $false
             if ($stagedTree) {
-                $glRan = [bool](Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)')
+                Run 'gitleaks' @('detect', '--source', $stagedTree, '--no-git', '--redact') 'Gitleaks (staged)'
+                $glRan = [bool]$script:vibeToolRan
             } else {
-                $glRan = [bool](Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks')
-                [void](Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory)
+                Run 'gitleaks' @('detect', '--source', $root, '--redact') 'Gitleaks'
+                $glRan = [bool]$script:vibeToolRan
+                Run 'gitleaks' @('detect', '--source', $root, '--no-git', '--redact') 'Gitleaks (workdir)' -Advisory
             }
             if ($glRan) { Confirm-VibeVulnJob 'gitleaks' }
         }

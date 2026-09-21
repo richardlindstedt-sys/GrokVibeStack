@@ -17,7 +17,7 @@ That will:
 
 2. Ensure caveman flag + PATH for Headroom tools  
 3. Start **Headroom proxy** on `127.0.0.1:8787` if not already running. `grok-gate` is an alias of the same proxy. Leftover `:8788`: `start-grok -StopProxy -Port 8788`.  
-4. Launch **Grok** with model `grok-4.6` (overridden to Headroom; traffic compressed)  
+4. Launch **Grok** with model `grok-4.7` (overridden to Headroom; traffic compressed)  
 5. Caveman rules + RTK rules + token hygiene + Headroom MCP still load from `~/.grok` as usual  
 
 ### Useful flags
@@ -34,7 +34,8 @@ grok-mcp-coding / grok-mcp-personal
 start-grok -SkipRtk         # skip ensure-rtk (not recommended)
 start-grok --help           # whatever you pass after still goes to grok if not a start-grok switch
 start-grok -m grok-build    # pass through to grok (skips default model inject if -m present)
-start-grok -m grok-4.6-direct  # vanilla Grok 4.6, no Headroom
+start-grok -m grok-4.7-direct  # vanilla Grok 4.7, no Headroom
+start-grok -m grok-4.6            # Grok 4.6 via the same Headroom proxy
 ```
 
 Liveness is TCP listen (`GetActiveTcpListeners`). `/readyz` blocks during SSE — do not treat HTTP fail as a dead proxy. Do not restart `:8787` while a review panel is running.
@@ -51,7 +52,7 @@ Shims live on PATH via `~/.grok/bin`:
 
 | Piece | Role |
 |-------|------|
-| start-grok | One-shot launcher (rtk + proxy + grok -m grok-4.6 via Headroom) |
+| start-grok | One-shot launcher (rtk + proxy + grok -m grok-4.7 via Headroom) |
 | **rtk** | Compresses noisy shell output before it hits context |
 | caveman skill + rules | Ultra-terse chat output |
 | token-efficiency + rtk rules + token-save skill | Hygiene + stack guidance |
@@ -59,7 +60,7 @@ Shims live on PATH via `~/.grok/bin`:
 | hooks/token-saving.json | SessionStart + PostToolUse logging |
 | Headroom CLI + venv | Compression proxy + tools |
 | Headroom MCP | On-demand `headroom__*` tools. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on). |
-| grok-4.6 Headroom override | Quoted `[model."grok-4.6"]` and `[model."grok-gate"]` → `:8787`. Vanilla: `[model."grok-4.6-direct"]` |
+| grok-4.7 Headroom override | Quoted `[model."grok-4.7"]` (default) + `[model."grok-4.6"]` + `[model."grok-gate"]` → `:8787`. Vanilla: `[model."grok-4.7-direct"]` |
 
 ## Agent shell habit
 

@@ -214,6 +214,42 @@ if ($scanSrc -match 'checkout-index' -and ($scanSrc -match 'Save-ScanPassCache' 
 } else {
     Bad 'scans missing checkout-index / scan cache / Scope'
 }
+$scanTok = $null
+$scanErr = $null
+$scanAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-scans.ps1'), [ref]$scanTok, [ref]$scanErr)
+$runAst = $scanAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Run' }, $false)
+$boolReturn = @()
+if ($runAst) {
+    $boolReturn = @($runAst.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.ReturnStatementAst] -and $n.Pipeline -and ("$($n.Pipeline)" -match '^\$?(true|false)$')
+        }, $true))
+}
+$glSnap = [regex]::Match($scanSrc, '(?s)else \{\s*Run ''gitleaks''.*?\$glRan = \[bool\]\$script:vibeToolRan\s*Run ''gitleaks''.*?-Advisory').Success
+$probePath = Join-Path ([System.IO.Path]::GetTempPath()) ('vibe-run-contract-' + [guid]::NewGuid().ToString('n').Substring(0, 8) + '.ps1')
+$probeOk = $false
+if ($runAst -and $boolReturn.Count -eq 0) {
+    @(
+        'function Test-ToolRunnable { param([string]$cmd) return $cmd -eq ''cmd.exe'' }'
+        '$Quiet = $true'
+        '$script:advisory = 0'
+        '$script:failed = 0'
+        $runAst.Extent.Text
+        '$missing = @(Run ''not-installed-tool'' @() ''Missing'')'
+        '$ranMissing = [bool]$script:vibeToolRan'
+        '$noisy = @(Run ''cmd.exe'' @(''/c'',''echo'',''scan-stdout-line'') ''Cmd'')'
+        '$ranOk = [bool]$script:vibeToolRan'
+        'if ($missing.Count -eq 0 -and -not $ranMissing -and $noisy.Count -eq 0 -and $ranOk) { ''contract-ok'' } else { ''contract-bad'' }'
+    ) | Set-Content -LiteralPath $probePath -Encoding utf8
+    $probeOut = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $probePath)
+    Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+    $probeOk = ($probeOut -contains 'contract-ok')
+}
+if ($runAst -and $boolReturn.Count -eq 0 -and $glSnap -and $probeOk -and $scanSrc -match 'if \(\$script:vibeToolRan\) \{ Confirm-VibeVulnJob ''trivy'' \}') {
+    Ok 'scans: Run emits nothing; vibeToolRan only after a real invoke; gitleaks advisory cannot clobber the snapshot'
+} else {
+    Bad 'scans Run success-stream contract missing (bool return, leaked output, or gitleaks snapshot)'
+}
 if ($cacheSrc -and $cacheSrc -match 'ScopeUsed -ne ''Full''' -and $cacheSrc -match 'cachedScope -ne ''Full''' -and $cacheSrc -match 'Normalize-ScanCacheCwd' -and $cacheSrc -match 'Test-ScanPathsWholeTree' -and $cacheSrc -match 'ScanPassScannerSet' -and $cacheSrc -match 'scannerSet' -and $prePushSrc -match 'scan-pass-cache\.ps1' -and $prePushSrc -match 'Test-ScanPassCache') {
     Ok 'scan-pass cache: Full-only save + cwd/scope/scannerSet match; pre-push shares Test-ScanPassCache'
 } else {
@@ -1181,10 +1217,10 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.6'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'grok-4\\.6\|grok-gate\|grok-via-headroom' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
-    Ok 'review: grok-4.6 :8787 one proxy; stream fail retries Headroom; listen-only preflight'
+if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.7'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'function Test-VibeNeedsHeadroomProxy' -and $rawReview -match 'function Get-VibeVanillaHatchModel' -and $rawReview -match 'grok-4.7-direct' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+    Ok 'review: grok-4.7 :8787 one proxy; stream fail retries Headroom; listen-only preflight'
 } else {
-    Bad 'review missing grok-4.6 :8787 / Headroom retry / listen-only preflight'
+    Bad 'review missing grok-4.7 :8787 / Headroom retry / listen-only preflight'
 }
 $hatchFns = [regex]::Matches($rawReview, '(?ms)^function Get-Vibe(?:PreflightHatch|StreamRetry)Kind \{.*?^\}')
 if ($hatchFns.Count -eq 2) {
@@ -1249,10 +1285,10 @@ if ($vtFreeze -match '(?m)^checkov==3\.3\.19' -and $vtFreeze -match '(?m)^ruff==
     Bad 'vibe-tools-freeze.txt stale vs floors / asteval override'
 }
 $snip = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -Raw
-if ($snip -match '\[model\."grok-4.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8787' -and $snip -notmatch '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4.6-direct"\]' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.6' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
-    Ok 'config: quoted grok-4.6 + grok-gate tables, no env_key (session auth)'
+if ($snip -match '\[model\."grok-4.7"\]' -and $snip -match '\[model\."grok-4.6"\]' -and $snip -match '\[model\."grok-gate"\]' -and $snip -match '127\.0\.0\.1:8787' -and $snip -notmatch '127\.0\.0\.1:8788' -and $snip -match '\[model\."grok-4.7-direct"\]' -and $snip -match '\[model\."grok-4.6-direct"\]' -and $snip -match 'default = "grok-4.7"' -and $snip -notmatch '(?m)^\s*\[model\.grok-4\.[67]' -and $snip -notmatch '(?m)^\s*env_key\s*=' -and $snip -match 'Do NOT set env_key') {
+    Ok 'config: quoted grok-4.7 + grok-4.6 + grok-gate tables, no env_key (session auth)'
 } else {
-    Bad 'config-snippet missing quoted grok-4.6 / grok-gate tables or still has env_key'
+    Bad 'config-snippet missing quoted grok-4.7 / grok-4.6 / grok-gate tables or still has env_key'
 }
 if ($snip -match 'Optional off' -and $snip -match 'enabled = true') {
     Ok 'config: Headroom MCP default on, optional off documented'
@@ -1279,11 +1315,14 @@ max_output_bytes = 20000
 command = 'old'
 enabled = true
 
+[model."grok-4.7"]
+base_url = "http://127.0.0.1:8787/v1"
+
 [model."grok-4.6"]
 base_url = "http://127.0.0.1:8787/v1"
 
 [models]
-default = "grok-4.6"
+default = "grok-4.7"
 "@
     $snippetText = Get-VibeManagedSnippet -SnippetPath (Join-Path $RepoRoot 'assets\config\config-snippet.toml') -HeadroomCmd 'C:\hr.cmd' -SerenaExe 'C:\serena.exe' -SerenaEnabled $true
     $splitN = Split-VibeTomlLines "a`nb`nc"
@@ -1295,18 +1334,21 @@ default = "grok-4.6"
     }
     $docSnip = ConvertFrom-VibeTomlDocument -Raw $snippetText
     $secNames = @($docSnip.Sections | ForEach-Object { [string]$_.Name })
-    if ($secNames -contains 'session' -and $secNames -contains 'model."grok-4.6"' -and $secNames -contains 'model."grok-gate"') {
-        Ok 'ConvertFrom-VibeTomlDocument: snippet has session + quoted grok-4.6 + grok-gate tables'
+    if ($secNames -contains 'session' -and $secNames -contains 'model."grok-4.7"' -and $secNames -contains 'model."grok-4.6"' -and $secNames -contains 'model."grok-gate"') {
+        Ok 'ConvertFrom-VibeTomlDocument: snippet has session + quoted grok-4.7 + grok-4.6 + grok-gate tables'
     } else {
         Bad ("parser saw {0} sections: {1}" -f $secNames.Count, ($secNames -join ','))
     }
     $snipCheck = Test-VibeToml -Raw $snippetText
-    if ($snipCheck.Ok -and $snipCheck.HasHeadroomOverride -and $snipCheck.HasGateOverride) {
-        Ok 'Test-VibeToml: managed snippet (grok-4.6 + grok-gate on :8787) is Ok'
+    if ($snipCheck.Ok -and $snipCheck.HasHeadroomOverride -and $snipCheck.HasGrok46Override -and $snipCheck.HasGateOverride) {
+        Ok 'Test-VibeToml: managed snippet (grok-4.7 + grok-4.6 + grok-gate on :8787) is Ok'
     } else {
         Bad ("Test-VibeToml rejects managed snippet: {0}" -f ($snipCheck.Errors -join '; '))
     }
     $staleGate = @"
+[model."grok-4.7"]
+base_url = "http://127.0.0.1:8787/v1"
+
 [model."grok-4.6"]
 base_url = "http://127.0.0.1:8787/v1"
 
@@ -1338,7 +1380,7 @@ base_url = "http://127.0.0.1:8788/v1"
     $mergedDup = Merge-VibeToml -Raw $preDup -Snippet $snippetText
     $dupCheck = Test-VibeToml -Raw $mergedDup
     $sessionHits = @([regex]::Matches($mergedDup, '(?m)^\s*\[session\]\s*$'))
-    $modelHits = @([regex]::Matches($mergedDup, '(?m)^\s*\[model\."grok-4\.6"\]\s*$'))
+    $modelHits = @([regex]::Matches($mergedDup, '(?m)^\s*\[model\."grok-4\.7"\]\s*$'))
     if ($dupCheck.Ok -and $sessionHits.Count -eq 1 -and $modelHits.Count -eq 1) {
         Ok 'config merge: rewritten tables + appended managed block collapses to one copy'
     } else {
@@ -1421,7 +1463,7 @@ base_url = "http://127.0.0.1:8787/v1"
     }
     $emptyMerged = Merge-VibeToml -Raw '' -Snippet $snippetText
     $emptyCheck = Test-VibeToml -Raw $emptyMerged
-    if ($emptyCheck.Ok -and ($emptyMerged -match '\[model\."grok-4\.6"\]')) {
+    if ($emptyCheck.Ok -and ($emptyMerged -match '\[model\."grok-4\.7"\]') -and ($emptyMerged -match '\[model\."grok-4\.6"\]')) {
         Ok 'config merge: empty/missing config.toml produces valid Headroom file'
     } else {
         Bad ("empty merge ok={0} err={1}" -f $emptyCheck.Ok, ($emptyCheck.Errors -join '; '))
@@ -1509,7 +1551,7 @@ privacy_banner_acked = "2026-08-21T07:31:59Z"
 "@
     $mergedStub = Merge-VibeToml -Raw $grokStub -Snippet $snippetText
     $stubCheck = Test-VibeToml -Raw $mergedStub
-    if ($stubCheck.Ok -and ($mergedStub -match '\[model\."grok-4\.6"\]') -and ($mergedStub -match '\[marketplace\]') -and ($mergedStub -match 'permission_mode = "always-approve"')) {
+    if ($stubCheck.Ok -and ($mergedStub -match '\[model\."grok-4\.7"\]') -and ($mergedStub -match '\[marketplace\]') -and ($mergedStub -match 'permission_mode = "always-approve"')) {
         Ok 'config merge: Grok rewrite stub (marketplace/ui/privacy) gets Headroom tables'
     } else {
         Bad ("Grok-stub merge ok={0} err={1}" -f $stubCheck.Ok, ($stubCheck.Errors -join '; '))

@@ -6,8 +6,9 @@
 .DESCRIPTION
   From any directory:
     start-grok
-    start-grok -m grok-build          # override model (skips default grok-4.6 / Headroom)
-    start-grok -m grok-4.6-direct     # vanilla Grok 4.6, no Headroom proxy
+    start-grok -m grok-build          # override model (skips default grok-4.7 / Headroom)
+    start-grok -m grok-4.7-direct     # vanilla Grok 4.7, no Headroom proxy
+    start-grok -m grok-4.6            # Grok 4.6 via the same Headroom proxy
     start-grok -NoProxy               # skip Headroom proxy (MCP + rtk + caveman only)
     start-grok -ProxyOnly             # only ensure proxy is up, do not launch grok
     start-grok -ProxyOnly -Port 8788 -NoLogonKeeper  # dedicated review proxy
@@ -513,7 +514,7 @@ function Show-Status {
     if ((Test-Path -LiteralPath $cfgPath) -and (Test-GrokTomlHelperLoaded)) {
         $cfgCheck = Test-VibeToml -Raw (Read-Utf8NoBomFile -Path $cfgPath)
         if ($cfgCheck.Ok) {
-            $cfgLine = 'ok (quoted grok-4.6 + grok-gate alias -> :8787, no duplicate tables)'
+            $cfgLine = 'ok (quoted grok-4.7 + grok-4.6 + grok-gate alias -> :8787, no duplicate tables)'
         } else {
             $cfgLine = ('INVALID: {0}' -f ($cfgCheck.Errors -join '; '))
         }
@@ -530,7 +531,7 @@ function Show-Status {
     }
     Write-Host "MCP profile:  $mcpProf  (grok-mcp-coding / grok-mcp-personal / start-grok -McpProfile)"
     Write-Host "MCP:          configured in ~/.grok/config.toml (Grok starts mcp serve)"
-    $modelHint = if ($Port -eq 8787) { 'grok-4.6 (chat Headroom)' } else { 'grok-gate (review Headroom)' }
+    $modelHint = if ($Port -eq 8787) { 'grok-4.7 (chat Headroom)' } else { 'grok-gate (review Headroom)' }
     Write-Host "model:        $modelHint -> http://127.0.0.1:$Port/v1"
     Write-Host "upstream:     $(Resolve-HeadroomUpstream)"
     Write-Host "proxy flags:  token + lossless + code-aware + ratio 0.35 + no-http2 + no-rate-limit"
@@ -853,7 +854,7 @@ if (-not $NoProxy) {
 if ($ProxyOnly) {
     if (-not $Quiet) {
         Show-Status
-        Write-Ok "Proxy-only done. Run: start-grok   (or grok -m grok-4.6)"
+        Write-Ok "Proxy-only done. Run: start-grok   (or grok -m grok-4.7)"
     }
     exit 0
 }
@@ -871,7 +872,7 @@ if (-not $NoProxy) {
         }
     }
     if (-not $hasModel) {
-        $launch.Add('-m'); $launch.Add('grok-4.6')
+        $launch.Add('-m'); $launch.Add('grok-4.7')
     }
 }
 

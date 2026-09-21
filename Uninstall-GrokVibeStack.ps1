@@ -244,8 +244,12 @@ function Remove-ManagedConfigBlock {
         # whole [session]/[features]/[mcp]/[models] (user + Grok share those).
         $stackTables = @(
             'mcp_servers.headroom', 'mcp_servers.serena',
-            'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+            'model."grok-4.7"', 'model.grok-4.7',
+            'model."grok-4.6"', 'model.grok-4.6',
+            'model."grok-4.7-build-fast"', 'model.grok-4.7-build-fast',
+            'model.grok-via-headroom',
             'model."grok-gate"', 'model.grok-gate',
+            'model."grok-4.7-direct"', 'model.grok-4.7-direct',
             'model."grok-4.6-direct"', 'model.grok-4.6-direct'
         )
         if (Get-Command Remove-TomlSections -ErrorAction SilentlyContinue) {

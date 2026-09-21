@@ -16,7 +16,7 @@ user-invocable: true
 3. **Always-on rules** - `token-efficiency.md` + `caveman.md` + `rtk.md`.
 4. **Context hygiene** - grep before read; subagents for explore; no full-file dumps.
 5. **MCP cap** - large MCP results truncated (`[mcp] max_output_bytes=20000`).
-6. **Headroom proxy** - `grok-4.6` and `grok-gate` on `:8787` (one proxy, gates sequential). `--mode token --lossless --code-aware --target-ratio 0.35` + `--no-ccr-proactive-expansion`.
+6. **Headroom proxy** - `grok-4.7` (default), `grok-4.6`, and `grok-gate` on `:8787` (one proxy, gates sequential). `--mode token --lossless --code-aware --target-ratio 0.35` + `--no-ccr-proactive-expansion`.
 7. **Headroom MCP** - `headroom__*` tools for on-demand compress/retrieve. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
 8. **Compaction** - **55%** auto + two-pass.
 
@@ -38,7 +38,7 @@ user-invocable: true
 From any folder:
 
 ```powershell
-start-grok                 # ensure rtk + Headroom proxy + grok -m grok-4.6
+start-grok                 # ensure rtk + Headroom proxy + grok -m grok-4.7
 start-grok -Status
 start-grok -StopProxy
 start-grok -NoProxy        # caveman + rtk + MCP only (no proxy)
@@ -46,7 +46,7 @@ start-grok -McpProfile coding  # Serena + Headroom; disable mail/calendar MCP
 grok-mcp-coding / grok-mcp-personal
 ```
 
-Default `grok-4.6` is overridden to the Headroom proxy on `127.0.0.1:8787`. `grok-gate` is the same proxy. Use `start-grok` (not bare `grok`) for normal sessions. Vanilla: `start-grok -m grok-4.6-direct`.
+Default `grok-4.7` is overridden to the Headroom proxy on `127.0.0.1:8787`. `grok-4.6` is the same proxy. `grok-gate` is the same proxy. Use `start-grok` (not bare `grok`) for normal sessions. Vanilla: `start-grok -m grok-4.7-direct`.
 
 Proxy logs: `~/.grok/token-saving/logs/headroom-proxy.*`  
 RTK binary: `~/.grok/bin/rtk.exe` (ensure: `token-saving/scripts/ensure-rtk.ps1`)

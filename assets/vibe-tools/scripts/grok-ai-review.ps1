@@ -26,7 +26,7 @@
 param(
     [switch]$NoScans,
     [string]$DiffOverride,
-    [string]$Model = 'grok-4.6',
+    [string]$Model = 'grok-4.7',
     # Empty = use profile default (fast=medium, standard/strict=high)
     [string]$ReasoningEffort = '',
     [int]$ProxyPort = 8787,
@@ -217,6 +217,17 @@ function Apply-PathAwareProfile {
     }
 }
 
+function Test-VibeNeedsHeadroomProxy([string]$ModelName) {
+    if ([string]::IsNullOrWhiteSpace($ModelName)) { return $false }
+    if ($ModelName -match '(?i)direct') { return $false }
+    return ($ModelName -match '(?i)headroom|grok-gate|8787|8788') -or ($ModelName -match '(?i)^grok-4\.(6|7)(-build-fast)?$')
+}
+
+function Get-VibeVanillaHatchModel([string]$ModelName) {
+    if ($ModelName -match '(?i)grok-4\.6') { return 'grok-4.6-direct' }
+    return 'grok-4.7-direct'
+}
+
 # Resolve base profile name first
 $baseName = $GateProfile
 if (-not $baseName) { $baseName = $env:VIBE_GATE_PROFILE }
@@ -274,8 +285,7 @@ if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.No
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
     # Headroom chat proxy cannot take parallel SSE, on any --port (not only :8787).
     $mn = [string]$Model
-    $sharesChatProxy = ($mn -match '(?i)^(grok-4\.6|grok-gate|grok-via-headroom)$')
-    if ($mn -match '(?i)direct') { $sharesChatProxy = $false }
+    $sharesChatProxy = Test-VibeNeedsHeadroomProxy $mn
     if ($sharesChatProxy) {
         $SequentialReviewers = $true
     } elseif ($script:ResolvedProfile.SequentialDefault) {
@@ -365,12 +375,14 @@ function Resolve-GrokExe {
 }
 
 function Test-VanillaHatchEndpoint {
+    param([string]$HatchModel = 'grok-4.7-direct')
     # Quoted table + non-loopback https base_url. Listing `grok models` is not enough.
     $cfg = Join-Path $env:USERPROFILE '.grok\config.toml'
     if (-not (Test-Path -LiteralPath $cfg)) { return $false }
     $txt = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
     if ([string]::IsNullOrWhiteSpace($txt)) { return $false }
-    $sec = [regex]::Match($txt, '(?ms)^\s*\[model\."grok-4\.6-direct"\]\s*$(.*?)(?=^\s*\[|\z)')
+    $id = [regex]::Escape($HatchModel)
+    $sec = [regex]::Match($txt, ('(?ms)^\s*\[model\."{0}"\]\s*$(.*?)(?=^\s*\[|\z)' -f $id))
     if (-not $sec.Success) { return $false }
     $url = [regex]::Match($sec.Groups[1].Value, 'base_url\s*=\s*"(https://[^"]+)"')
     if (-not $url.Success) { return $false }
@@ -385,8 +397,8 @@ function Test-ReviewPreflight {
         return $null
     }
     $resolvedModel = $ModelName
-    $hatch = 'grok-4.6-direct'
-    $needsProxy = ($ModelName -match 'headroom|grok-gate|8787|8788') -or ($ModelName -eq 'grok-4.6')
+    $hatch = Get-VibeVanillaHatchModel $ModelName
+    $needsProxy = Test-VibeNeedsHeadroomProxy $ModelName
     if ($needsProxy) {
         if (-not (Test-ProxyUsable $Port)) {
             $startGrok = Join-Path $env:USERPROFILE '.grok\token-saving\scripts\start-grok.ps1'
@@ -406,10 +418,10 @@ function Test-ReviewPreflight {
             }
         }
         if (-not (Test-ProxyUsable $Port)) {
-            # Unquoted [model.grok-4.6-direct] never registers (TOML nest).
+            # Unquoted [model.grok-4.7-direct] never registers (TOML nest).
             # Require quoted table with its own official https base_url (not loopback).
-            if (-not (Test-VanillaHatchEndpoint)) {
-                Write-GateFail "Headroom proxy down and vanilla hatch '$hatch' has no official base_url. Quote [model.`"$hatch`"] in ~/.grok/config.toml (re-run installer). Do not use grok-4.6 (Headroom)."
+            if (-not (Test-VanillaHatchEndpoint -HatchModel $hatch)) {
+                Write-GateFail "Headroom proxy down and vanilla hatch '$hatch' has no official base_url. Quote [model.`"$hatch`"] in ~/.grok/config.toml (re-run installer). Do not use grok-4.7 (Headroom)."
                 return $null
             }
             Write-Host "Proxy still down - falling back to model $hatch (official endpoint)." -ForegroundColor Yellow
@@ -674,13 +686,14 @@ function Invoke-GrokHeadless {
         [switch]$NoHatchRetry
     )
 
-    $needsProxy = ($ModelName -match 'headroom|grok-gate|8787|8788') -or ($ModelName -eq 'grok-4.6')
+    $needsProxy = Test-VibeNeedsHeadroomProxy $ModelName
+    $hatch = Get-VibeVanillaHatchModel $ModelName
     $preflightUsable = [bool](Test-ProxyUsable $ProxyPort)
     $vanillaOk = $false
-    if ($needsProxy -and -not $NoHatchRetry -and -not $preflightUsable) { $vanillaOk = [bool](Test-VanillaHatchEndpoint) }
+    if ($needsProxy -and -not $NoHatchRetry -and -not $preflightUsable) { $vanillaOk = [bool](Test-VanillaHatchEndpoint -HatchModel $hatch) }
     if ((Get-VibePreflightHatchKind -NeedsProxy $needsProxy -NoHatchRetry ([bool]$NoHatchRetry) -ProxyUsable $preflightUsable -VanillaHatchOk $vanillaOk) -eq 'direct') {
-        Write-Host ("  proxy down - {0} using grok-4.6-direct" -f $Label) -ForegroundColor Yellow
-        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName 'grok-4.6-direct' -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+        Write-Host ("  proxy down - {0} using {1}" -f $Label, $hatch) -ForegroundColor Yellow
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $hatch -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
     }
 
     $argList = [System.Collections.Generic.List[string]]::new()
@@ -1270,7 +1283,7 @@ function Invoke-ReviewerPanel {
                 $sw = [System.Diagnostics.Stopwatch]::StartNew()
                 try {
                     $r = Invoke-One $Model
-                    $needsProxy = ($Model -match 'headroom|grok-gate|8787|8788') -or ($Model -eq 'grok-4.6')
+                    $needsProxy = Test-VibeNeedsHeadroomProxy $Model
                     $ok = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
                     $proxyStreamFail = ($r.Text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $r.Text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
                     if ((-not $ok -or $proxyStreamFail) -and $needsProxy) {

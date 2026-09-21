@@ -31,38 +31,60 @@ args = [
 enabled = true
 startup_timeout_sec = 120
 
-# Quote dotted ids. Unquoted [model.grok-4.6] is parsed as model.grok-4 + field "6"
+# Quote dotted ids. Unquoted [model.grok-4.7] is parsed as model.grok-4 + field "7"
 # (Grok 1.0.3 inspect: unknown-field) so the table never registers.
-# Catalog default is grok-4.6 (beats [models].default). Override so default hits Headroom.
-# Do NOT set env_key. Grok then uses auth.json like grok-4.6-direct.
+# Catalog default is grok-4.7 (beats [models].default). Override so default hits Headroom.
+# Keep grok-4.6 Headroom too so picker 4.6 still compresses.
+# Do NOT set env_key. Grok then uses auth.json like grok-4.7-direct.
 # env_key = XAI_API_KEY makes the TUI wait forever when that env is unset.
+[model."grok-4.7"]
+base_url = "http://127.0.0.1:8787/v1"
+api_backend = "responses"
+name = "Grok 4.7 + Headroom proxy (max savings)"
+description = "Grok 4.7 via local Headroom proxy port 8787 - max token compression profile"
+
 [model."grok-4.6"]
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
-name = "Grok 4.6 + Headroom proxy (max savings)"
-description = "Grok 4.6 via local Headroom proxy port 8787 - max token compression profile"
+name = "Grok 4.6 + Headroom proxy"
+description = "Grok 4.6 via local Headroom proxy port 8787"
+
+# Grok Build / Cursor Fast variant (2x token rates; not on the public xAI API).
+[model."grok-4.7-build-fast"]
+base_url = "http://127.0.0.1:8787/v1"
+api_backend = "responses"
+name = "Grok 4.7 Fast + Headroom proxy"
+description = "Grok 4.7 Fast via Headroom :8787 (Grok Build / Cursor; 2x token rates)"
 
 # One Headroom. Dual :8788 starved/killed the chat proxy and hatched gates to direct.
 # grok-gate is an alias of :8787. Gates run sequential on this proxy.
 [model."grok-gate"]
-model = "grok-4.6"
+model = "grok-4.7"
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
-name = "Grok 4.6 + Headroom (gate alias)"
-description = "Same Headroom as grok-4.6 (:8787). One proxy. Gates sequential."
+name = "Grok 4.7 + Headroom (gate alias)"
+description = "Same Headroom as grok-4.7 (:8787). One proxy. Gates sequential."
 context_window = 500000
 
 # Explicit alias (older sessions / start-grok -m grok-via-headroom)
 [model.grok-via-headroom]
-model = "grok-4.6"
+model = "grok-4.7"
 base_url = "http://127.0.0.1:8787/v1"
 api_backend = "responses"
-name = "Grok 4.6 + Headroom proxy (alias)"
-description = "Same Headroom proxy as the grok-4.6 override; kept for -m grok-via-headroom"
+name = "Grok 4.7 + Headroom proxy (alias)"
+description = "Same Headroom proxy as the grok-4.7 override; kept for -m grok-via-headroom"
 context_window = 500000
 
-# Vanilla hatch (no proxy). Quoted table is required; -m grok-4.6-direct is honored.
+# Vanilla hatch (no proxy). Quoted table is required; -m grok-4.7-direct is honored.
 # model= is the API id only; this table keeps its own official base_url.
+[model."grok-4.7-direct"]
+model = "grok-4.7"
+base_url = "https://cli-chat-proxy.grok.com/v1"
+api_backend = "responses"
+name = "Grok 4.7 (direct, no Headroom)"
+description = "Official Grok 4.7, bypasses local Headroom proxy"
+context_window = 500000
+
 [model."grok-4.6-direct"]
 model = "grok-4.6"
 base_url = "https://cli-chat-proxy.grok.com/v1"
@@ -72,7 +94,7 @@ description = "Official Grok 4.6, bypasses local Headroom proxy"
 context_window = 500000
 
 [models]
-default = "grok-4.6"
+default = "grok-4.7"
 # medium for interactive chat savings; commit/push AI review forces high via grok-ai-review.ps1
 default_reasoning_effort = "medium"
 # --- grok-vibe-stack managed block (end) ---

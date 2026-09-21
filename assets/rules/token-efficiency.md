@@ -4,7 +4,7 @@ Save context and tokens without losing correctness.
 
 ## Stack (this machine)
 
-- **Headroom proxy** via `start-grok` / built-in `grok-4.6` override on `:8787` (one proxy; gates sequential on the same port). Target keep-ratio **0.35**, lossless + code-aware. `grok-4.6-direct` is emergency only if `:8787` is down.
+- **Headroom proxy** via `start-grok` / built-in `grok-4.7` override on `:8787` (one proxy; gates sequential on the same port). Target keep-ratio **0.35**, lossless + code-aware. `grok-4.7-direct` is emergency only if `:8787` is down. `grok-4.6` still Headroom.
 - **RTK** on noisy shell — enforced by PreToolUse hook (`run-rtk-enforce.ps1`)
 - **Caveman ultra** for chat output
 - **Compact** at **55%** context + two-pass
@@ -12,7 +12,7 @@ Save context and tokens without losing correctness.
 - **Coding MCP profile:** `grok-mcp-coding` / `start-grok -McpProfile coding` disables mail/calendar/drive/tasks (tool schemas every turn). Restore: `grok-mcp-personal`.
 - Interactive reasoning default **medium**; AI gates are **fail-closed**. Effort by profile: **standard/strict = high**, **fast = medium** (push / docs-only)
 - After install/hook **file changes**: restart Grok, or once run **`/hooks` then `r`** in an already-open session. New sessions load hooks from disk automatically (not every session).
-- Prefer `start-grok` (proxy up); bare `grok` with default `grok-4.6` fails if proxy down. Vanilla: `-m grok-4.6-direct`.
+- Prefer `start-grok` (proxy up); bare `grok` with default `grok-4.7` fails if proxy down. Vanilla: `-m grok-4.7-direct`.
 
 ## Read path
 

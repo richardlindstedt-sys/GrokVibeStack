@@ -1,5 +1,5 @@
 # Headroom proxy + RTK installer + structural search
-# Floors = latest verified on 2026-09-19. ast-grep 0.44.1 is excluded by headroom-ai.
+# Floors = latest verified on 2026-09-21. ast-grep 0.44.1 is excluded by headroom-ai.
 # 0.35 502'd Grok /v1/responses SSE (TUI Retrying). 0.36 adapts those 200 streams.
 # [proxy] extra is required in 0.36 (CLI refuses to start without it).
 # transformers 5.17 requires tokenizers>=0.23.1,<0.24.0 (old <=0.23.0 pin is unsatisfiable).

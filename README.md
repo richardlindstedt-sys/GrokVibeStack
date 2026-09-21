@@ -20,7 +20,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.3.1** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.4.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -69,7 +69,7 @@ It is still not a proof of correctness and not a human pentest. It *is* the diff
 | Windows 10/11 | Primary supported OS |
 | Grok Build CLI | Installed and logged in; this repo does **not** ship `grok.exe` |
 | Network | winget / npm / pip / optional Serena on first install; AI gates need model access |
-| Headroom proxy | One chat proxy: `grok-4.6` / `grok-gate` / `grok-via-headroom` (default `:8787`). Multi-reviewer SSE is **sequential on any Headroom port**. `grok-4.6-direct` skips the proxy and may run reviewers in parallel. |
+| Headroom proxy | One chat proxy: `grok-4.7` (default) / `grok-4.6` / `grok-4.7-build-fast` / `grok-gate` / `grok-via-headroom` (default `:8787`). Multi-reviewer SSE is **sequential on any Headroom port**. `grok-4.7-direct` / `grok-4.6-direct` skip the proxy and may run reviewers in parallel. |
 | Admin (sometimes) | winget package installs may prompt; user-scope PATH preferred |
 
 ---
@@ -210,7 +210,7 @@ scans → reviewer panel (by profile) → arbiter → blockers? implementer fix 
 | **standard** | correctness + security + simplicity | 2 | on | high | pre-commit, `vibe-review` |
 | **strict** | same as standard | 3 | on | high | high-risk / **version-tag push** / `vibe-review -Profile strict` |
 
-Hooks use `-AutoProfile` (docs-only → fast; sensitive paths keep/add security). On **strict** or sensitive paths, security `next` for exploitable/secret issues is raised to **blocker** language. Simplicity also hunts clear quadratic / unbounded work. Scans: staged-first on commit (`-Scope Auto`); full on push with short scan-pass cache. Headroom-backed models (`grok-4.6`, `grok-gate`, `grok-via-headroom`) run the reviewer panel **sequentially on any proxy port**.
+Hooks use `-AutoProfile` (docs-only → fast; sensitive paths keep/add security). On **strict** or sensitive paths, security `next` for exploitable/secret issues is raised to **blocker** language. Simplicity also hunts clear quadratic / unbounded work. Scans: staged-first on commit (`-Scope Auto`); full on push with short scan-pass cache. Headroom-backed models (`grok-4.7`, `grok-4.6`, `grok-4.7-build-fast`, `grok-gate`, `grok-via-headroom`) run the reviewer panel **sequentially on any proxy port**.
 
 ```powershell
 vibe-review
@@ -287,7 +287,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ### After install
 
 1. Open a **new** terminal (PATH refresh).  
-2. `start-grok` (one Headroom `:8787`; built-in `grok-4.6` and `grok-gate` share it). Vanilla: `start-grok -m grok-4.6-direct`.  
+2. `start-grok` (one Headroom `:8787`; built-in `grok-4.7` and `grok-gate` share it; `grok-4.6` still Headroom). Vanilla: `start-grok -m grok-4.7-direct`.  
    Headroom models stay sequential on **any** `--port`. Leftover dual `:8788`: `start-grok -StopProxy -Port 8788`.  
    Liveness is **TCP listen** (`GetActiveTcpListeners` + `GetExtendedTcpTable` LISTEN PIDs, IPv4 and IPv6). `/readyz` blocks during SSE — do **not** restart the proxy because HTTP looks down.  
    Cwd has `.git` but no vibe pre-commit: `start-grok` / `doctor` print `start-grok -BootstrapRepo` (no silent install).
@@ -319,7 +319,7 @@ Optional aggressive flags (read script help first): `-RemoveWingetPackages`, `-R
 ## Day-to-day commands
 
 ```powershell
-start-grok                          # Headroom :8787 + Grok (grok-4.6; grok-gate alias)
+start-grok                          # Headroom :8787 + Grok (grok-4.7; grok-gate alias)
 start-grok -Status
 start-grok -McpProfile coding       # deny mail/calendar/drive/tasks; keep Serena + Headroom
 start-grok -BootstrapRepo           # hooks + Serena yml + AGENTS stub in cwd (not silent)

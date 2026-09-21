@@ -11,15 +11,19 @@
   Merge is key-level for tables Grok/user share ([session], [features], [mcp],
   [models]): only stack keys are written. User keys and unrelated tables
   ([ui], [marketplace], [privacy], custom models/MCP) stay. Stack-only tables
-  (Headroom/Serena MCP, grok-4.6 overrides) are replaced as a whole.
+  (Headroom/Serena MCP, grok-4.7/4.6 overrides) are replaced as a whole.
 #>
 
 function Get-VibeOwnedTomlSections {
     return @(
         'session', 'features', 'mcp',
         'mcp_servers.headroom', 'mcp_servers.serena',
-        'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+        'model."grok-4.7"', 'model.grok-4.7',
+        'model."grok-4.6"', 'model.grok-4.6',
+        'model."grok-4.7-build-fast"', 'model.grok-4.7-build-fast',
+        'model.grok-via-headroom',
         'model."grok-gate"', 'model.grok-gate',
+        'model."grok-4.7-direct"', 'model.grok-4.7-direct',
         'model."grok-4.6-direct"', 'model.grok-4.6-direct', 'models'
     )
 }
@@ -31,8 +35,12 @@ function Get-VibeSharedTomlTables {
 function Get-VibeStackOnlyTomlTables {
     return @(
         'mcp_servers.headroom', 'mcp_servers.serena',
-        'model."grok-4.6"', 'model.grok-4.6', 'model.grok-via-headroom',
+        'model."grok-4.7"', 'model.grok-4.7',
+        'model."grok-4.6"', 'model.grok-4.6',
+        'model."grok-4.7-build-fast"', 'model.grok-4.7-build-fast',
+        'model.grok-via-headroom',
         'model."grok-gate"', 'model.grok-gate',
+        'model."grok-4.7-direct"', 'model.grok-4.7-direct',
         'model."grok-4.6-direct"', 'model.grok-4.6-direct'
     )
 }
@@ -40,7 +48,9 @@ function Get-VibeStackOnlyTomlTables {
 function Get-VibeCanonicalStackOnlyTomlTables {
     return @(
         'mcp_servers.headroom', 'mcp_servers.serena',
-        'model."grok-4.6"', 'model.grok-via-headroom', 'model."grok-gate"', 'model."grok-4.6-direct"'
+        'model."grok-4.7"', 'model."grok-4.6"', 'model."grok-4.7-build-fast"',
+        'model.grok-via-headroom', 'model."grok-gate"',
+        'model."grok-4.7-direct"', 'model."grok-4.6-direct"'
     )
 }
 
@@ -56,7 +66,7 @@ function Get-VibeStackTomlKeys {
 function Get-VibeParentOwnedKeys {
     return @{
         mcp_servers = @('headroom', 'serena')
-        model       = @('grok-4.6', 'grok-via-headroom', 'grok-gate', 'grok-4.6-direct')
+        model       = @('grok-4.7', 'grok-4.6', 'grok-4.7-build-fast', 'grok-via-headroom', 'grok-gate', 'grok-4.7-direct', 'grok-4.6-direct')
     }
 }
 
@@ -948,7 +958,8 @@ function Test-VibeToml {
         $collisions = @(Get-TomlPathCollisions -Raw $Raw)
         $strict = Test-TomlStrictParse -Raw $Raw
         # One Headroom on :8787. grok-gate is an alias — table-local base_url, not a file-wide :8788 hunt.
-        $hasHr = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-4.6' -MustContain '127.0.0.1:8787'
+        $hasHr = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-4.7' -MustContain '127.0.0.1:8787'
+        $has46 = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-4.6' -MustContain '127.0.0.1:8787'
         $hasGate = Test-TomlQuotedModelBaseUrl -Raw $Raw -ModelId 'grok-gate' -MustContain '127.0.0.1:8787'
         $errors = New-Object System.Collections.Generic.List[string]
         if ($dups.Count -gt 0) {
@@ -967,6 +978,9 @@ function Test-VibeToml {
             [void]$errors.Add('double-quoted command path has backslashes (invalid TOML escapes; grok will not start)')
         }
         if (-not $hasHr) {
+            [void]$errors.Add('missing quoted [model."grok-4.7"] Headroom override (127.0.0.1:8787)')
+        }
+        if (-not $has46) {
             [void]$errors.Add('missing quoted [model."grok-4.6"] Headroom override (127.0.0.1:8787)')
         }
         if (-not $hasGate) {
@@ -976,6 +990,7 @@ function Test-VibeToml {
             Ok                   = ($errors.Count -eq 0)
             Duplicates           = $dups
             HasHeadroomOverride  = $hasHr
+            HasGrok46Override    = $has46
             HasGateOverride      = $hasGate
             Errors               = $errors.ToArray()
         }
@@ -984,6 +999,7 @@ function Test-VibeToml {
             Ok                   = $false
             Duplicates           = @()
             HasHeadroomOverride  = $false
+            HasGrok46Override    = $false
             HasGateOverride      = $false
             Errors               = @('Test-VibeToml: {0}' -f $_.Exception.Message)
         }
