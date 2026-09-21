@@ -15,6 +15,8 @@ All notable changes to this project are documented in this file.
 
 - Scanner `Run` writes status with `Write-Host` only. Whether the tool actually ran is `$script:vibeToolRan`, so a statement-style call no longer leaks `$true` onto the success stream. Trivy and Gitleaks still confirm only after a real invoke. Smoke runs that contract (no bool return, no success-stream output, flag set only after a real invoke).
 - Doctor `env_key` warning names the `XAI_API_KEY` variable only. It does not print an assignment-shaped value.
+- Doctor warns on a missing `[model."grok-gate"]` when any owned Headroom marker is present (`grok-4.7`, `grok-4.6`, `grok-4.7-build-fast`, `grok-via-headroom`, or `:8787`), including a 4.6-only file. The proxy-down line claims the default is `grok-4.7` only when that table is present.
+- Uninstall strips stack tables with `Get-VibeStackOnlyTomlTables` only. Smoke checks that fallback has no second handwritten model list.
 
 ### Changed
 

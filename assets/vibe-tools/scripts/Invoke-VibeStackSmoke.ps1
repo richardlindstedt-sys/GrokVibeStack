@@ -540,6 +540,27 @@ if ($instSrc -match "'jscpd', 'markdownlint-cli', 'typescript'" -and $instSrc -n
     Bad 'npm globals still install prettier/eslint or dropped typescript'
 }
 $unSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1') -Raw
+$tomlForUn = Join-Path $RepoRoot 'assets\token-saving\scripts\GrokToml.ps1'
+. $tomlForUn
+$sharedTables = @((Get-VibeStackOnlyTomlTables) | ForEach-Object { [string]$_ })
+$unAstTok = $null
+$unAstErr = $null
+$unAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'Uninstall-GrokVibeStack.ps1'), [ref]$unAstTok, [ref]$unAstErr)
+$unFn = $unAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Remove-ManagedConfigBlock' }, $false)
+$unCallsHelper = $false
+$unLiteralModels = 0
+if ($unFn) {
+    $unCallsHelper = @($unFn.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-VibeStackOnlyTomlTables' }, $true)).Count -gt 0
+    $unLiteralModels = @($unFn.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Value -match '^model(\.|")'
+        }, $true)).Count
+}
+if ($unCallsHelper -and $unLiteralModels -eq 0 -and $sharedTables.Count -gt 0 -and ($sharedTables -contains 'model."grok-4.7"') -and ($sharedTables -contains 'model."grok-4.6"')) {
+    Ok 'uninstall: stack tables come only from Get-VibeStackOnlyTomlTables'
+} else {
+    Bad 'uninstall still copies a stack model-table list'
+}
 $hooksInstSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\install-vibe-hooks.ps1') -Raw
 $vibeHookTpl = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\hooks\vibe-coding.json') -Raw
 if ($instSrc -match 'ensure-serena\.ps1' -and $instSrc -match 'function Test-SerenaAlive' -and $instSrc -match 'function Resolve-SerenaExe' -and $instSrc -match 'if \(Test-SerenaAlive \$p\) \{ return \$p \}' -and $instSrc -match '& \$ensure -RepoPath \$here' -and $instSrc -notmatch '\$repoArg = @\(' -and (Test-Path (Join-Path $RepoRoot 'assets\token-saving\scripts\ensure-serena.ps1'))) {
@@ -1879,6 +1900,21 @@ if (Test-Path $doctor) {
     }
 } else {
     Bad 'doctor.ps1 missing'
+}
+$doc46 = Join-Path ([System.IO.Path]::GetTempPath()) ('vibe-doctor-46-' + [guid]::NewGuid().ToString('n').Substring(0, 8) + '.toml')
+$utf8Doc = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($doc46, "[model.`"grok-4.6`"]`r`nbase_url = `"http://127.0.0.1:8787/v1`"`r`n", $utf8Doc)
+$doc46Out = ''
+try {
+    $doc46Out = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $doctor -ConfigPath $doc46 2>&1 | Out-String)
+} catch {
+    $doc46Out = "$_"
+}
+Remove-Item -LiteralPath $doc46 -Force -ErrorAction SilentlyContinue
+if ($doc46Out -match 'missing \[model\."grok-gate"\]' -and $doc46Out -notmatch 'default grok-4\.7 uses Headroom') {
+    Ok 'doctor: grok-4.6-only Headroom config warns missing grok-gate'
+} else {
+    Bad 'doctor silent on grok-4.6-only config missing grok-gate'
 }
 
 # Live doctor markers (if installed)

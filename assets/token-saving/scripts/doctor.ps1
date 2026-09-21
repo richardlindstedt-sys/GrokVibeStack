@@ -1,5 +1,9 @@
 # Quick health check for the token-saving + vibe stack
-param([switch]$Usage)
+param(
+    [switch]$Usage,
+    # Smoke / fixture only. Live doctor uses ~/.grok/config.toml.
+    [string]$ConfigPath
+)
 $ErrorActionPreference = 'Continue'
 $scripts = Join-Path $env:USERPROFILE '.grok\token-saving\venv\Scripts'
 $grokBin = Join-Path $env:USERPROFILE '.grok\bin'
@@ -12,7 +16,7 @@ $reportsRoot = Join-Path $vibeRoot 'reports'
 $cacheFile = Join-Path $vibeRoot 'cache\gate-pass-cache.json'
 $env:PATH = "$grokBin;$headroomBin;$scripts;$env:PATH"
 $headroom = Join-Path $scripts 'headroom.exe'
-$cfg = Join-Path $grokHome 'config.toml'
+$cfg = if ($ConfigPath) { $ConfigPath } else { Join-Path $grokHome 'config.toml' }
 $hooksDir = Join-Path $grokHome 'hooks'
 
 if (Test-Path $ensureRtk) {
@@ -435,13 +439,35 @@ if (Test-Path -LiteralPath $cfg) {
         Write-Host '        Not set by vibe stack. Change via /settings if undesired.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '127\.0\.0\.1:8787|grok-via-headroom' -and -not $proxyUp) {
-        Write-Host '  WARN: default grok-4.7 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
+        if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.7"\]') {
+            Write-Host '  WARN: default grok-4.7 uses Headroom but proxy is down. Use start-grok.' -ForegroundColor Yellow
+        } else {
+            Write-Host '  WARN: config uses Headroom on :8787 but proxy is down. Use start-grok.' -ForegroundColor Yellow
+        }
     }
     if ($cfgTxt -match '127\.0\.0\.1:8788') {
         Write-Host '  WARN: config still points at :8788 (dual-proxy leftover). start-grok repairs to :8787; start-grok -StopProxy -Port 8788' -ForegroundColor Yellow
     }
-    if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.7"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-gate"\]') {
-        Write-Host '  WARN: missing [model."grok-gate"] (:8787 alias). Re-run installer or start-grok to repair.' -ForegroundColor Yellow
+    # grok-4.6, grok-4.7, build-fast, and grok-via-headroom are still owned Headroom markers.
+    # A 4.6-only file must warn too. Direct hatch tables are not markers.
+    $headroomRes = @(
+        '(?m)^\s*\[model\."grok-4\.7"\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\.grok-4\.7\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\."grok-4\.6"\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\.grok-4\.6\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\."grok-4\.7-build-fast"\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\.grok-4\.7-build-fast\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\."grok-via-headroom"\]\s*(?:#.*)?$'
+        '(?m)^\s*\[model\.grok-via-headroom\]\s*(?:#.*)?$'
+        '127\.0\.0\.1:8787'
+    )
+    $hasHeadroom = $false
+    foreach ($re in $headroomRes) {
+        if ($cfgTxt -match $re) { $hasHeadroom = $true; break }
+    }
+    $hasGate = ($cfgTxt -match '(?m)^\s*\[model\."grok-gate"\]\s*(?:#.*)?$') -or ($cfgTxt -match '(?m)^\s*\[model\.grok-gate\]\s*(?:#.*)?$')
+    if ($hasHeadroom -and -not $hasGate) {
+        Write-Host '  WARN: missing [model."grok-gate"] (:8787 alias). A grok-4.7 or grok-4.6 Headroom config needs this table. Re-run installer or start-grok to repair.' -ForegroundColor Yellow
     }
     if ($cfgTxt -match '(?m)^\s*\[model\."grok-4\.6"\]' -and $cfgTxt -notmatch '(?m)^\s*\[model\."grok-4\.7"\]') {
         Write-Host '  WARN: missing [model."grok-4.7"] Headroom override. Re-run installer or start-grok to repair.' -ForegroundColor Yellow
