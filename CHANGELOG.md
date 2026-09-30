@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Requirement floors (2026-09-30): `headroom-ai[proxy]>=0.39.1` (0.39.1 stops the 0.39.0 TPM limiter that refused large-context requests), `ruff>=0.16.9`, `semgrep>=1.178.0`, `checkov>=3.3.21`. Still current: `ast-grep-cli>=0.45.3`, `mypy>=2.3.1`, `bandit>=1.9.4`, `vulture>=2.16`, `yamllint>=1.38.0`, `tokenizers>=0.23.1,<0.24.0` (`tokenizers==0.23.2`, `transformers==5.17.0`), Serena `1.7.0`, **scc v4.1.0**. **tokei** stays `v13.0.0-alpha.0` (`v15.0.0` still ships no Windows exe). Regenerated `*-freeze.txt`. `checkov==3.3.21` still requires `asteval==1.0.6` (sandbox escape, fixed in 1.0.9+). Floor and freeze pin `asteval==1.0.10`, so plain `pip install -r` fails closed. The installer solves with `1.0.6`, then force-installs `asteval==1.0.10` via `pip --no-deps`. A failed override retries on file lock. Uninstall captures its exit code, retries after stopping file holders, and deletes leftover `asteval` files only under that venv. Absence counts only when a probe that actually ran prints `ABSENT` (`PackageNotFoundError`) and no `asteval*` path remains. A probe that fails to launch is not absence. If absence is not proven, the installer deletes that venv. `mcp` stays 1.x (`headroom-ai[proxy]` requires `<2.0.0`).
+
 ## [2.4.0] - 2026-09-21
 
 ### Added

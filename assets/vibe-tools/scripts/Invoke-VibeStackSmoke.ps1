@@ -1282,26 +1282,134 @@ if ($isoOk -and $isoWant.Count -eq 9 -and $isoHit.Count -eq 9 -and $startSrc -ma
     Bad 'dual-proxy isolation names collide or missing portTag'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
-if ($hrReq -match 'headroom-ai\[proxy\]>=0\.37\.0' -and $hrReq -match 'tokenizers>=0\.23\.1,<0\.24\.0') {
-    Ok 'reqs: headroom-ai[proxy] >= 0.37.0 + tokenizers pin'
+if ($hrReq -match 'headroom-ai\[proxy\]>=0\.39\.1' -and $hrReq -match 'tokenizers>=0\.23\.1,<0\.24\.0') {
+    Ok 'reqs: headroom-ai[proxy] >= 0.39.1 + tokenizers pin'
 } else {
-    Bad 'reqs missing headroom-ai[proxy] >= 0.37.0 / tokenizers pin'
+    Bad 'reqs missing headroom-ai[proxy] >= 0.39.1 / tokenizers pin'
 }
 $vtReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\vibe-tools.txt') -Raw
 $hrFreeze = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom-freeze.txt') -Raw
 $vtFreeze = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\vibe-tools-freeze.txt') -Raw
-if ($vtReq -match 'checkov>=3\.3\.19' -and $vtReq -match 'ruff>=0\.16\.8' -and $vtReq -match 'semgrep>=1\.177\.0') {
-    Ok 'reqs: vibe-tools floors (checkov/ruff/semgrep)'
+if ($vtReq -match 'checkov>=3\.3\.21' -and $vtReq -match 'ruff>=0\.16\.9' -and $vtReq -match 'semgrep>=1\.178\.0' -and $vtReq -match '(?m)^asteval==1\.0\.10\s*$') {
+    Ok 'reqs: vibe-tools floors (checkov/ruff/semgrep/asteval 1.0.10)'
 } else {
-    Bad 'reqs missing vibe-tools floors (checkov>=3.3.19 / ruff>=0.16.8 / semgrep>=1.177.0)'
+    Bad 'reqs missing vibe-tools floors (checkov>=3.3.21 / ruff>=0.16.9 / semgrep>=1.178.0 / asteval==1.0.10)'
 }
-if ($hrFreeze -match '(?m)^headroom-ai==0\.37\.0' -and $hrFreeze -match '(?m)^tokenizers==0\.23\.2' -and $hrFreeze -match '(?m)^ast-grep-cli==0\.45\.3') {
-    Ok 'freeze: headroom-ai 0.37.0 + tokenizers 0.23.2'
+. (Join-Path $RepoRoot 'assets\requirements\CheckovAstevalInstall.ps1')
+$astevalSmoke = Join-Path ([System.IO.Path]::GetTempPath()) ('grok-asteval-smoke-' + [guid]::NewGuid().ToString('n'))
+New-Item -ItemType Directory -Force -Path $astevalSmoke | Out-Null
+$stub = Join-Path $astevalSmoke 'python.cmd'
+@'
+@echo off
+setlocal
+echo %*>>"%~dp0args.txt"
+echo %* | findstr /C:"getsitepackages" >nul
+if %ERRORLEVEL%==0 (
+  if exist "%~dp0site-fail" exit 1
+  type "%~dp0site.txt"
+  exit 0
+)
+echo %* | findstr /C:"-m pip uninstall" >nul
+if %ERRORLEVEL%==0 (
+  if exist "%~dp0uninstall-lock" (
+    echo WinError 32: cannot access the file because it is being used by another process
+    exit 1
+  )
+  exit 0
+)
+echo %* | findstr /C:"-m pip" >nul
+if %ERRORLEVEL%==0 (
+  if exist "%~dp0pip-fail" (
+    echo WinError 32: cannot access the file because it is being used by another process
+    exit 1
+  )
+  exit 0
+)
+echo %* | findstr /C:"-c" >nul
+if %ERRORLEVEL%==0 (
+  if exist "%~dp0probe-crash" exit 1
+  if exist "%~dp0probe-stuck" (
+    echo 1.0.6
+    exit 0
+  )
+  if exist "%~dp0site\asteval" (
+    echo 1.0.6
+    exit 0
+  )
+  if exist "%~dp0ver.txt" (
+    type "%~dp0ver.txt"
+    exit 0
+  )
+  if exist "%~dp0prove-absent" (
+    echo ABSENT
+    exit 0
+  )
+  exit 1
+)
+exit 1
+'@ | Set-Content -LiteralPath $stub -Encoding ascii
+$pinned = Join-Path $astevalSmoke 'pinned.txt'
+$plain = Join-Path $astevalSmoke 'plain.txt'
+Set-Content -LiteralPath $pinned -Value "checkov>=3.3.21`r`nasteval==1.0.10`r`n" -Encoding ascii
+Set-Content -LiteralPath $plain -Value "checkov>=3.3.21`r`n" -Encoding ascii
+$planOk = $false
+$plan = $null
+try {
+    $plan = Get-CheckovAstevalInstallPlan -ReqFile $pinned
+    $solveBody = [System.IO.File]::ReadAllText($plan.SolveFile)
+    $plainPlan = Get-CheckovAstevalInstallPlan -ReqFile $plain
+    $lockText = 'WinError 32: cannot access the file'
+    $planOk = $plan.ForceAsteval -and $plan.Temp -and ($solveBody -match '(?m)^asteval==1\.0\.6\s*$') -and ($solveBody -notmatch '(?m)^asteval==1\.0\.10\s*$') -and (-not $plainPlan.ForceAsteval) -and ($plainPlan.SolveFile -eq $plain) -and (-not $plainPlan.Temp)
+    $planOk = $planOk -and ((Resolve-AstevalOverrideAttempt -ForcedOk $true -Attempt 1 -MaxTries 4 -OverrideText '') -eq 'ok')
+    $planOk = $planOk -and ((Resolve-AstevalOverrideAttempt -ForcedOk $false -Attempt 1 -MaxTries 4 -OverrideText $lockText) -eq 'retry')
+    $planOk = $planOk -and ((Resolve-AstevalOverrideAttempt -ForcedOk $false -Attempt 4 -MaxTries 4 -OverrideText $lockText) -eq 'rollback')
+    $planOk = $planOk -and ((Resolve-AstevalOverrideAttempt -ForcedOk $false -Attempt 1 -MaxTries 4 -OverrideText 'No matching distribution') -eq 'rollback')
+    Set-Content -LiteralPath (Join-Path $astevalSmoke 'ver.txt') -Value '1.0.6' -Encoding ascii
+    $badVer = -not (Install-ForcedAsteval -PyExe $stub)
+    Set-Content -LiteralPath (Join-Path $astevalSmoke 'ver.txt') -Value '1.0.10' -Encoding ascii
+    $goodVer = [bool](Install-ForcedAsteval -PyExe $stub)
+    Remove-Item -LiteralPath (Join-Path $astevalSmoke 'ver.txt') -Force
+    $probeFail = -not (Install-ForcedAsteval -PyExe $stub)
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'pip-fail') | Out-Null
+    $pipFail = -not (Install-ForcedAsteval -PyExe $stub)
+    Remove-Item -LiteralPath (Join-Path $astevalSmoke 'pip-fail') -Force
+    $site = Join-Path $astevalSmoke 'site'
+    New-Item -ItemType Directory -Force -Path (Join-Path $site 'asteval') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $site 'asteval-1.0.6.dist-info') | Out-Null
+    Set-Content -LiteralPath (Join-Path $astevalSmoke 'site.txt') -Value $site -Encoding ascii
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'uninstall-lock') | Out-Null
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'prove-absent') | Out-Null
+    $lockedGone = [bool](Undo-AstevalSolvePin -PyExe $stub -VenvRoot $astevalSmoke -MaxTries 1)
+    $distGone = -not (Test-Path -LiteralPath (Join-Path $site 'asteval'))
+    Remove-Item -LiteralPath (Join-Path $astevalSmoke 'prove-absent') -Force
+    New-Item -ItemType Directory -Force -Path (Join-Path $site 'asteval') | Out-Null
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'probe-crash') | Out-Null
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'site-fail') | Out-Null
+    $probeCrashStays = -not (Undo-AstevalSolvePin -PyExe $stub -VenvRoot $astevalSmoke -MaxTries 1)
+    $crashLeftFiles = Test-Path -LiteralPath (Join-Path $site 'asteval')
+    Remove-Item -LiteralPath (Join-Path $astevalSmoke 'probe-crash') -Force
+    Remove-Item -LiteralPath (Join-Path $astevalSmoke 'site-fail') -Force
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'probe-stuck') | Out-Null
+    $lockedStays = -not (Undo-AstevalSolvePin -PyExe $stub -VenvRoot $astevalSmoke -MaxTries 1)
+    Remove-Item -LiteralPath (Join-Path $astevalSmoke 'probe-stuck') -Force
+    $argsLog = Get-Content -LiteralPath (Join-Path $astevalSmoke 'args.txt') -Raw
+    $planOk = $planOk -and $badVer -and $goodVer -and $pipFail -and $probeFail -and $lockedGone -and $distGone -and $probeCrashStays -and $crashLeftFiles -and $lockedStays -and ($argsLog -match 'uninstall -y asteval')
+} finally {
+    if ($plan) { Clear-CheckovAstevalInstallPlan -Plan $plan }
+    Remove-Item -LiteralPath $astevalSmoke -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($planOk -and $plan -and -not (Test-Path -LiteralPath $plan.SolveFile)) {
+    Ok 'installer: asteval plan rewrites 1.0.10 to 1.0.6, force-install fails closed, temp solve removed'
+} else {
+    Bad 'asteval install plan/override smoke failed'
+}
+if ($hrFreeze -match '(?m)^headroom-ai==0\.39\.1' -and $hrFreeze -match '(?m)^tokenizers==0\.23\.2' -and $hrFreeze -match '(?m)^ast-grep-cli==0\.45\.3') {
+    Ok 'freeze: headroom-ai 0.39.1 + tokenizers 0.23.2'
 } else {
     Bad 'headroom-freeze.txt stale vs floors'
 }
-if ($vtFreeze -match '(?m)^checkov==3\.3\.19' -and $vtFreeze -match '(?m)^ruff==0\.16\.8' -and $vtFreeze -match '(?m)^semgrep==1\.177\.0' -and $vtFreeze -match '(?m)^asteval==1\.0\.10') {
-    Ok 'freeze: vibe-tools checkov 3.3.19 + asteval override 1.0.10'
+if ($vtFreeze -match '(?m)^checkov==3\.3\.21' -and $vtFreeze -match '(?m)^ruff==0\.16\.9' -and $vtFreeze -match '(?m)^semgrep==1\.178\.0' -and $vtFreeze -match '(?m)^asteval==1\.0\.10') {
+    Ok 'freeze: vibe-tools checkov 3.3.21 + asteval override 1.0.10'
 } else {
     Bad 'vibe-tools-freeze.txt stale vs floors / asteval override'
 }

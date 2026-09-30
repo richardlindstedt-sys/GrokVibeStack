@@ -613,6 +613,8 @@ function Restore-VenvOldEntryPoints {
     }
 }
 
+. (Join-Path $PSScriptRoot 'assets\requirements\CheckovAstevalInstall.ps1')
+
 function New-VenvAndPip {
     param(
         [string]$VenvDir,
@@ -648,8 +650,14 @@ function New-VenvAndPip {
     } else {
         Write-Info "venv exists: $VenvDir"
     }
+    $plan = Get-CheckovAstevalInstallPlan -ReqFile $ReqFile
+    try {
     if ($DryRun) {
-        Write-Info "DRY pip install -U -r $ReqFile"
+        if ($plan.ForceAsteval) {
+            Write-Info "DRY pip install -U -r (solve asteval==1.0.6) then --no-deps asteval==1.0.10 ($Label)"
+        } else {
+            Write-Info "DRY pip install -U -r $ReqFile"
+        }
         return $true
     }
     # Reinstall while proxy/MCP hold headroom.exe -> WinError 32. Stop, then retry/rename.
@@ -671,10 +679,10 @@ function New-VenvAndPip {
                 Start-Sleep -Seconds 1
             }
             $null = & $pyExe -m pip install --upgrade pip wheel setuptools 2>&1
-            Write-Info "pip install -U -r $ReqFile ($Label) - this can take several minutes"
+            Write-Info "pip install -U -r $($plan.SolveFile) ($Label) - this can take several minutes"
             $pipArgs = @('install', '--upgrade')
             if ($forceReinstall) { $pipArgs += '--force-reinstall' }
-            $pipArgs += @('-r', $ReqFile)
+            $pipArgs += @('-r', $plan.SolveFile)
             $pipOut = & $pyExe -m pip @pipArgs 2>&1
             $code = $LASTEXITCODE
             $pipText = ($pipOut | Out-String)
@@ -686,6 +694,36 @@ function New-VenvAndPip {
                 }
             }
             if ($code -eq 0) {
+                if ($plan.ForceAsteval) {
+                    $overrideText = ''
+                    $forced = Install-ForcedAsteval -PyExe $pyExe -PipText ([ref]$overrideText)
+                    $decision = Resolve-AstevalOverrideAttempt -ForcedOk ([bool]$forced) -Attempt $attempt -MaxTries $maxTries -OverrideText $overrideText
+                    if ($decision -eq 'retry') {
+                        Write-Warn2 "asteval override file in use - retrying ($Label)"
+                        $lastPipText = $overrideText
+                        continue
+                    }
+                    if ($decision -eq 'rollback') {
+                        Write-Fail "asteval override failed; uninstalling asteval so 1.0.6 is not left installed"
+                        $gone = Undo-AstevalSolvePin -PyExe $pyExe -VenvRoot $VenvDir -Prepare {
+                            Stop-VenvLockers -VenvDir $VenvDir -Label $Label
+                            Unlock-VenvEntryPoints -VenvDir $VenvDir -OnlyPaths (Get-PipLockedPaths $overrideText)
+                        }
+                        if (-not $gone -and (Test-Path -LiteralPath $VenvDir)) {
+                            Write-Fail "asteval 1.0.6 still installed after uninstall retries; deleting venv"
+                            Stop-VenvLockers -VenvDir $VenvDir -Label $Label
+                            Remove-Item -LiteralPath $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
+                            $gone = -not (Test-Path -LiteralPath $VenvDir)
+                        }
+                        if (-not $gone) {
+                            Write-Fail "asteval 1.0.6 remains in $VenvDir"
+                        }
+                        if (Test-Path -LiteralPath $VenvDir) {
+                            Restore-VenvOldEntryPoints -VenvDir $VenvDir
+                        }
+                        return $false
+                    }
+                }
                 Restore-VenvOldEntryPoints -VenvDir $VenvDir
                 Write-Ok "pip $Label"
                 return $true
@@ -707,6 +745,9 @@ function New-VenvAndPip {
         return $false
     } finally {
         $ErrorActionPreference = $prev
+    }
+    } finally {
+        Clear-CheckovAstevalInstallPlan -Plan $plan
     }
 }
 

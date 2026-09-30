@@ -262,7 +262,7 @@ Language SDKs (Rust, Go, .NET, JDK) are **not** bundled. If `cargo` / `go` / `do
 
 If a **test layout** exists (Cargo/Go/pytest/npm test/sln/csproj/pom/gradle/`*.Tests.ps1`) but tests were skipped (`VIBE_SKIP_PROJECT_TOOLS`, `VIBE_SKIP_PROJECT_TESTS`, timeout 0, or no runner), the gate **fails** unless `VIBE_ALLOW_SKIP_TESTS=1`.
 
-Those projects keep their own licenses and update cadence. GitHub binaries use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install): **scc v4.1.0**, **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). Serena PyPI pin is **1.7.0**. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
+Those projects keep their own licenses and update cadence. GitHub binaries use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install): **scc v4.1.0**, **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). Serena PyPI pin is **1.7.0**. Pip floors (2026-09-30): `headroom-ai[proxy]>=0.39.1`, `ruff>=0.16.9`, `semgrep>=1.178.0`, `checkov>=3.3.21`, `asteval==1.0.10`. checkov still requires `asteval==1.0.6`; the installer solves that pin, then force-installs `1.0.10`. Plain `pip install -r` of the vibe requirements fails closed on the conflict. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
 
 ---
 
