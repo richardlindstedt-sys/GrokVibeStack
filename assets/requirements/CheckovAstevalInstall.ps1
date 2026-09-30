@@ -84,7 +84,8 @@ function Install-ForcedAsteval {
 
 function Get-AstevalSitePath {
     param([string]$PyExe)
-    $siteOut = & $PyExe -c "import site; print(site.getsitepackages()[0])" 2>&1
+    # On Windows a venv's first site list entry is the prefix, not Lib\site-packages.
+    $siteOut = & $PyExe -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>&1
     $siteCode = $LASTEXITCODE
     if ($siteCode -ne 0) { return $null }
     $lines = @($siteOut | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
@@ -94,12 +95,30 @@ function Get-AstevalSitePath {
     return [System.IO.Path]::GetFullPath($site)
 }
 
+function Test-AstevalLibSite {
+    param(
+        [string]$Site,
+        [string]$VenvRoot
+    )
+    if ([string]::IsNullOrWhiteSpace($Site) -or -not (Test-Path -LiteralPath $Site)) { return $false }
+    $full = [System.IO.Path]::GetFullPath($Site).TrimEnd('\')
+    if (-not $full.EndsWith('\Lib\site-packages', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if (-not [string]::IsNullOrWhiteSpace($VenvRoot)) {
+        $root = [System.IO.Path]::GetFullPath($VenvRoot)
+        if (-not $root.EndsWith('\')) { $root = $root + '\' }
+        if (-not ($full + '\').StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+    return $true
+}
+
 function Test-AstevalGone {
     param(
         [string]$PyExe,
-        [string]$Site
+        [string]$Site,
+        [string]$VenvRoot
     )
-    if ([string]::IsNullOrWhiteSpace($Site) -or -not (Test-Path -LiteralPath $Site)) { return $false }
+    # A metadata ABSENT result on the venv root must not count. Leftover files win.
+    if (-not (Test-AstevalLibSite -Site $Site -VenvRoot $VenvRoot)) { return $false }
     $left = @(Get-ChildItem -LiteralPath $Site -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'asteval*' })
     if ($left.Count -gt 0) { return $false }
     $absentProbe = 'import importlib.metadata as m; exec("try:\n print(m.version(''asteval''))\nexcept m.PackageNotFoundError:\n print(''ABSENT'')")'
@@ -116,12 +135,7 @@ function Remove-AstevalDist {
         [string]$VenvRoot
     )
     $site = Get-AstevalSitePath -PyExe $PyExe
-    if (-not $site) { return $false }
-    if (-not [string]::IsNullOrWhiteSpace($VenvRoot)) {
-        $root = [System.IO.Path]::GetFullPath($VenvRoot)
-        if (-not $root.EndsWith('\')) { $root = $root + '\' }
-        if (-not $site.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
-    }
+    if (-not (Test-AstevalLibSite -Site $site -VenvRoot $VenvRoot)) { return $false }
     $hits = @(Get-ChildItem -LiteralPath $site -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'asteval*' })
     foreach ($hit in $hits) {
         $full = [System.IO.Path]::GetFullPath($hit.FullName)
@@ -149,10 +163,41 @@ function Undo-AstevalSolvePin {
         $lastText = ($out | Out-String)
         $site = Get-AstevalSitePath -PyExe $PyExe
         if ($site) { Remove-AstevalDist -PyExe $PyExe -VenvRoot $VenvRoot | Out-Null }
-        if ($site -and (Test-AstevalGone -PyExe $PyExe -Site $site)) { return $true }
+        if ($site -and (Test-AstevalGone -PyExe $PyExe -Site $site -VenvRoot $VenvRoot)) { return $true }
         if ($i -lt $MaxTries) { Start-Sleep -Seconds 1 }
     }
     if (-not [string]::IsNullOrWhiteSpace($lastText)) { Write-Host $lastText }
     Write-Fail "asteval uninstall failed (exit $lastCode); absence not proven"
     return $false
+}
+
+function Clear-FailedAstevalInstall {
+    param(
+        [string]$PyExe,
+        [string]$VenvDir,
+        [string]$Label,
+        [string]$LockText,
+        [string]$Reason,
+        [int]$MaxTries = 4
+    )
+    Write-Fail $Reason
+    # Inline block. A closure module parent is global, so script-scoped locker
+    # commands would throw before the venv delete.
+    $gone = Undo-AstevalSolvePin -PyExe $PyExe -VenvRoot $VenvDir -MaxTries $MaxTries -Prepare {
+        Stop-VenvLockers -VenvDir $VenvDir -Label $Label
+        Unlock-VenvEntryPoints -VenvDir $VenvDir -OnlyPaths (Get-PipLockedPaths $LockText)
+    }
+    if (-not $gone -and (Test-Path -LiteralPath $VenvDir)) {
+        Write-Fail "asteval 1.0.6 still installed after uninstall retries; deleting venv"
+        Stop-VenvLockers -VenvDir $VenvDir -Label $Label
+        Remove-Item -LiteralPath $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
+        $gone = -not (Test-Path -LiteralPath $VenvDir)
+    }
+    if (-not $gone) {
+        Write-Fail "asteval 1.0.6 remains in $VenvDir"
+    }
+    if (Test-Path -LiteralPath $VenvDir) {
+        Restore-VenvOldEntryPoints -VenvDir $VenvDir
+    }
+    return [bool]$gone
 }

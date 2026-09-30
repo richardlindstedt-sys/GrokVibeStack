@@ -1016,7 +1016,7 @@ if ($instSrc -match 'stackOwned' -and $instSrc -match 'Never record pre-existing
 } else {
     Bad 'PATH AlwaysRecord / uninstall shared-dir strip still unsafe'
 }
-if ($instSrc -match "checkov\.cmd" -and $unSrc -match "checkov\.cmd" -and $unSrc -match 'relocations' -and $unSrc -match 'mcp_servers.headroom' -and $unSrc -match 'hadMarkers' -and $unSrc -notmatch 'Get-VibeOwnedTomlSections' -and $unSrc -notmatch 'pre-uninstall-') {
+if ($instSrc -match "checkov\.cmd" -and $unSrc -match "checkov\.cmd" -and $unSrc -match 'relocations' -and $unSrc -match 'Get-VibeStackOnlyTomlTables' -and ($sharedTables -contains 'mcp_servers.headroom') -and $unSrc -match 'hadMarkers' -and $unSrc -notmatch 'Get-VibeOwnedTomlSections' -and $unSrc -notmatch 'pre-uninstall-') {
     Ok 'uninstall: checkov shim + marker-or-stack-table strip + relocations bak'
 } else {
     Bad 'uninstall missing checkov / still wipes shared TOML tables / next-to-live bak'
@@ -1109,7 +1109,7 @@ if ($docSrc -match 'Test-ProxyCommandLineMatchesStack' -and $docSrc -match 'head
 } else {
     Bad 'doctor missing live proxy cmdline/fingerprint / leftover :8788 stop / ListenProbe / still Get-NetTCPConnection'
 }
-if ($startSrc -match 'Write-MissingVibeHookHint' -and $startSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'param\(\[switch\]\$Usage\)' -and $docSrc -match 'fat MCP' -and $startSrc -match 'Resolve-VibeProxyAdoptPid' -and $docSrc -match "Vibe pre-" -and $docSrc -match 'not a vibe hook' -and $startSrc -match 'Missing Get-VibeListenSocketPids => skip adopt') {
+if ($startSrc -match 'Write-MissingVibeHookHint' -and $startSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match 'start-grok -BootstrapRepo' -and $docSrc -match '(?s)param\(\s*\[switch\]\$Usage\b' -and $docSrc -match 'fat MCP' -and $startSrc -match 'Resolve-VibeProxyAdoptPid' -and $docSrc -match "Vibe pre-" -and $docSrc -match 'not a vibe hook' -and $startSrc -match 'Missing Get-VibeListenSocketPids => skip adopt') {
     Ok 'start-grok/doctor: missing-hook one-liner + Vibe pre- marker + doctor -Usage + fat MCP + adopt fail-closed'
 } else {
     Bad 'missing-hook / Vibe pre- / doctor Usage / fat MCP / adopt fail-closed wiring'
@@ -1303,10 +1303,15 @@ $stub = Join-Path $astevalSmoke 'python.cmd'
 @echo off
 setlocal
 echo %*>>"%~dp0args.txt"
-echo %* | findstr /C:"getsitepackages" >nul
+echo %* | findstr /C:"get_path" >nul
 if %ERRORLEVEL%==0 (
   if exist "%~dp0site-fail" exit 1
-  type "%~dp0site.txt"
+  type "%~dp0purelib.txt"
+  exit 0
+)
+echo %* | findstr /C:"getsitepackages" >nul
+if %ERRORLEVEL%==0 (
+  echo %~dp0
   exit 0
 )
 echo %* | findstr /C:"-m pip uninstall" >nul
@@ -1332,16 +1337,16 @@ if %ERRORLEVEL%==0 (
     echo 1.0.6
     exit 0
   )
-  if exist "%~dp0site\asteval" (
+  if exist "%~dp0prove-absent" (
+    echo ABSENT
+    exit 0
+  )
+  if exist "%~dp0Lib\site-packages\asteval" (
     echo 1.0.6
     exit 0
   )
   if exist "%~dp0ver.txt" (
     type "%~dp0ver.txt"
-    exit 0
-  )
-  if exist "%~dp0prove-absent" (
-    echo ABSENT
     exit 0
   )
   exit 1
@@ -1373,12 +1378,16 @@ try {
     New-Item -ItemType File -Path (Join-Path $astevalSmoke 'pip-fail') | Out-Null
     $pipFail = -not (Install-ForcedAsteval -PyExe $stub)
     Remove-Item -LiteralPath (Join-Path $astevalSmoke 'pip-fail') -Force
-    $site = Join-Path $astevalSmoke 'site'
+    $site = Join-Path $astevalSmoke 'Lib\site-packages'
     New-Item -ItemType Directory -Force -Path (Join-Path $site 'asteval') | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $site 'asteval-1.0.6.dist-info') | Out-Null
-    Set-Content -LiteralPath (Join-Path $astevalSmoke 'site.txt') -Value $site -Encoding ascii
-    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'uninstall-lock') | Out-Null
+    Set-Content -LiteralPath (Join-Path $astevalSmoke 'purelib.txt') -Value $site -Encoding ascii
     New-Item -ItemType File -Path (Join-Path $astevalSmoke 'prove-absent') | Out-Null
+    $filesBeatAbsent = -not (Test-AstevalGone -PyExe $stub -Site $site -VenvRoot $astevalSmoke)
+    $rootNotSite = -not (Test-AstevalLibSite -Site $astevalSmoke -VenvRoot $astevalSmoke)
+    $resolved = Get-AstevalSitePath -PyExe $stub
+    $pathOk = ($resolved -eq [System.IO.Path]::GetFullPath($site))
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'uninstall-lock') | Out-Null
     $lockedGone = [bool](Undo-AstevalSolvePin -PyExe $stub -VenvRoot $astevalSmoke -MaxTries 1)
     $distGone = -not (Test-Path -LiteralPath (Join-Path $site 'asteval'))
     Remove-Item -LiteralPath (Join-Path $astevalSmoke 'prove-absent') -Force
@@ -1393,7 +1402,19 @@ try {
     $lockedStays = -not (Undo-AstevalSolvePin -PyExe $stub -VenvRoot $astevalSmoke -MaxTries 1)
     Remove-Item -LiteralPath (Join-Path $astevalSmoke 'probe-stuck') -Force
     $argsLog = Get-Content -LiteralPath (Join-Path $astevalSmoke 'args.txt') -Raw
-    $planOk = $planOk -and $badVer -and $goodVer -and $pipFail -and $probeFail -and $lockedGone -and $distGone -and $probeCrashStays -and $crashLeftFiles -and $lockedStays -and ($argsLog -match 'uninstall -y asteval')
+    $script:astevalPrepareHits = 0
+    function script:Stop-VenvLockers { param($VenvDir, $Label) $script:astevalPrepareHits++ }
+    function script:Unlock-VenvEntryPoints { param($VenvDir, $OnlyPaths) $script:astevalPrepareHits++ }
+    function script:Get-PipLockedPaths { param([Parameter(ValueFromRemainingArguments)]$Rest) @('locked') }
+    function script:Restore-VenvOldEntryPoints { param($VenvDir) $script:astevalRestored = $true }
+    New-Item -ItemType File -Path (Join-Path $astevalSmoke 'probe-stuck') -Force | Out-Null
+    Clear-FailedAstevalInstall -PyExe $stub -VenvDir $astevalSmoke -Label 'smoke' -LockText 'WinError 32' -Reason 'smoke rollback' -MaxTries 1 | Out-Null
+    $prepareRan = ($script:astevalPrepareHits -ge 1)
+    $venvDropped = -not (Test-Path -LiteralPath $astevalSmoke)
+    Remove-Item function:\Stop-VenvLockers, function:\Unlock-VenvEntryPoints, function:\Get-PipLockedPaths, function:\Restore-VenvOldEntryPoints -ErrorAction SilentlyContinue
+    $rollbackCalls = ([regex]::Matches($instSrc, '(?<!function )Clear-FailedAstevalInstall')).Count
+    $astevalSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\CheckovAstevalInstall.ps1') -Raw
+    $planOk = $planOk -and $badVer -and $goodVer -and $pipFail -and $probeFail -and $lockedGone -and $distGone -and $probeCrashStays -and $crashLeftFiles -and $lockedStays -and $filesBeatAbsent -and $rootNotSite -and $pathOk -and $prepareRan -and $venvDropped -and ($rollbackCalls -eq 2) -and ($astevalSrc -match 'function Clear-FailedAstevalInstall') -and ($astevalSrc -notmatch 'GetNewClosure') -and ($astevalSrc -match "get_path\('purelib'\)") -and ($astevalSrc -notmatch 'getsitepackages') -and ($argsLog -match 'uninstall -y asteval') -and ($argsLog -match 'get_path')
 } finally {
     if ($plan) { Clear-CheckovAstevalInstallPlan -Plan $plan }
     Remove-Item -LiteralPath $astevalSmoke -Recurse -Force -ErrorAction SilentlyContinue

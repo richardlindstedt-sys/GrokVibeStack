@@ -704,23 +704,7 @@ function New-VenvAndPip {
                         continue
                     }
                     if ($decision -eq 'rollback') {
-                        Write-Fail "asteval override failed; uninstalling asteval so 1.0.6 is not left installed"
-                        $gone = Undo-AstevalSolvePin -PyExe $pyExe -VenvRoot $VenvDir -Prepare {
-                            Stop-VenvLockers -VenvDir $VenvDir -Label $Label
-                            Unlock-VenvEntryPoints -VenvDir $VenvDir -OnlyPaths (Get-PipLockedPaths $overrideText)
-                        }
-                        if (-not $gone -and (Test-Path -LiteralPath $VenvDir)) {
-                            Write-Fail "asteval 1.0.6 still installed after uninstall retries; deleting venv"
-                            Stop-VenvLockers -VenvDir $VenvDir -Label $Label
-                            Remove-Item -LiteralPath $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
-                            $gone = -not (Test-Path -LiteralPath $VenvDir)
-                        }
-                        if (-not $gone) {
-                            Write-Fail "asteval 1.0.6 remains in $VenvDir"
-                        }
-                        if (Test-Path -LiteralPath $VenvDir) {
-                            Restore-VenvOldEntryPoints -VenvDir $VenvDir
-                        }
+                        Clear-FailedAstevalInstall -PyExe $pyExe -VenvDir $VenvDir -Label $Label -LockText $overrideText -Reason "asteval override failed; uninstalling asteval so 1.0.6 is not left installed"
                         return $false
                     }
                 }
@@ -732,12 +716,16 @@ function New-VenvAndPip {
                 Write-Warn2 "pip $Label file in use (WinError 32) - stopping lockers and retrying"
                 continue
             }
-            Restore-VenvOldEntryPoints -VenvDir $VenvDir
             if (Test-PipFileLockText $pipText) {
                 Write-Fail "pip install $Label (exit $code) - file in use; close Grok/Headroom and re-run"
-                return $false
+            } else {
+                Write-Fail "pip install $Label (exit $code)"
             }
-            Write-Fail "pip install $Label (exit $code)"
+            if ($plan.ForceAsteval) {
+                Clear-FailedAstevalInstall -PyExe $pyExe -VenvDir $VenvDir -Label $Label -LockText $pipText -Reason "solve install failed; uninstalling asteval so 1.0.6 is not left installed"
+            } else {
+                Restore-VenvOldEntryPoints -VenvDir $VenvDir
+            }
             return $false
         }
         Restore-VenvOldEntryPoints -VenvDir $VenvDir
