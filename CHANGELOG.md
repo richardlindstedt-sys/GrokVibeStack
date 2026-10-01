@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-10-01
+
 ### Fixed
 
 - asteval rollback uses `sysconfig.get_path('purelib')` (`Lib\site-packages`). On a Windows venv, `site.getsitepackages()[0]` is the venv root, so leftover `asteval` files were skipped and a metadata `ABSENT` result could count as gone. A failed solve `pip install` now takes the same uninstall-or-delete-venv path as a failed `1.0.10` override. The locker-unlock step stays an inline scriptblock so those commands resolve in the installer script. A closure module parent is global and threw before the venv delete.
