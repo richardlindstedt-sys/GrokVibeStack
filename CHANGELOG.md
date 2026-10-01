@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-01
+
+### Fixed
+
+- `assets/requirements/vibe-tools-freeze.txt` pins PyJWT `2.15.1` (was `2.13.0`), the same pin as `headroom-freeze.txt`. Dependabot #6 asked for `2.14.0` and would also have moved the Headroom freeze back from `2.15.1`.
+
 ## [2.4.3] - 2026-10-01
 
 ### Changed
