@@ -24,9 +24,9 @@ That will:
 
 ```text
 start-grok -Status          # show stack status (default port :8787)
-start-grok -ProxyOnly       # chat proxy + logon keeper (auto-restart if Headroom dies)
+start-grok -ProxyOnly       # chat proxy + hidden keeper (auto-restart if Headroom dies)
 start-grok -StopProxy -Port 8788   # leftover dual-proxy cleanup
-start-grok -StopProxy       # stop keeper + proxy on this port (disables logon task on :8787)
+start-grok -StopProxy       # stop keeper + proxy on this port (no boot task)
 start-grok -NoProxy         # skip proxy; caveman + rtk + MCP only
 start-grok -McpProfile coding   # Serena + Headroom; disable mail/calendar MCP
 start-grok -BootstrapRepo       # hooks + Serena yml + AGENTS stub in cwd

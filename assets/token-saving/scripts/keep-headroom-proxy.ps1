@@ -4,8 +4,9 @@
   Keep the Headroom proxy alive. Restarts it within a few seconds if it dies.
 
 .DESCRIPTION
-  Singleton (mutex). start-grok launches this hidden; a logon scheduled task
-  also starts it. -StopProxy on start-grok kills this first, then the proxy.
+  Singleton (mutex). start-grok launches this hidden. No logon task:
+  a boot task left an empty PowerShell window. -StopProxy kills this first,
+  then the proxy.
 
   Invokes start-grok as a *child* process. Dot-sourcing / & would hit that
   script's `exit 0` and kill this keeper.

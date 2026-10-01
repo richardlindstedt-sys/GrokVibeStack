@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-10-01
+
+### Changed
+
+- Headroom no longer registers a logon scheduled task. That task started `keep-headroom-proxy.ps1` at every sign-in and left an empty PowerShell window. `start-grok` removes a leftover `GrokVibeStack-HeadroomKeeper` task. The proxy and its hidden keeper start only when you run `start-grok`.
+
 ## [2.4.2] - 2026-10-01
 
 ### Fixed

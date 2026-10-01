@@ -11,7 +11,7 @@
     start-grok -m grok-4.6            # Grok 4.6 via the same Headroom proxy
     start-grok -NoProxy               # skip Headroom proxy (MCP + rtk + caveman only)
     start-grok -ProxyOnly             # only ensure proxy is up, do not launch grok
-    start-grok -ProxyOnly -Port 8788 -NoLogonKeeper  # dedicated review proxy
+    start-grok -ProxyOnly -Port 8788                 # dedicated review proxy (no boot task)
     start-grok -StopProxy             # stop keeper + Headroom proxy and exit
     start-grok -StopProxy -Port 8788  # stop the review proxy only (chat :8787 stays)
     start-grok -Status                # print stack status and exit
@@ -23,7 +23,7 @@ param(
     [switch]$NoProxy,
     [switch]$ProxyOnly,
     [switch]$StopProxy,
-    [switch]$NoLogonKeeper,  # session keeper only (gate :8788 never registers a logon task)
+    [switch]$NoLogonKeeper,  # accepted for old command lines; a logon task is never registered
     [switch]$Status,
     [switch]$Quiet,
     [switch]$NoOutputShaper,   # deprecated/ignored (kept for compat)
@@ -366,13 +366,32 @@ function Test-HeadroomKeeperRunning {
     return (Test-KeeperCommandLineForThisPort (Get-ProcessCommandLine $kid))
 }
 
-function Stop-HeadroomKeeper {
-    # Never disable or kill the other port's keeper (chat :8787 vs gate :8788).
-    if ($Port -eq 8787) {
-        try {
-            Disable-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue | Out-Null
-        } catch {}
+function Unregister-HeadroomLogonTask {
+    # A logon task used to start the chat keeper at boot and left an empty
+    # PowerShell window. The proxy starts only when the user runs start-grok.
+    if ($NoLogonKeeper) {
+        Write-Info 'NoLogonKeeper is obsolete; logon tasks are never registered.'
     }
+    $names = [System.Collections.Generic.List[string]]::new()
+    [void]$names.Add($KeeperTask)
+    if ($Port -ne 8787) {
+        [void]$names.Add('GrokVibeStack-HeadroomKeeper')
+    }
+    foreach ($name in $names) {
+        try {
+            $existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+            if (-not $existing) { continue }
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+            Write-Info "Removed logon task $name (proxy starts with start-grok)."
+        } catch {
+            Write-Warn ("logon task {0}: {1}" -f $name, $_.Exception.Message)
+        }
+    }
+}
+
+function Stop-HeadroomKeeper {
+    # Never kill the other port's keeper (chat :8787 vs gate :8788).
+    Unregister-HeadroomLogonTask
     if (Test-Path -LiteralPath $KeeperPidFile) {
         $raw = (Get-Content $KeeperPidFile -Raw -ErrorAction SilentlyContinue).Trim()
         $kid = 0
@@ -391,34 +410,11 @@ function Stop-HeadroomKeeper {
     } catch {}
 }
 
-function Register-HeadroomKeeperTask {
-    # Chat proxy only. A logon task for :8788 would fight the chat keeper and clobber nothing useful.
-    if ($NoLogonKeeper -or $Port -ne 8787) { return }
-    if (-not (Test-Path -LiteralPath $KeepPs1)) { return }
-    try {
-        $arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Port {1}' -f $KeepPs1, $Port
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
-        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-        $existing = Get-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue
-        if ($existing) {
-            Set-ScheduledTask -TaskName $KeeperTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
-            try { Enable-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue | Out-Null } catch {}
-        } else {
-            Register-ScheduledTask -TaskName $KeeperTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
-        }
-    } catch {
-        Write-Warn ("keeper scheduled task: {0}" -f $_.Exception.Message)
-    }
-}
-
 function Start-HeadroomKeeper {
     if (-not (Test-Path -LiteralPath $KeepPs1)) {
         Write-Warn "keep-headroom-proxy.ps1 missing — proxy will not auto-restart"
         return
     }
-    Register-HeadroomKeeperTask
     if (Test-HeadroomKeeperRunning) {
         Write-Ok "Headroom keeper already running."
         return
@@ -798,6 +794,7 @@ function Assert-GrokConfig {
 
 # --- main ---
 Ensure-Dirs
+Unregister-HeadroomLogonTask
 Ensure-Path
 $cavemanLevel = Ensure-Caveman
 $rtkVer = Ensure-Rtk

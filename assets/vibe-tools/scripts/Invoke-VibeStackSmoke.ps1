@@ -1049,8 +1049,8 @@ if ($keepSrc -match 'Start-Process' -and $keepSrc -match 'AbandonedMutexExceptio
 } else {
     Bad 'keeper still & start-grok or still restarts on hung /readyz'
 }
-if ($startSrc -match 'Disable-ScheduledTask' -and $startSrc -match "KeepPs1, '-Port'" -and $unSrc -match 'Unregister-ScheduledTask' -and $startSrc -match 'leaving live proxy' -and $startSrc -match 'busy SSE must not be killed' -and $startSrc -match 'Enable-ScheduledTask') {
-    Ok 'keeper stop disables logon task; -Port passed; busy SSE is not killed on /readyz fail'
+if ($startSrc -match 'Unregister-ScheduledTask' -and $startSrc -notmatch '(?<!Un)Register-ScheduledTask' -and $startSrc -notmatch 'AtLogOn' -and $startSrc -notmatch 'Enable-ScheduledTask' -and $startSrc -match "KeepPs1, '-Port'" -and $unSrc -match 'Unregister-ScheduledTask' -and $startSrc -match 'leaving live proxy' -and $startSrc -match 'busy SSE must not be killed') {
+    Ok 'no logon keeper task; -Port passed; busy SSE is not killed on /readyz fail'
 } else {
     Bad 'keeper stop/task/port/busy-SSE leave-alive wiring missing'
 }
