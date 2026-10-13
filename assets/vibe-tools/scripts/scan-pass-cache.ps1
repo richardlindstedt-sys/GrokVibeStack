@@ -15,7 +15,7 @@ if (-not $script:ScanPassTtlSec -or $script:ScanPassTtlSec -le 0) {
     $script:ScanPassTtlSec = 7200
 }
 if (-not $script:ScanPassScannerSet) {
-    $script:ScanPassScannerSet = 2
+    $script:ScanPassScannerSet = 3
 }
 
 function Get-TreeHashForScanCache {

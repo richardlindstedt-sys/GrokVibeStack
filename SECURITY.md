@@ -60,7 +60,7 @@ We aim to acknowledge reports within a reasonable time and fix confirmed issues 
 
 The installer downloads or installs **third-party** tools (winget, npm, pip, uv, GitHub releases). Those projects carry their own licenses and security postures.
 
-**GitHub binaries** (`scc`, `tokei`) are **pinned** in `assets/requirements/github-release-pins.json` (repo + tag + asset + SHA256). The installer downloads that exact release URL and **refuses to install** on hash mismatch. It does **not** follow `/releases/latest`. Bump a pin by changing tag/asset and the SHA256 of the downloaded file.
+**GitHub binaries** (`scc`, `actionlint`, `typos`, `zizmor`, `golangci-lint`) are **pinned** in `assets/requirements/github-release-pins.json` (repo + tag + asset + SHA256). The installer downloads that exact release URL and **refuses to install** on hash mismatch. It does **not** follow `/releases/latest`. Bump a pin by changing tag/asset and the SHA256 of the downloaded file. `tokei` is no longer installed (`scc` covers the same job, and current tokei releases ship no Windows exe).
 
 Serena installs as pinned `serena-agent==1.7.0` (PyPI, then git tag `v1.7.0`). Pip sets can still float; `-UseFrozenReqs` uses `assets/requirements/*-freeze.txt`. Winget and npm packages track current upstream. Review what you install on locked-down machines.
 

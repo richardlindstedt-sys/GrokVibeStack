@@ -2,10 +2,13 @@
 .SYNOPSIS
     Run all vibe static analysis scanners on the current directory or specific paths.
 .DESCRIPTION
-    Runs: Trivy, Gitleaks, PSScriptAnalyzer, Pester (if tests), jscpd, Biome (JS/TS), tsc --noEmit (if tsconfig),
-          markdownlint, Semgrep, Ruff/mypy/bandit/vulture (Python), yamllint/checkov (YAML/IaC), ShellCheck, Hadolint,
+    Runs: Trivy, Gitleaks, PSScriptAnalyzer, Pester (if tests), jscpd (advisory), Biome (JS/TS), tsc --noEmit (if tsconfig),
+          markdownlint, Semgrep, Ruff/mypy/bandit/vulture (Python; vulture advisory), yamllint/checkov (YAML/IaC), ShellCheck, Hadolint,
+          actionlint + zizmor when .github/workflows exists, typos (advisory unless a typos config exists),
+          golangci-lint when go.mod exists (advisory unless a golangci config exists), knip (advisory unless a knip config exists),
+          deptry (advisory) when a Python project file exists and the module imports,
           project compile/tests when cargo/go/dotnet/pytest/npm/mvn/gradle/Pester exist on PATH,
-          ast-grep when .ast-grep.yml exists,
+          ast-grep project rules when .ast-grep.yml / sgconfig.yml exists, else the built-in pack (advisory),
           + rg hints for TODOs/unwired code.
     Exits non-zero on critical findings (secrets, HIGH/CRITICAL vulns, analyzer errors, failed tests).
 #>
@@ -549,7 +552,7 @@ try {
 
     # Pester runs via Get-VibeProjectTestPlan (timeout-bounded), not a second unscoped pass.
 
-    # jscpd — blocking only when JS/TS (or similar) is in scope; else advisory
+    # jscpd — always advisory (duplicate noise does not fail the gate)
     if (Get-Command jscpd -ErrorAction SilentlyContinue) {
         if (-not $Quiet) { Write-Host "`n[jscpd] duplicate detection" -ForegroundColor Cyan }
         $jscpdTargets = [System.Collections.Generic.List[string]]::new()
@@ -580,34 +583,18 @@ try {
                     ForEach-Object { [void]$jscpdTargets.Add($_.Name) }
             }
         }
-        $jscpdDomain = $false
-        $probeList = if ($stagedNames.Count -gt 0) { $stagedNames } else { @($jscpdTargets) }
-        foreach ($pp in $probeList) {
-            if ("$pp" -match '(?i)\.(js|jsx|ts|tsx|vue|mjs|cjs)$') { $jscpdDomain = $true; break }
-        }
-        if (-not $jscpdDomain) {
-            $jsAny = Get-ChildItem -Path $scanRoot -Recurse -Include *.js,*.ts,*.tsx,*.jsx -Depth 4 -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -notmatch $script:ScanExcludeRegex } | Select-Object -First 1
-            if ($jsAny) { $jscpdDomain = $true }
-        }
         if ($jscpdTargets.Count -eq 0) {
             if (-not $Quiet) { Write-Host "[jscpd] SKIPPED (no source roots)" -ForegroundColor DarkGray }
         } else {
             $jscpdArgs = @($jscpdTargets.ToArray()) + @('-l', '6', '-k', '45')
             if (-not $Quiet) {
-                $mode = if ($jscpdDomain) { 'blocking' } else { 'advisory' }
-                Write-Host ("  targets: {0} ({1})" -f ($jscpdTargets -join ', '), $mode) -ForegroundColor DarkGray
+                Write-Host ("  targets: {0} (advisory)" -f ($jscpdTargets -join ', ')) -ForegroundColor DarkGray
             }
             $jscpdOut = & jscpd @jscpdArgs 2>&1
             if (-not $Quiet) { $jscpdOut | Select-Object -Last 25 }
             if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
-                if ($jscpdDomain) {
-                    $script:failed++
-                    if (-not $Quiet) { Write-Host "[jscpd] exited $LASTEXITCODE" -ForegroundColor Yellow }
-                } else {
-                    $script:advisory++
-                    if (-not $Quiet) { Write-Host "[jscpd] exited $LASTEXITCODE (advisory — no JS/TS in scope)" -ForegroundColor DarkYellow }
-                }
+                $script:advisory++
+                if (-not $Quiet) { Write-Host "[jscpd] exited $LASTEXITCODE (advisory)" -ForegroundColor DarkYellow }
             }
         }
     }
@@ -643,15 +630,25 @@ try {
         }
     }
 
-    # ast-grep project rules (optional .ast-grep.yml / sgconfig.yml) — local, $0 tokens
+    # ast-grep — repo config is blocking; built-in pack is advisory. Local, $0 tokens.
     $sgCfg = $null
     foreach ($c in @('.ast-grep.yml', '.ast-grep.yaml', 'sgconfig.yml')) {
         $p = Join-Path $root $c
         if (Test-Path -LiteralPath $p) { $sgCfg = $p; break }
     }
-    if ($sgCfg -and (Get-Command sg -ErrorAction SilentlyContinue)) {
+    if (Get-Command sg -ErrorAction SilentlyContinue) {
         $sgScanRoot = if ($stagedTree) { $stagedTree } else { '.' }
-        Run 'sg' @('scan', '-c', $sgCfg, $sgScanRoot) 'ast-grep project rules'
+        if ($sgCfg) {
+            Run 'sg' @('scan', '-c', $sgCfg, $sgScanRoot) 'ast-grep project rules'
+        } else {
+            $sgBuiltin = Join-Path $env:USERPROFILE '.grok\vibe-tools\ast-grep\sgconfig.yml'
+            if (-not (Test-Path -LiteralPath $sgBuiltin)) {
+                $sgBuiltin = Join-Path $PSScriptRoot '..\ast-grep\sgconfig.yml'
+            }
+            if (Test-Path -LiteralPath $sgBuiltin) {
+                Run 'sg' @('scan', '-c', $sgBuiltin, $sgScanRoot) 'ast-grep builtin rules' -Advisory
+            }
+        }
     }
 
     # Semgrep
@@ -667,7 +664,7 @@ try {
         $pyTarget = if ($stagedTree) { $stagedTree } else { '.' }
         Run 'ruff' @('check', $pyTarget) 'Ruff'
         if (Get-Command vulture -ErrorAction SilentlyContinue) {
-            Run 'vulture' @($pyTarget, '--min-confidence', '80') 'Vulture (dead code)'
+            Run 'vulture' @($pyTarget, '--min-confidence', '80') 'Vulture (dead code)' -Advisory
         }
         if (Get-Command mypy -ErrorAction SilentlyContinue) {
             Run 'mypy' @($pyTarget, '--ignore-missing-imports', '--no-error-summary') 'mypy (types)'
@@ -770,6 +767,107 @@ rules:
     $pt = Invoke-VibeProjectCompileAndTests -Root $ptRoot -Mode $ptMode -Quiet:$Quiet
     $script:failed += [int]$pt.Failed
     $script:advisory += [int]$pt.Advisory
+
+    # GitHub Actions — blocking when workflow files are in the scan root.
+    $wfDir = Join-Path $scanRoot '.github\workflows'
+    $wfFiles = @()
+    if (Test-Path -LiteralPath $wfDir) {
+        $wfFiles = @(Get-ChildItem -LiteralPath $wfDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.ya?ml$' })
+    }
+    if ($wfFiles.Count -gt 0 -and (Get-Command actionlint -ErrorAction SilentlyContinue)) {
+        Run 'actionlint' @($wfFiles.FullName) 'actionlint'
+    }
+    if ($wfFiles.Count -gt 0 -and (Get-Command zizmor -ErrorAction SilentlyContinue)) {
+        Run 'zizmor' @('--offline', '--format=plain', '--color=never', '--collect=workflows', $wfDir) 'zizmor'
+    }
+
+    # typos — blocking only after the repo opts in with a config file.
+    if (Get-Command typos -ErrorAction SilentlyContinue) {
+        $typosConfigured = $false
+        foreach ($tc in @('typos.toml', '.typos.toml', '_typos.toml')) {
+            if (Test-Path -LiteralPath (Join-Path $root $tc)) { $typosConfigured = $true; break }
+        }
+        $tyTarget = if ($stagedTree) { $stagedTree } else { '.' }
+        if ($typosConfigured) {
+            Run 'typos' @('--format', 'brief', $tyTarget) 'typos'
+        } else {
+            Run 'typos' @('--format', 'brief', $tyTarget) 'typos' -Advisory
+        }
+    }
+
+    # golangci-lint — advisory until a config exists (v2 defaults are noisy).
+    $goMods = @(Get-ChildItem -Path $scanRoot -Recurse -Filter 'go.mod' -Depth 3 -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch $script:ScanExcludeRegex -and $_.DirectoryName -notmatch '\\vendor\\' })
+    if ($goMods.Count -gt 0 -and (Get-Command golangci-lint -ErrorAction SilentlyContinue)) {
+        foreach ($gm in $goMods) {
+            $goConfigured = $false
+            foreach ($gc in @('.golangci.yml', '.golangci.yaml', '.golangci.toml')) {
+                if ((Test-Path -LiteralPath (Join-Path $root $gc)) -or (Test-Path -LiteralPath (Join-Path $gm.DirectoryName $gc))) {
+                    $goConfigured = $true
+                    break
+                }
+            }
+            Push-Location -LiteralPath $gm.DirectoryName
+            try {
+                if ($goConfigured) {
+                    Run 'golangci-lint' @('run', '--timeout', '2m') 'golangci-lint'
+                } else {
+                    Run 'golangci-lint' @('run', '--timeout', '2m') 'golangci-lint' -Advisory
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
+
+    # knip — advisory unless the package opted in. Skip when the binary is missing.
+    $pkgFiles = @(Get-ChildItem -Path $scanRoot -Recurse -Filter 'package.json' -Depth 3 -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch $script:ScanExcludeRegex -and $_.FullName -notmatch '\\node_modules\\' })
+    if ($pkgFiles.Count -gt 0 -and (Get-Command knip -ErrorAction SilentlyContinue)) {
+        foreach ($pkg in $pkgFiles) {
+            $knipConfigured = $false
+            foreach ($kc in @('knip.json', 'knip.ts', 'knip.config.ts')) {
+                if (Test-Path -LiteralPath (Join-Path $pkg.DirectoryName $kc)) { $knipConfigured = $true; break }
+            }
+            Push-Location -LiteralPath $pkg.DirectoryName
+            try {
+                if ($knipConfigured) {
+                    Run 'knip' @() 'knip'
+                } else {
+                    Run 'knip' @() 'knip' -Advisory
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
+
+    # deptry — advisory. A missing module is a skip, not a finding.
+    $pyProj = @(Get-ChildItem -Path $scanRoot -Recurse -File -Depth 3 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -in @('pyproject.toml', 'requirements.txt', 'setup.py') -and
+            $_.FullName -notmatch $script:ScanExcludeRegex
+        })
+    if ($pyProj.Count -gt 0 -and (Get-Command python -ErrorAction SilentlyContinue)) {
+        & python -c "import deptry" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            if (-not $Quiet) { Write-Host "[deptry] SKIPPED (module not installed)" -ForegroundColor DarkGray }
+        } else {
+            $deptrySeen = @{}
+            foreach ($pp in $pyProj) {
+                $dir = $pp.DirectoryName
+                if ($deptrySeen.ContainsKey($dir)) { continue }
+                $deptrySeen[$dir] = $true
+                Push-Location -LiteralPath $dir
+                try {
+                    Run 'python' @('-m', 'deptry', '.') 'deptry' -Advisory
+                } finally {
+                    Pop-Location
+                }
+            }
+        }
+    }
 
     # Hints
     if (Get-Command rg -ErrorAction SilentlyContinue) {

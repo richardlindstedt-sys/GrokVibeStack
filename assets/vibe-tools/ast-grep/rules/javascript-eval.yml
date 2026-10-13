@@ -1,0 +1,6 @@
+id: javascript-eval
+language: javascript
+severity: error
+message: eval() runs arbitrary code
+rule:
+  pattern: eval($CODE)

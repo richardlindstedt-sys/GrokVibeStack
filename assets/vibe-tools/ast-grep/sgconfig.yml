@@ -1,0 +1,3 @@
+# Built-in advisory pack. Repo-local .ast-grep.yml / sgconfig.yml stays blocking and wins.
+ruleDirs:
+  - ./rules

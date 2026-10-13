@@ -7,12 +7,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Parse + profiles + known-bad evals (no AI)
         shell: pwsh
@@ -27,11 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -40,7 +46,9 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Static scans (soft if CLIs missing)
         shell: pwsh
         env:
@@ -51,17 +59,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   ai-review:
-    if: ${{ github.event_name == 'workflow_dispatch' && secrets.XAI_API_KEY != '' }}
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Optional AI gate
         shell: pwsh
         env:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           VIBE_GATE_NO_CACHE: '1'
         run: |
+          if (-not $env:XAI_API_KEY) {
+            Write-Host 'XAI_API_KEY unset; pass (install stack and set the secret to enable).'
+            exit 0
+          }
           Write-Host 'Optional AI job: requires grok + proxy on the runner; skipped unless installed.'
           $ai = Join-Path $env:GITHUB_WORKSPACE 'assets/vibe-tools/scripts/grok-ai-review.ps1'
           if (-not (Get-Command grok -ErrorAction SilentlyContinue)) {

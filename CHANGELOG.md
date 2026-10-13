@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-10-13
+
+### Changed
+
+- Commit and push reviewers and the arbiter are one shot (`--max-turns 1`) with an empty `--tools=` allow-list (one argv token; a following empty string is dropped on Windows), so those calls do not carry built-in tool schemas or reopen an agent loop. `--deny MCPTool` blocks MCP calls; the CLI still attaches MCP meta-tool schemas. The fixer cap is **10** turns on fast, standard, and strict (was 20 / 40 / 50). A large diff no longer raises the panel back to 16 turns.
+- Scanners: `actionlint` and `zizmor` (offline, regular persona) block when `.github/workflows` exists. `typos` and `golangci-lint` are advisory until the repo adds a config. `knip` and `deptry` are advisory (`deptry==0.25.1` is a separate pip install under the freeze `--constraint`, not in the freeze). `jscpd` and `vulture` are advisory. A built-in ast-grep pack runs advisory when the repo has no `sg` config; a repo config stays blocking. `tokei` and winget `bat` are no longer installed (`scc` stays). Full scan-pass cache key is scanner set 3.
+- Spec-driven: the prompt pin also names `SPEC.md` / `DESIGN.md` and a `specs/` directory. `docs/specs` is joined as two segments so the pin works on PowerShell 7 for Linux. Reviewers get a bounded SPEC EXCERPT because the one-shot panel has no tools. No spec-kit and no fourth reviewer.
+- This repo's workflow pins `actions/checkout` and `gitleaks-action` to commit SHAs, sets `permissions: contents: read`, and `persist-credentials: false`, so the new blocking Actions scanners are clean here.
+- Smoke locks `Unregister-HeadroomLogonTask` to one `Unregister-ScheduledTask -TaskName $KeeperTask` and rejects a literal task name inside that function.
+
 ## [2.6.0] - 2026-10-13
 
 ### Changed

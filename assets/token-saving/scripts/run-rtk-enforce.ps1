@@ -66,7 +66,7 @@ $noisy = @(
     '(?i)\b(Get-ChildItem|gci|Get-Content|gc|ls|dir|tree)\b',
     # code intel / size tools (token-efficiency prefers these — still compress output)
     '(?i)\b(sg|ast-grep|difft|tokei|scc|jq)\b',
-    '(?i)\b(trivy|gitleaks|semgrep|ruff|mypy|bandit|biome|eslint|jscpd|checkov|shellcheck|hadolint|vulture)\b',
+    '(?i)\b(trivy|gitleaks|semgrep|ruff|mypy|bandit|biome|eslint|jscpd|checkov|shellcheck|hadolint|vulture|actionlint|typos|zizmor|golangci-lint|knip|deptry)\b',
     '(?i)\b(pip|pip3|uv)\b',
     '(?i)\b(headroom|vibe-review|run-vibe-scans|grok-ai-review)\b',
     '(?i)\b(tsc|prettier|markdownlint|eslint)\b',

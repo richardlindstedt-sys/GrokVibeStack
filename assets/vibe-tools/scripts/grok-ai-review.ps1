@@ -100,9 +100,9 @@ function Resolve-GateProfile {
                 MaxRounds         = 1
                 NoFixDefault      = $true
                 SequentialDefault = $true
-                ReviewerMaxTurns  = 8
-                ArbiterMaxTurns   = 6
-                FixerMaxTurns     = 20
+                ReviewerMaxTurns  = 1
+                ArbiterMaxTurns   = 1
+                FixerMaxTurns     = 10
                 ReasoningEffort   = 'medium'
                 Description       = '1 reviewer (correctness), 1 round, no auto-fix, medium effort'
             }
@@ -114,9 +114,9 @@ function Resolve-GateProfile {
                 MaxRounds         = 3
                 NoFixDefault      = $false
                 SequentialDefault = $false
-                ReviewerMaxTurns  = 16
-                ArbiterMaxTurns   = 10
-                FixerMaxTurns     = 50
+                ReviewerMaxTurns  = 1
+                ArbiterMaxTurns   = 1
+                FixerMaxTurns     = 10
                 ReasoningEffort   = 'high'
                 Description       = '3 reviewers, 3 rounds, fix loop, higher budgets'
             }
@@ -128,9 +128,9 @@ function Resolve-GateProfile {
                 MaxRounds         = 2
                 NoFixDefault      = $false
                 SequentialDefault = $false
-                ReviewerMaxTurns  = 12
-                ArbiterMaxTurns   = 8
-                FixerMaxTurns     = 40
+                ReviewerMaxTurns  = 1
+                ArbiterMaxTurns   = 1
+                FixerMaxTurns     = 10
                 ReasoningEffort   = 'high'
                 Description       = '3 reviewers, 2 rounds, fix loop'
             }
@@ -265,20 +265,8 @@ if ([string]::IsNullOrWhiteSpace($ReasoningEffort)) {
     $ReasoningEffort = [string]$script:ResolvedProfile.ReasoningEffort
     if (-not $ReasoningEffort) { $ReasoningEffort = 'high' }
 }
-# Large diffs: compress into brief (below). Slight turn headroom for panel JSON only.
-if (-not $PSBoundParameters.ContainsKey('ReviewerMaxTurns')) {
-    try {
-        $probe = git diff --cached --no-color 2>$null
-        if (-not $probe) { $probe = git diff --no-color 2>$null }
-        $n = if ($probe) { (ConvertTo-SinglePatchText $probe).Length } else { 0 }
-        if ($n -gt 60000 -and $ReviewerMaxTurns -lt 16) { $ReviewerMaxTurns = 16 }
-        if ($n -gt 60000 -and $ArbiterMaxTurns -lt 10) { $ArbiterMaxTurns = 10 }
-        if ($n -gt 0 -and $n -lt 24000 -and $script:ResolvedProfile.Name -ne 'strict') {
-            if ($ReviewerMaxTurns -gt 8) { $ReviewerMaxTurns = 8 }
-            if ($ArbiterMaxTurns -gt 6) { $ArbiterMaxTurns = 6 }
-        }
-    } catch {}
-}
+# Reviewer and arbiter stay one-shot. Large diffs are compressed into the brief.
+# Do not raise max-turns here: that reopened the agent loop and resent the prompt.
 if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.NoFixDefault) {
     $NoFix = $true
 }
@@ -516,8 +504,8 @@ function Get-DiffFileStats([string]$diff) {
 
 function Compress-DiffForReview {
     <#
-      Large diffs burn reviewer max-turns (agents try to chunk the blob).
-      Build a bounded brief: file list + hotspots + per-file sample hunks.
+      Large diffs are one-shot reviews. Build a bounded brief so the panel
+      does not need tools to re-read the patch: file list + hotspots + sample hunks.
     #>
     param(
         [string]$Diff,
@@ -677,8 +665,9 @@ function Invoke-GrokHeadless {
         [Parameter(Mandatory)][string]$PromptFile,
         [Parameter(Mandatory)][string]$Label,
         [string]$Effort = 'high',
-        [int]$MaxTurns = 12,
+        [int]$MaxTurns = 1,
         [switch]$AllowWrites,
+        [switch]$ReadOnlyReview,
         [string]$OutLog,
         [string]$WorkingDirectory = '',
         [scriptblock]$OnPulse = $null,
@@ -693,7 +682,7 @@ function Invoke-GrokHeadless {
     if ($needsProxy -and -not $NoHatchRetry -and -not $preflightUsable) { $vanillaOk = [bool](Test-VanillaHatchEndpoint -HatchModel $hatch) }
     if ((Get-VibePreflightHatchKind -NeedsProxy $needsProxy -NoHatchRetry ([bool]$NoHatchRetry) -ProxyUsable $preflightUsable -VanillaHatchOk $vanillaOk) -eq 'direct') {
         Write-Host ("  proxy down - {0} using {1}" -f $Label, $hatch) -ForegroundColor Yellow
-        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $hatch -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $hatch -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -ReadOnlyReview:$ReadOnlyReview -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
     }
 
     $argList = [System.Collections.Generic.List[string]]::new()
@@ -707,11 +696,20 @@ function Invoke-GrokHeadless {
     [void]$argList.Add("$MaxTurns")
     [void]$argList.Add('--permission-mode')
     [void]$argList.Add('bypassPermissions')
-    # Headless single-shot style still allows multi-turn agent loop via max-turns
+    # Read-only panel: one shot, no built-in tool schemas. Grok still attaches MCP
+    # meta-tools; --deny stops those calls. The fixer keeps its tools.
     if ($AllowWrites) {
         [void]$argList.Add('--yolo')
+    } elseif ($ReadOnlyReview) {
+        [void]$argList.Add('--disable-web-search')
+        # One token. Start-Process drops a following empty string, and clap then
+        # rejects --tools with no value (exit 2, no vote).
+        [void]$argList.Add('--tools=')
+        [void]$argList.Add('--disallowed-tools')
+        [void]$argList.Add('Agent,read_file,grep,list_dir,search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash,web_search,web_fetch,ask_user_question')
+        [void]$argList.Add('--deny')
+        [void]$argList.Add('MCPTool')
     } else {
-        # Read-oriented reviewers: no edits / no shell side effects
         [void]$argList.Add('--disallowed-tools')
         [void]$argList.Add('search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash')
     }
@@ -804,9 +802,54 @@ function Invoke-GrokHeadless {
         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
             Write-GateProgress ("proxy stream fail - retry {0} on {1}" -f $Label, $ModelName)
         }
-        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -ReadOnlyReview:$ReadOnlyReview -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
     }
     return @{ Ok = $ok; Text = $text; ExitCode = $code; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
+}
+
+function Get-VibeSpecExcerpt {
+    param([string]$WorkRoot = '')
+    if ([string]::IsNullOrWhiteSpace($WorkRoot)) {
+        try { $WorkRoot = (Get-Location).Path } catch { return '' }
+    }
+    if ([string]::IsNullOrWhiteSpace($WorkRoot)) { return '' }
+    $files = New-Object System.Collections.Generic.List[string]
+    foreach ($n in @('SPEC.md', 'spec.md', 'DESIGN.md', 'design.md')) {
+        $p = Join-Path $WorkRoot $n
+        if (Test-Path -LiteralPath $p) { [void]$files.Add($p) }
+    }
+    $mdBudget = 3
+    foreach ($dirName in @('specs', 'docs/specs')) {
+        if ($mdBudget -le 0) { break }
+        $d = $WorkRoot
+        foreach ($part in ($dirName -split '/')) { $d = Join-Path $d $part }
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        $found = @(Get-ChildItem -LiteralPath $d -Filter '*.md' -File -ErrorAction SilentlyContinue | Select-Object -First $mdBudget)
+        foreach ($f in $found) {
+            [void]$files.Add($f.FullName)
+            $mdBudget--
+        }
+    }
+    if ($files.Count -eq 0) { return '' }
+    $cap = 6000
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('SPEC EXCERPT (written contract; reviewers have no tools so this is the only copy):')
+    [void]$sb.AppendLine('Correctness: a diff that contradicts this excerpt is a blocker if it would ship wrong behavior, else next. Do not invent requirements absent from the excerpt or the diff.')
+    foreach ($f in $files) {
+        if ($sb.Length -ge $cap) { break }
+        $raw = ''
+        try { $raw = [string](Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue) } catch { $raw = '' }
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        $rel = $f
+        if ($f.StartsWith($WorkRoot)) { $rel = $f.Substring($WorkRoot.Length).TrimStart('\', '/') }
+        $room = $cap - $sb.Length
+        if ($room -lt 80) { break }
+        $chunk = $raw
+        if ($chunk.Length -gt $room) { $chunk = $chunk.Substring(0, [Math]::Max(0, $room - 4)) + "`n..." }
+        [void]$sb.AppendLine("--- $rel ---")
+        [void]$sb.AppendLine($chunk)
+    }
+    return $sb.ToString()
 }
 
 function New-ReviewerPrompt {
@@ -890,6 +933,8 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine('}')
     [void]$sb.AppendLine('If no findings, use "findings": [].')
     if ($prior) { [void]$sb.AppendLine($prior) }
+    $specExcerpt = Get-VibeSpecExcerpt
+    if ($specExcerpt) { [void]$sb.AppendLine($specExcerpt) }
     [void]$sb.AppendLine('DIFF/CONTEXT:')
     [void]$sb.AppendLine($DiffText)
     return $sb.ToString()
@@ -1255,7 +1300,7 @@ function Invoke-ReviewerPanel {
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers -RaiseSecurityNext:([bool]$script:RaiseSecurityNext))
-            $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -OutLog $lf
+            $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf
             Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn (($left | ForEach-Object { "vibe-$_" }) -join ', ')
         }
     } else {
@@ -1273,7 +1318,10 @@ function Invoke-ReviewerPanel {
                         '--reasoning-effort', $Effort,
                         '--max-turns', "$MaxTurns",
                         '--permission-mode', 'bypassPermissions',
-                        '--disallowed-tools', 'search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash'
+                        '--disable-web-search',
+                        '--tools=',
+                        '--disallowed-tools', 'Agent,read_file,grep,list_dir,search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash,web_search,web_fetch,ask_user_question',
+                        '--deny', 'MCPTool'
                     )
                     $output = & $Exe @argList 2>&1
                     $code = $LASTEXITCODE
@@ -1565,7 +1613,7 @@ function Invoke-Arbiter {
     $lf = Join-Path $RoundDir 'arbiter.log.txt'
     Save-Text $pf (New-ArbiterPrompt -DiffText $DiffText -PanelJson $panelJson -Round $Round)
     Save-Text (Join-Path $RoundDir 'panel.json') $panelJson
-    $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'arbiter' -Effort $Effort -MaxTurns $MaxTurns -OutLog $lf
+    $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'arbiter' -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf
     if (-not $r.Ok) {
         return @{ Ok = $false; Error = "Arbiter failed (exit $($r.ExitCode))"; Text = $r.Text }
     }

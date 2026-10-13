@@ -10,13 +10,36 @@
       "destSha256": "b22c38e5bd888d98cdc3987cd125b0041fa1154ed4ef59238052d156461324e8"
     },
     {
-      "dest": "tokei.exe",
-      "repo": "XAMPPRocky/tokei",
-      "tag": "v13.0.0-alpha.0",
-      "asset": "tokei-x86_64-pc-windows-msvc.exe",
-      "sha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
-      "destSha256": "0ca5d37dad82dd8fd365e6853dfd278f964be52e56bed9c2b160bccf8220d492",
-      "note": "v15.0.0 (latest as of 2026-10-13) still ships no assets (source tarball only). v13/v14 and later v13 alphas neither. This alpha remains the newest Windows x64 exe."
+      "dest": "actionlint.exe",
+      "repo": "rhysd/actionlint",
+      "tag": "v1.7.12",
+      "asset": "actionlint_1.7.12_windows_amd64.zip",
+      "sha256": "6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9",
+      "destSha256": "54ca21be3de4c7cfa26914aa8b61bd76bf573ef3caac5f80d110558cdf241718"
+    },
+    {
+      "dest": "typos.exe",
+      "repo": "crate-ci/typos",
+      "tag": "v1.50.2",
+      "asset": "typos-v1.50.2-x86_64-pc-windows-msvc.zip",
+      "sha256": "8474ca8bd72df497b7dee2272345bdea0d4926b18b708faea492fc9bcfd0b0e9",
+      "destSha256": "981276a6bcd83207238064187caaa32d41f9dcb21678cb8749cbbd45b47de8cd"
+    },
+    {
+      "dest": "zizmor.exe",
+      "repo": "zizmorcore/zizmor",
+      "tag": "v1.30.1",
+      "asset": "zizmor-x86_64-pc-windows-msvc.zip",
+      "sha256": "b183b1e996eddfab9659f1e9b46e059f1ef1cf984a1f14e5da09f7876a4b3a1c",
+      "destSha256": "4ace959d58c0dc48659c3eeefc4bb9e3b18197c174e5e997d2f8e0896f0d3c9e"
+    },
+    {
+      "dest": "golangci-lint.exe",
+      "repo": "golangci/golangci-lint",
+      "tag": "v2.14.0",
+      "asset": "golangci-lint-2.14.0-windows-amd64.zip",
+      "sha256": "b15f903d1649283a2ab6e8d2f0c317eaf1f9f6b3763950e7e8b7e72a43dd724f",
+      "destSha256": "d28ff287505d679f117705bfd57bca66a9f30ef63a99582afbb200ba940e9aad"
     }
   ]
 }

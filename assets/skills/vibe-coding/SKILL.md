@@ -71,9 +71,10 @@ After install: if Grok was already open → `/hooks` then `r`, or restart.
 
 ## Scanners (gate / explicit)
 
-trivy, gitleaks, PSScriptAnalyzer, Pester, jscpd, biome, tsc (if tsconfig), markdownlint (advisory),
-semgrep, ruff/mypy/bandit/vulture, yamllint/checkov, shellcheck, hadolint,
-ast-grep (when `.ast-grep.yml` exists),
+trivy, gitleaks, PSScriptAnalyzer, Pester, jscpd (advisory), biome, tsc (if tsconfig), markdownlint (advisory),
+semgrep, ruff/mypy/bandit, vulture (advisory), yamllint/checkov, shellcheck, hadolint,
+actionlint + zizmor when workflows exist, typos / golangci-lint / knip / deptry when that language is present (advisory unless the repo opted in with a config),
+ast-grep project rules when `.ast-grep.yml` / `sgconfig.yml` exists, else the built-in pack (advisory),
 project compile/tests if cargo/go/dotnet/pytest/npm/mvn/gradle/Pester exist
 (tests on commit + Full/push; fail if a test layout exists but was skipped),
 rg for TODO/FIXME/unwired.

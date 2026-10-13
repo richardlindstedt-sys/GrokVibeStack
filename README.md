@@ -20,7 +20,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.6.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.7.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -173,7 +173,7 @@ Two lanes, one install: **quality** (on-edit → pre-commit → pre-push) and **
 | Gate | Trigger | Action | Blocks? |
 |------|---------|--------|---------|
 | On-edit | Grok file write/edit | Secrets + linters + parser diagnostics (PowerShell `ParseFile`, `py_compile`, `node --check`; rustfmt/gofmt/`dotnet format` when those CLIs exist). Cap ~10 lines. Fail-open. | No |
-| Prompt inject | Next user prompt | Pending on-edit findings + **SPEC PIN** (re-read `TASKS.md` / plan files after compact) + GATE LIVE | No |
+| Prompt inject | Next user prompt | Pending on-edit findings + **SPEC PIN** (re-read `TASKS.md` / `SPEC.md` / plan files after compact) + GATE LIVE | No |
 | **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests on the working tree** (fail if a test layout exists but tests were skipped) + **profile=standard** LLM loop | **Yes** |
 | **pre-push** | `git push` | Scanners + project compile/tests (if toolchain) + **fast** LLM (sensitive paths add security; version tags → **strict**) | **Yes** |
 | Stop / gate-live | Turn end | Block silent end while `gate-now` is live; remind if edited | Keeps turn |
@@ -256,13 +256,13 @@ End-to-end “% off my monthly bill” depends on mix of chat vs gates vs tool n
 
 ### Tools pulled at install (third-party)
 
-winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, typescript, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
+winget/npm/pip/uv may install: Python, Git, Node, uv, ripgrep, fd, trivy, gitleaks, biome, shellcheck, hadolint, gh, jq, jscpd, markdownlint-cli, typescript, knip, headroom-ai, ast-grep, ruff, mypy, bandit, semgrep, checkov, yamllint, vulture, deptry, rtk, Serena, PSScriptAnalyzer, Pester, and related helpers.
 
-Language SDKs (Rust, Go, .NET, JDK) are **not** bundled. If `cargo` / `go` / `dotnet` / `tsc` / `pytest` / `mvn` / `gradle` / `Invoke-Pester` are on PATH, gates run them. **ast-grep** runs `sg scan` when `.ast-grep.yml` / `sgconfig.yml` exists.
+Language SDKs (Rust, Go, .NET, JDK) are **not** bundled. If `cargo` / `go` / `dotnet` / `tsc` / `pytest` / `mvn` / `gradle` / `Invoke-Pester` are on PATH, gates run them. **ast-grep** runs repo rules when `.ast-grep.yml` / `sgconfig.yml` exists, otherwise a small built-in pack (advisory). Workflow repos also get **actionlint** and **zizmor**. **typos**, **golangci-lint**, **knip**, and **deptry** run when the matching project files exist.
 
 If a **test layout** exists (Cargo/Go/pytest/npm test/sln/csproj/pom/gradle/`*.Tests.ps1`) but tests were skipped (`VIBE_SKIP_PROJECT_TOOLS`, `VIBE_SKIP_PROJECT_TESTS`, timeout 0, or no runner), the gate **fails** unless `VIBE_ALLOW_SKIP_TESTS=1`.
 
-Those projects keep their own licenses and update cadence. GitHub binaries use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install): **scc v4.1.0**, **tokei v13.0.0-alpha.0** (`v15.0.0` still ships no Windows exe). Serena PyPI pin is **1.7.0**. Pip floors (2026-10-13): `headroom-ai[proxy]>=0.40.0`, `ast-grep-cli>=0.50.0`, `ruff>=0.17.0`, `mypy>=2.4.0`, `semgrep>=1.180.0`, `checkov>=3.3.29`, `asteval==1.0.10`. checkov still requires `asteval==1.0.6`; the installer solves that pin, then force-installs `1.0.10`. Plain `pip install -r` of the vibe requirements fails closed on the conflict. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
+Those projects keep their own licenses and update cadence. GitHub binaries use pinned tag + SHA256 in `assets/requirements/github-release-pins.json` (hash mismatch = skip install): **scc v4.1.0**, **actionlint v1.7.12**, **typos v1.50.2**, **zizmor v1.30.1**, **golangci-lint v2.14.0**. `tokei` is not installed. Serena PyPI pin is **1.7.0**. Pip floors (2026-10-13): `headroom-ai[proxy]>=0.40.0`, `ast-grep-cli>=0.50.0`, `ruff>=0.17.0`, `mypy>=2.4.0`, `semgrep>=1.180.0`, `checkov>=3.3.29`, `asteval==1.0.10`. checkov still requires `asteval==1.0.6`; the installer solves that pin, then force-installs `1.0.10`. Plain `pip install -r` of the vibe requirements fails closed on the conflict. Optional: `-UseFrozenReqs` for pip freeze files under `assets/requirements/`.
 
 ---
 

@@ -13,8 +13,8 @@
     token-saving (Headroom venv, rtk, start-grok, caveman)
     vibe-tools (scanner venv, review scripts, git + Grok hooks)
     rules / skills / AGENTS.md / RTK.md
-    winget CLIs (rg, fd, bat, trivy, gitleaks, biome, shellcheck, hadolint, gh)
-    npm globals (jscpd, markdownlint-cli, typescript)
+    winget CLIs (rg, fd, trivy, gitleaks, biome, shellcheck, hadolint, gh)
+    npm globals (jscpd, markdownlint-cli, typescript, knip)
     PS modules (PSScriptAnalyzer, Pester)
     Serena MCP (uv tool)
     config.toml managed block (Headroom + Serena MCP, grok-4.7 + grok-4.6 + grok-gate alias on :8787 + *-direct hatch)
@@ -111,7 +111,7 @@ $script:Manifest = [ordered]@{
     stackFiles           = New-Object System.Collections.Generic.List[string]
     binShims             = @(
         'start-grok.cmd', 'start-grok.ps1', 'stop-grok-proxy.cmd',
-        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe',
+        'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'actionlint.exe', 'typos.exe', 'zizmor.exe', 'golangci-lint.exe',
         'grok-mcp-coding.cmd', 'grok-mcp-personal.cmd', 'initialize-vibe-repo.ps1', 'get-vibe-affected-tests.ps1'
     )
     hookFiles            = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')
@@ -1108,7 +1108,7 @@ function Install-NpmGlobals {
         Write-Warn2 "npm missing - skip global packages"
         return
     }
-    foreach ($pkg in @('jscpd', 'markdownlint-cli', 'typescript')) {
+    foreach ($pkg in @('jscpd', 'markdownlint-cli', 'typescript', 'knip')) {
         Write-Info "npm i -g $pkg"
         if ($DryRun) {
             [void]$script:Manifest.npmPackages.Add($pkg)
@@ -1362,6 +1362,31 @@ if (-not $DryRun -and $vibeOk) {
             Write-Ok "checkov Windows launcher fixed (venv + bin shim)"
         }
     }
+    # deptry stays out of vibe-tools.txt / the freeze (checkov still forces asteval==1.0.6).
+    # Exact pin plus the freeze as --constraint so this pip cannot upgrade frozen dists.
+    # A failed install warns; the scanner skips when the module is missing.
+    if (Test-Path -LiteralPath $vPy) {
+        $deptryConstraint = Join-Path $Assets 'requirements\vibe-tools-freeze.txt'
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            if (-not (Test-Path -LiteralPath $deptryConstraint)) {
+                Write-Warn2 "vibe-tools-freeze.txt missing; skipping deptry (refusing an unconstrained install)"
+            } else {
+                Write-Info "pip install deptry==0.25.1 (advisory; constrained by the freeze)"
+                & $vPy -m pip install --disable-pip-version-check --constraint $deptryConstraint 'deptry==0.25.1' 2>&1 | ForEach-Object { Write-Info "$_" }
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok "deptry installed"
+                } else {
+                    Write-Warn2 "deptry install failed (advisory scanner skips until it installs)"
+                }
+            }
+        } catch {
+            Write-Warn2 "deptry install: $_"
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+    }
 }
 if (-not $hrOk -or -not $vibeOk) {
     Write-Fail "Critical venv/pip step failed - stack incomplete"
@@ -1405,7 +1430,6 @@ if ($SkipWinget) {
     $wingetPkgs = @(
         @{ Id = 'BurntSushi.ripgrep.MSVC'; Label = 'ripgrep' },
         @{ Id = 'sharkdp.fd'; Label = 'fd' },
-        @{ Id = 'sharkdp.bat'; Label = 'bat' },
         @{ Id = 'AquaSecurity.Trivy'; Label = 'trivy' },
         @{ Id = 'Gitleaks.Gitleaks'; Label = 'gitleaks' },
         @{ Id = 'BiomeJS.Biome'; Label = 'biome' },
@@ -1425,9 +1449,10 @@ Install-NpmGlobals
 Write-Step "PowerShell modules"
 Install-PsModules
 
-Write-Step "Optional binaries (scc, tokei, difft via headroom tools)"
-[void](Install-GithubReleaseBinary -DestName 'scc.exe')
-[void](Install-GithubReleaseBinary -DestName 'tokei.exe')
+Write-Step "Pinned binaries (scc, actionlint, typos, zizmor, golangci-lint; difft via headroom tools)"
+foreach ($pinnedBin in @('scc.exe', 'actionlint.exe', 'typos.exe', 'zizmor.exe', 'golangci-lint.exe')) {
+    [void](Install-GithubReleaseBinary -DestName $pinnedBin)
+}
 # Headroom bundles ast-grep + difft + scc into user cache (structural diff = fewer tokens than raw diffs)
 $hrExe = Join-Path $TokenRoot 'venv\Scripts\headroom.exe'
 if ((Test-Path -LiteralPath $hrExe) -and -not $DryRun) {

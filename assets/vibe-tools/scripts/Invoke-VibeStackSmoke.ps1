@@ -173,6 +173,14 @@ if ($rawReview -match 'NoFixDefault\s*=\s*\$true' -and $rawReview -match "Roles\
 } else {
     Bad 'fast profile shape unexpected'
 }
+$rev1 = [regex]::Matches($rawReview, 'ReviewerMaxTurns\s+=\s+1\b').Count
+$arb1 = [regex]::Matches($rawReview, 'ArbiterMaxTurns\s+=\s+1\b').Count
+$fix10 = [regex]::Matches($rawReview, 'FixerMaxTurns\s+=\s+10\b').Count
+if ($rev1 -ge 3 -and $arb1 -ge 3 -and $fix10 -ge 3 -and $rawReview -match "'--tools='" -and $rawReview -notmatch "'--tools', ''" -and $rawReview -match 'ReadOnlyReview' -and $rawReview -notmatch 'ReviewerMaxTurns\s+=\s+16') {
+    Ok 'panel one-shot, empty tool allow-list, fixer cap 10'
+} else {
+    Bad "panel turn/tool shape unexpected (reviewer=$rev1 arbiter=$arb1 fixer=$fix10)"
+}
 if ($rawReview -match "ReasoningEffort\s*=\s*'medium'" -and $rawReview -match 'Apply-PathAwareProfile' -and $rawReview -match 'AutoProfile') {
     Ok 'fast medium effort + AutoProfile path-aware'
 } else {
@@ -453,10 +461,10 @@ if (Test-Path -LiteralPath $pathHelper) {
 } else {
     Bad 'missing gate-path-parse.ps1'
 }
-if ($scanSrc -match 'jscpdDomain' -and $scanSrc -match 'iacDomain' -and $scanSrc -match 'no JS/TS' -and $scanSrc -match 'no IaC domain') {
-    Ok 'scans: jscpd/checkov path-domain advisory'
+if ($scanSrc -match 'jscpdTargets' -and $scanSrc -match '\[jscpd\] exited \$LASTEXITCODE \(advisory\)' -and $scanSrc -notmatch 'jscpdDomain' -and $scanSrc -match 'iacDomain' -and $scanSrc -match 'no IaC domain') {
+    Ok 'scans: jscpd always advisory; checkov IaC domain split'
 } else {
-    Bad 'scans missing jscpd/checkov advisory domain split'
+    Bad 'scans missing jscpd advisory or checkov IaC domain split'
 }
 # Success path must exit 0 so & / $LASTEXITCODE callers are not poisoned by advisory tools
 if ($scanSrc -match 'Static scans passed' -and $scanSrc -match 'exit 0') {
@@ -501,14 +509,14 @@ if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gat
     Bad 'gate-progress.ps1 missing RUN token / append-only status / recap / popup or not wired'
 }
 $rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
-if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {
-    Ok 'rtk: sg/ast-grep/difft/tokei + no bare find'
+if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'zizmor' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {
+    Ok 'rtk: sg/ast-grep/difft/tokei/zizmor + no bare find'
 } else {
     # bare find may still appear as find\.exe — check no '\bfind\b' alone in noisy list
-    if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'find\\.exe') {
+    if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'zizmor' -and $rtkSrc2 -match 'find\\.exe') {
         Ok 'rtk: expanded noisy list (find.exe only)'
     } else {
-        Bad 'rtk noisy list missing sg/tokei/difft tighten'
+        Bad 'rtk noisy list missing sg/tokei/difft/zizmor tighten'
     }
 }
 $stopSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1') -Raw -ErrorAction SilentlyContinue
@@ -534,7 +542,7 @@ if ($verOk -and $instOk -and $docOk -and $logOk -and $readOk) {
 } else {
     Bad "VERSION / banner / stackVersion / doctor / changelog / README [$verLine] missing"
 }
-if ($instSrc -match "'jscpd', 'markdownlint-cli', 'typescript'" -and $instSrc -notmatch "'prettier'" -and $instSrc -notmatch "'eslint'") {
+if ($instSrc -match "'jscpd', 'markdownlint-cli', 'typescript', 'knip'" -and $instSrc -notmatch "'prettier'" -and $instSrc -notmatch "'eslint'") {
     Ok 'npm globals: typescript kept; prettier/eslint not installed'
 } else {
     Bad 'npm globals still install prettier/eslint or dropped typescript'
@@ -583,7 +591,7 @@ $pinFile = Join-Path $RepoRoot 'assets\requirements\github-release-pins.json'
 if ($instSrc -notmatch 'releases/latest' -and $instSrc -match 'github-release-pins\.json' -and $instSrc -match 'function Test-FileSha256' -and $instSrc -match 'function Test-GithubReleasePinShape' -and $instSrc -match 'destSha256' -and (Test-Path -LiteralPath $pinFile)) {
     $pinDoc = Get-Content -LiteralPath $pinFile -Raw | ConvertFrom-Json
     $pinOk = $true
-    foreach ($need in @('scc.exe', 'tokei.exe')) {
+    foreach ($need in @('scc.exe', 'actionlint.exe', 'typos.exe', 'zizmor.exe', 'golangci-lint.exe')) {
         $hit = @($pinDoc.pins) | Where-Object { $_.dest -eq $need } | Select-Object -First 1
         if (-not $hit -or [string]$hit.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or [string]$hit.destSha256 -notmatch '^[0-9a-fA-F]{64}$' -or -not $hit.tag -or -not $hit.asset -or -not $hit.repo) {
             $pinOk = $false
@@ -611,10 +619,15 @@ if ($vibeHookTpl -match 'UserPromptSubmit' -and $vibeHookTpl -match 'run-vibe-pr
     Ok 'on-edit findings -> UserPromptSubmit additionalContext'
 }
 $promptCtx = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-prompt-context.ps1') -Raw
-if ($promptCtx -match 'SPEC PIN' -and $promptCtx -match 'TASKS.md') {
+if ($promptCtx -match 'SPEC PIN' -and $promptCtx -match 'TASKS.md' -and $promptCtx -match 'SPEC.md') {
     Ok 'prompt-context: spec pin after compact'
 } else {
     Bad 'prompt-context missing SPEC PIN'
+}
+if ($rawReview -match 'function Get-VibeSpecExcerpt' -and $rawReview -match 'SPEC EXCERPT') {
+    Ok 'review: bounded SPEC EXCERPT when a spec file exists'
+} else {
+    Bad 'review missing SPEC EXCERPT helper'
 }
 if ($rawReview -match 'RaiseSecurityNext' -and $rawReview -match 'quadratic' -and $rawReview -match 'THIS GATE: exploitable') {
     Ok 'review: strict/sensitive security next->blocker; simplicity perf hunt'
@@ -1054,10 +1067,18 @@ if ($startSrc -match 'Unregister-ScheduledTask' -and $startSrc -notmatch '(?<!Un
 } else {
     Bad 'keeper stop/task/port/busy-SSE leave-alive wiring missing'
 }
-if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$portTag' -and $startSrc -match 'Test-KeeperCommandLineForThisPort' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $startSrc -match 'Only this port' -and $startSrc -notmatch 'Port -ne 8787') {
-    Ok 'start-grok: port-scoped pid/fp/keeper; logon unregister is this port only'
+$logonFn = ''
+$logonAt = $startSrc.IndexOf('function Unregister-HeadroomLogonTask')
+if ($logonAt -ge 0) {
+    $nextFn = $startSrc.IndexOf("`nfunction ", $logonAt + 20)
+    if ($nextFn -lt 0) { $nextFn = $startSrc.Length }
+    $logonFn = $startSrc.Substring($logonAt, $nextFn - $logonAt)
+}
+$logonUnreg = @([regex]::Matches($logonFn, 'Unregister-ScheduledTask')).Count
+if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$portTag' -and $startSrc -match 'Test-KeeperCommandLineForThisPort' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $logonUnreg -eq 1 -and $logonFn -match 'Get-ScheduledTask -TaskName \$KeeperTask' -and $logonFn -match 'Unregister-ScheduledTask -TaskName \$KeeperTask' -and $logonFn -notmatch 'GrokVibeStack-HeadroomKeeper') {
+    Ok 'start-grok: port-scoped pid/fp/keeper; logon unregister is \$KeeperTask only'
 } else {
-    Bad 'start-grok missing port-scoped state / NoLogonKeeper / this-port logon unregister'
+    Bad 'start-grok missing port-scoped state / NoLogonKeeper / \$KeeperTask-only logon unregister'
 }
 if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwnerPids' -and $startSrc -match 'function Save-ProxyFingerprint' -and $startSrc -match 'Set-Content -Path \$ProxyPidFile -Value \$adopted' -and $startSrc -match 'PID file after listen proof' -and $startSrc -match 'Foreign listener or CIM race' -and $startSrc -match 'Get-VibeListenSocketPids -Port \$Port' -and $startSrc -notmatch 'Empty Listen / no OwningProcess' -and $startSrc -notmatch 'function Test-ProxyHttpReady' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
     Ok 'start-grok: ListenProbe owners; empty owners need socket descendant; no HTTP-ready zombie'
@@ -1238,7 +1259,7 @@ if ($docSrc -match 'v3\|hr=' -and $docSrc -match '/readyz' -and $docSrc -match '
 } else {
     Bad 'doctor missing hr v3 fingerprint / readyz / env_key warn'
 }
-if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.7'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'function Test-VibeNeedsHeadroomProxy' -and $rawReview -match 'function Get-VibeVanillaHatchModel' -and $rawReview -match 'grok-4.7-direct' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match 'ConvertTo-SinglePatchText \$probe' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
+if ($rawReview -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibeProxyStackUp' -and $rawReview -match 'ListenProbe' -and $rawReview -notmatch 'function Test-ProxyHttpReady' -and $rawReview -match 'function Test-ProxyUsable' -and $rawReview -match 'Get-VibePreflightHatchKind' -and $rawReview -match 'Get-VibeStreamRetryKind' -and $rawReview -match 'Get-NetTCPConnection can block' -and $rawReview -match 'Test-ProxyUsable \$Port' -and $rawReview -match 'proxy stream failed' -and $rawReview -match 'NoHatchRetry' -and $rawReview -match "Model = 'grok-4.7'" -and $rawReview -match 'ProxyPort = 8787' -and $rawReview -match 'sharesChatProxy' -and $rawReview -match 'function Test-VibeNeedsHeadroomProxy' -and $rawReview -match 'function Get-VibeVanillaHatchModel' -and $rawReview -match 'grok-4.7-direct' -and $rawReview -match 'NoLogonKeeper' -and $rawReview -match 'Test-ProxyUsable \$ProxyPort' -and $rawReview -match 'same Headroom' -and $rawReview -match 'reqwest error' -and $rawReview -match "'bucket', 'severity'" -and $rawReview -match 'Never /readyz' -and $rawReview -match 'WaitForExit' -and $rawReview -notmatch "ArgumentList \$sg -Wait" -and $rawReview -notmatch 'return \[bool\]\(Test-ProxyHttpReady') {
     Ok 'review: grok-4.7 :8787 one proxy; stream fail retries Headroom; listen-only preflight'
 } else {
     Bad 'review missing grok-4.7 :8787 / Headroom retry / listen-only preflight'

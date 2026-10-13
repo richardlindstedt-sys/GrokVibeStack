@@ -86,7 +86,7 @@ function Get-Manifest {
         )
         binShims            = @(
             'start-grok.cmd', 'start-grok.ps1', 'stop-grok-proxy.cmd',
-            'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'tokei.exe',
+            'vibe-review.ps1', 'install-vibe-hooks.ps1', 'doctor.ps1', 'checkov.cmd', 'rtk.exe', 'scc.exe', 'actionlint.exe', 'typos.exe', 'zizmor.exe', 'golangci-lint.exe',
             'grok-mcp-coding.cmd', 'grok-mcp-personal.cmd', 'initialize-vibe-repo.ps1', 'get-vibe-affected-tests.ps1'
         )
         hookFiles           = @('token-saving.json', 'vibe-coding.json', 'serena-hooks.json')

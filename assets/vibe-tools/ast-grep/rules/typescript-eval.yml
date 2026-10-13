@@ -1,0 +1,6 @@
+id: typescript-eval
+language: typescript
+severity: error
+message: eval() runs arbitrary code
+rule:
+  pattern: eval($CODE)

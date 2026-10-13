@@ -97,10 +97,19 @@ try { $cwdNow = (Get-Location).Path } catch { $cwdNow = '' }
 $openAdvText = Format-GateOpenAdvisoriesInject -Cwd $cwdNow
 if ($openAdvText) { [void]$chunks.Add($openAdvText) }
 
-$specNames = @('TASKS.md', 'TASK.md', 'TODO.md', 'PLAN.md', 'plan.md', 'AGENTS.md')
+$specNames = @('TASKS.md', 'TASK.md', 'TODO.md', 'PLAN.md', 'plan.md', 'AGENTS.md', 'SPEC.md', 'spec.md', 'DESIGN.md', 'design.md')
 $specHits = New-Object System.Collections.Generic.List[string]
 foreach ($n in $specNames) {
     if (Test-Path -LiteralPath (Join-Path (Get-Location).Path $n)) { [void]$specHits.Add($n) }
+}
+foreach ($label in @('specs/', 'docs/specs/')) {
+    $specDir = (Get-Location).Path
+    foreach ($part in ($label.TrimEnd('/') -split '/')) {
+        $specDir = Join-Path $specDir $part
+    }
+    if (Test-Path -LiteralPath $specDir) {
+        if (-not $specHits.Contains($label)) { [void]$specHits.Add($label) }
+    }
 }
 try {
     Get-ChildItem -LiteralPath (Get-Location).Path -Filter '*plan*.md' -File -ErrorAction SilentlyContinue |

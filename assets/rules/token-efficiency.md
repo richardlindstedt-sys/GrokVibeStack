@@ -18,7 +18,7 @@ Save context and tokens without losing correctness.
 
 - Grep / search for symbols first; read only needed line ranges.
 - Prefer Serena / ast-grep (`sg`) for symbols over dumping whole files.
-- Prefer `tokei` / `scc` / `headroom loc` for repo shape over recursive `ls`.
+- Prefer `scc` / `headroom loc` for repo shape over recursive `ls`.
 - Prefer `difft` / `rtk git diff` over raw giant diffs.
 - Prefer subagents for broad exploration; return short summaries to main thread.
 - Do not re-read files already in recent context unless content may have changed.

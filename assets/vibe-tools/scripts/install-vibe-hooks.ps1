@@ -77,8 +77,9 @@ VIBE_SCRIPTS="$HOME/.grok/vibe-tools/scripts"
 export VIBE_REQUIRE_SCANNERS="${VIBE_REQUIRE_SCANNERS:-1}"
 
 echo ">>> STEP 1/2 : STATIC SCANS"
-echo "    trivy, gitleaks, pssa, pester, jscpd, biome, markdownlint,"
-echo "    semgrep, ruff/mypy/bandit, yamllint/checkov, shellcheck, hadolint"
+echo "    trivy, gitleaks, pssa, pester, jscpd (advisory), biome, markdownlint,"
+echo "    semgrep, ruff/mypy/bandit, yamllint/checkov, shellcheck, hadolint,"
+echo "    actionlint/zizmor, typos, golangci-lint, knip, deptry when the repo has them"
 echo ""
 
 # Auto = staged-first when index non-empty

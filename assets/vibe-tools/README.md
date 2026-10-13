@@ -7,18 +7,23 @@ High-quality "vibe coding": Grok writes code, then a **multi-reviewer panel** ar
 - Gitleaks        → secrets (`gitleaks detect`)
 - PSScriptAnalyzer → PowerShell lint/static analysis (Invoke-ScriptAnalyzer)
 - Pester          → PowerShell tests (`Invoke-Pester`)
-- jscpd           → duplicate code (`jscpd .`)
+- jscpd           → duplicate code (`jscpd .`), always advisory
 - Biome           → JS/TS/JSON lint + format (`biome check .`)
 - tsc → JS/TS types (`tsc --noEmit` when `tsconfig.json` exists; global npm `typescript`)
 - project compile/tests → cargo / go / dotnet / pytest / npm test / mvn / gradle / Pester **if present** (tests on commit + push; fail if skipped)
 - markdownlint-cli→ Markdown/docs quality
 - Semgrep         → multi-lang rules + security (`semgrep scan`)
-- Ruff + Vulture  → Python lint + dead code
+- Ruff + Vulture  → Python lint + dead code (vulture advisory)
 - mypy + bandit   → Python types + security
 - yamllint + checkov → YAML + IaC / cloud security
 - ShellCheck      → shell scripts
 - Hadolint        → Dockerfiles
-- ast-grep (`sg`) → structural search; **project rules** (`sg scan`) when `.ast-grep.yml` / `.ast-grep.yaml` / `sgconfig.yml` exists
+- ast-grep (`sg`) → structural search; repo rules block when `.ast-grep.yml` / `.ast-grep.yaml` / `sgconfig.yml` exists, otherwise the built-in pack is advisory
+- actionlint + zizmor → GitHub Actions syntax and security when `.github/workflows` exists (zizmor offline)
+- typos → spelling; advisory until `typos.toml` / `.typos.toml` / `_typos.toml` exists
+- golangci-lint → Go when `go.mod` exists; advisory until a `.golangci` config exists
+- knip → unused JS/TS files; advisory unless `knip.json` / `knip.ts` / `knip.config.ts` exists
+- deptry → unused Python dependencies; advisory, skipped if the module is not installed
 - gh              → GitHub CLI (PRs, issues, checks)
 - Serena MCP      → symbolic nav/edit (`find_symbol`, rename, diagnostics)
 - Git             → commit hooks
@@ -117,7 +122,7 @@ install-vibe-hooks.ps1 .
 | Gate | When | What runs | Blocks? |
 |------|------|-----------|---------|
 | **On edit** | Grok `PostToolUse` after write / `search_replace` / Serena write tools | `run-vibe-on-edit.ps1` — secrets + linters + parser diagnostics (cap ~10); fail-open | No |
-| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings + SPEC PIN + GATE LIVE | No |
+| **Prompt inject** | `UserPromptSubmit` | `run-vibe-prompt-context.ps1` — findings + SPEC PIN (`TASKS.md`, `SPEC.md`, plan files) + GATE LIVE | No |
 | **Poll clamp** | `PreToolUse` `get_command_or_subagent_output` | Live gate: `timeout_ms` → 15000 | Rewrite |
 | **Stop keep-alive** | `Stop` | Block silent end while gate live | Keeps turn |
 | **pre-commit** | `git commit` | Scanners + project compile (typed staged) + **project tests** (working tree; fail if skipped) + **profile=standard** on staged diff | Yes |
