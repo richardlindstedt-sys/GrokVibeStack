@@ -369,23 +369,17 @@ function Test-HeadroomKeeperRunning {
 function Unregister-HeadroomLogonTask {
     # A logon task used to start the chat keeper at boot and left an empty
     # PowerShell window. The proxy starts only when the user runs start-grok.
+    # Only this port's task. Stopping :8788 must not remove the :8787 task.
     if ($NoLogonKeeper) {
         Write-Info 'NoLogonKeeper is obsolete; logon tasks are never registered.'
     }
-    $names = [System.Collections.Generic.List[string]]::new()
-    [void]$names.Add($KeeperTask)
-    if ($Port -ne 8787) {
-        [void]$names.Add('GrokVibeStack-HeadroomKeeper')
-    }
-    foreach ($name in $names) {
-        try {
-            $existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-            if (-not $existing) { continue }
-            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
-            Write-Info "Removed logon task $name (proxy starts with start-grok)."
-        } catch {
-            Write-Warn ("logon task {0}: {1}" -f $name, $_.Exception.Message)
-        }
+    try {
+        $existing = Get-ScheduledTask -TaskName $KeeperTask -ErrorAction SilentlyContinue
+        if (-not $existing) { return }
+        Unregister-ScheduledTask -TaskName $KeeperTask -Confirm:$false -ErrorAction Stop
+        Write-Info "Removed logon task $KeeperTask (proxy starts with start-grok)."
+    } catch {
+        Write-Warn ("logon task {0}: {1}" -f $KeeperTask, $_.Exception.Message)
     }
 }
 

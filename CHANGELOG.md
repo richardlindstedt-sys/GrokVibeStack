@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-13
+
+### Changed
+
+- Requirement floors (2026-10-13): `headroom-ai[proxy]>=0.40.0`, `ast-grep-cli>=0.50.0`, `ruff>=0.17.0`, `mypy>=2.4.0`, `semgrep>=1.180.0`, `checkov>=3.3.29`. Still current: `bandit>=1.9.4`, `vulture>=2.16`, `yamllint>=1.38.0`, `tokenizers>=0.23.1,<0.24.0` (freeze `tokenizers==0.23.3`, `transformers==5.19.0`), Serena `1.7.0`, **scc v4.1.0**, `asteval==1.0.10`, PyJWT `2.15.1`. **tokei** stays `v13.0.0-alpha.0` (`v15.0.0` still ships no Windows exe). Regenerated `*-freeze.txt`. `checkov==3.3.29` still requires `asteval==1.0.6`. Floor and freeze pin `asteval==1.0.10`. `mcp` stays 1.x (`headroom-ai[proxy]` requires `<2.0.0`). `litellm==1.105.0` requires `filelock>=3.16.1,<4`, so the headroom freeze is `filelock==3.32.7` (2.5.0 had `4.0.7`). Winget, npm, and RTK stay unpinned.
+- `Unregister-HeadroomLogonTask` removes only this port's task. Stopping `:8788` no longer unregisters `GrokVibeStack-HeadroomKeeper`.
+
 ## [2.5.0] - 2026-10-01
 
 ### Fixed

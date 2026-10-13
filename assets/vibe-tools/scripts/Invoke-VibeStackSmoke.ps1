@@ -1054,10 +1054,10 @@ if ($startSrc -match 'Unregister-ScheduledTask' -and $startSrc -notmatch '(?<!Un
 } else {
     Bad 'keeper stop/task/port/busy-SSE leave-alive wiring missing'
 }
-if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$portTag' -and $startSrc -match 'Test-KeeperCommandLineForThisPort' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $startSrc -match 'Port -ne 8787') {
-    Ok 'start-grok: port-scoped pid/fp/keeper + NoLogonKeeper for gate :8788'
+if ($startSrc -match 'NoLogonKeeper' -and $startSrc -match 'headroom-proxy\$portTag' -and $startSrc -match 'Test-KeeperCommandLineForThisPort' -and $keepSrc -match 'GrokVibeHeadroomKeeper-' -and $startSrc -match 'Only this port' -and $startSrc -notmatch 'Port -ne 8787') {
+    Ok 'start-grok: port-scoped pid/fp/keeper; logon unregister is this port only'
 } else {
-    Bad 'start-grok missing port-scoped state / NoLogonKeeper / keeper-per-port'
+    Bad 'start-grok missing port-scoped state / NoLogonKeeper / this-port logon unregister'
 }
 if ($startSrc -match 'ListenProbe\.ps1' -and $startSrc -match 'Get-VibeListenOwnerPids' -and $startSrc -match 'function Save-ProxyFingerprint' -and $startSrc -match 'Set-Content -Path \$ProxyPidFile -Value \$adopted' -and $startSrc -match 'PID file after listen proof' -and $startSrc -match 'Foreign listener or CIM race' -and $startSrc -match 'Get-VibeListenSocketPids -Port \$Port' -and $startSrc -notmatch 'Empty Listen / no OwningProcess' -and $startSrc -notmatch 'function Test-ProxyHttpReady' -and $startSrc -notmatch 'Get-NetTCPConnection -LocalPort') {
     Ok 'start-grok: ListenProbe owners; empty owners need socket descendant; no HTTP-ready zombie'
@@ -1282,18 +1282,18 @@ if ($isoOk -and $isoWant.Count -eq 9 -and $isoHit.Count -eq 9 -and $startSrc -ma
     Bad 'dual-proxy isolation names collide or missing portTag'
 }
 $hrReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom.txt') -Raw
-if ($hrReq -match 'headroom-ai\[proxy\]>=0\.39\.1' -and $hrReq -match 'tokenizers>=0\.23\.1,<0\.24\.0') {
-    Ok 'reqs: headroom-ai[proxy] >= 0.39.1 + tokenizers pin'
+if ($hrReq -match 'headroom-ai\[proxy\]>=0\.40\.0' -and $hrReq -match 'tokenizers>=0\.23\.1,<0\.24\.0') {
+    Ok 'reqs: headroom-ai[proxy] >= 0.40.0 + tokenizers pin'
 } else {
-    Bad 'reqs missing headroom-ai[proxy] >= 0.39.1 / tokenizers pin'
+    Bad 'reqs missing headroom-ai[proxy] >= 0.40.0 / tokenizers pin'
 }
 $vtReq = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\vibe-tools.txt') -Raw
 $hrFreeze = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\headroom-freeze.txt') -Raw
 $vtFreeze = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\requirements\vibe-tools-freeze.txt') -Raw
-if ($vtReq -match 'checkov>=3\.3\.21' -and $vtReq -match 'ruff>=0\.16\.9' -and $vtReq -match 'semgrep>=1\.178\.0' -and $vtReq -match '(?m)^asteval==1\.0\.10\s*$') {
+if ($vtReq -match 'checkov>=3\.3\.29' -and $vtReq -match 'ruff>=0\.17\.0' -and $vtReq -match 'semgrep>=1\.180\.0' -and $vtReq -match '(?m)^asteval==1\.0\.10\s*$') {
     Ok 'reqs: vibe-tools floors (checkov/ruff/semgrep/asteval 1.0.10)'
 } else {
-    Bad 'reqs missing vibe-tools floors (checkov>=3.3.21 / ruff>=0.16.9 / semgrep>=1.178.0 / asteval==1.0.10)'
+    Bad 'reqs missing vibe-tools floors (checkov>=3.3.29 / ruff>=0.17.0 / semgrep>=1.180.0 / asteval==1.0.10)'
 }
 . (Join-Path $RepoRoot 'assets\requirements\CheckovAstevalInstall.ps1')
 $astevalSmoke = Join-Path ([System.IO.Path]::GetTempPath()) ('grok-asteval-smoke-' + [guid]::NewGuid().ToString('n'))
@@ -1424,13 +1424,13 @@ if ($planOk -and $plan -and -not (Test-Path -LiteralPath $plan.SolveFile)) {
 } else {
     Bad 'asteval install plan/override smoke failed'
 }
-if ($hrFreeze -match '(?m)^headroom-ai==0\.39\.1' -and $hrFreeze -match '(?m)^tokenizers==0\.23\.2' -and $hrFreeze -match '(?m)^ast-grep-cli==0\.45\.3') {
-    Ok 'freeze: headroom-ai 0.39.1 + tokenizers 0.23.2'
+if ($hrFreeze -match '(?m)^headroom-ai==0\.40\.0' -and $hrFreeze -match '(?m)^tokenizers==0\.23\.3' -and $hrFreeze -match '(?m)^ast-grep-cli==0\.50\.0' -and $hrFreeze -match '(?m)^filelock==3\.32\.7' -and $hrFreeze -match 'litellm==1\.105\.0 requires filelock') {
+    Ok 'freeze: headroom-ai 0.40.0 + tokenizers 0.23.3 + filelock 3.32.7'
 } else {
     Bad 'headroom-freeze.txt stale vs floors'
 }
-if ($vtFreeze -match '(?m)^checkov==3\.3\.21' -and $vtFreeze -match '(?m)^ruff==0\.16\.9' -and $vtFreeze -match '(?m)^semgrep==1\.178\.0' -and $vtFreeze -match '(?m)^asteval==1\.0\.10') {
-    Ok 'freeze: vibe-tools checkov 3.3.21 + asteval override 1.0.10'
+if ($vtFreeze -match '(?m)^checkov==3\.3\.29' -and $vtFreeze -match '(?m)^ruff==0\.17\.0' -and $vtFreeze -match '(?m)^semgrep==1\.180\.0' -and $vtFreeze -match '(?m)^asteval==1\.0\.10') {
+    Ok 'freeze: vibe-tools checkov 3.3.29 + asteval override 1.0.10'
 } else {
     Bad 'vibe-tools-freeze.txt stale vs floors / asteval override'
 }
