@@ -54,13 +54,15 @@ $sawLive = $false
 $seenEvents = New-Object 'System.Collections.Generic.HashSet[string]'
 $seenEventsRun = $null
 $lastProgress = $null
+$lastProgressKey = $null
+$primedRun = $null
 
 function Get-InterestingGateEvents([object[]]$Snap) {
     return @($Snap | Where-Object {
             $_ -and
             $_ -notmatch '^(RUN|NOW|ELAPSED|PHASE|PID|CWD|LOG|EVENTS):' -and
             $_ -notmatch 'waiting vibe-' -and
-            $_ -match '^VOTE:|scan:|scans passed|scans start|profile=|Round |reviewers running|start reviewer|done reviewer|correctness:|security:|simplicity:|arbiter|fixer|GATE DONE|BLOCKER'
+            $_ -match '^VOTE:|STREAM:|scan:|scans passed|scans start|profile=|Round |reviewers running|start reviewer|done reviewer|correctness:|security:|simplicity:|arbiter|fixer|GATE DONE|BLOCKER'
         })
 }
 
@@ -68,7 +70,13 @@ function Get-GateSnapshot {
     # Whole gate-now.txt: 8 meta lines, then VOTE:* (sticky), then event tail.
     # Not a header-only read. Name used to be Get-GateHead; that lied.
     if (-not (Test-Path -LiteralPath $nowFile)) { return @() }
-    return @(Get-Content -LiteralPath $nowFile -ErrorAction SilentlyContinue)
+    # Windows PowerShell 5.1 Get-Content defaults to ANSI and corrupts UTF-8.
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        return @([System.IO.File]::ReadAllLines($nowFile, $utf8))
+    } catch {
+        return @(Get-Content -LiteralPath $nowFile -Encoding UTF8 -ErrorAction SilentlyContinue)
+    }
 }
 
 function Get-RunStart([string]$RunId) {
@@ -114,9 +122,13 @@ function Update-GateElapsed {
             if ($ln -match '^ELAPSED:') { "ELAPSED: $elapsed" } else { $ln }
         }
         $utf8 = New-Object System.Text.UTF8Encoding $false
-        $clean = foreach ($ln in $out) { ("$ln" -replace '[\r\n]+', ' ').TrimEnd() }
+        # ASCII-strip like Write-GateFileRetry. Do not cut NOW: a 300-char
+        # writeback deletes the rest of the live step on every heartbeat.
+        $clean = @(foreach ($ln in $out) {
+            ConvertTo-GatePlainText (("$ln" -replace '[\r\n]+', ' ').TrimEnd())
+        })
         [System.IO.File]::WriteAllLines($nowFile, [string[]]$clean, $utf8)
-        return $out
+        return $clean
     } catch {
         return @(Get-GateSnapshot)
     } finally {
@@ -169,21 +181,32 @@ while ((Get-Date) -lt $deadline) {
             $seenEvents.Clear()
             $seenEventsRun = $runId
             $lastProgress = $null
+            $lastProgressKey = $null
+            $primedRun = $null
         }
         # ELAPSED-only must not wake. Wait ticks must not print. Every stdout line wakes chat.
-        # PROGRESS pulses (PHASE + ELAPSED, never NOW wait text) do wake long stretches.
+        # PROGRESS prints only when the phase or the step text changes. A second counter is not a change.
+        # First sight of a run marks the log already on disk. A restarted watch must not replay it.
+        $prime = ($null -ne $runId -and $primedRun -ne $runId)
+        if ($prime) {
+            foreach ($evt in (Get-InterestingGateEvents $snap)) {
+                [void]$seenEvents.Add([string]$evt)
+            }
+        }
         $tick = ('{0} | {1}' -f $runLine, (Get-GateNowTickKey $nowLine))
-        if (-not (Test-IsGateWaitNow $nowLine) -and $tick -ne $lastPrint) {
+        if (-not $prime -and -not (Test-IsGateWaitNow $nowLine) -and $tick -ne $lastPrint) {
             $elapsed = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
             [Console]::Out.WriteLine(('{0} | {1}' -f $tick, $elapsed))
             $lastPrint = $tick
-        } elseif (Test-IsGateWaitNow $nowLine) {
+        } else {
             $lastPrint = $tick
         }
-        foreach ($evt in (Get-InterestingGateEvents $snap)) {
-            if ($seenEvents.Add([string]$evt)) {
-                $tag = if ([string]$evt -match '(?i)^VOTE:|correctness:|security:|simplicity:') { 'VOTE' } else { 'EVT' }
-                [Console]::Out.WriteLine(('{0} {1}' -f $tag, $evt))
+        if (-not $prime) {
+            foreach ($evt in (Get-InterestingGateEvents $snap)) {
+                if ($seenEvents.Add([string]$evt)) {
+                    $tag = if ([string]$evt -match '(?i)^VOTE:|correctness:|security:|simplicity:') { 'VOTE' } else { 'EVT' }
+                    [Console]::Out.WriteLine(('{0} {1}' -f $tag, $evt))
+                }
             }
         }
         if (-not $done -and $ProgressSec -gt 0) {
@@ -192,10 +215,29 @@ while ((Get-Date) -lt $deadline) {
                 $elapsedLn = ($snap | Where-Object { $_ -match '^ELAPSED:' } | Select-Object -First 1)
                 $phaseLn = ($snap | Where-Object { $_ -match '^PHASE:' } | Select-Object -First 1)
                 if (-not $phaseLn) { $phaseLn = 'PHASE: live' }
-                [Console]::Out.WriteLine(('PROGRESS {0} | {1}' -f $elapsedLn, $phaseLn))
+                $doing = 'DOING: no step output yet'
+                $nowIsWait = Test-IsGateWaitNow $nowLine
+                if (-not $nowIsWait -and $nowLine -match '^NOW:\s+(.+)$') {
+                    $nowBody = $Matches[1].Trim()
+                    if ($nowBody) { $doing = 'DOING: ' + $nowBody }
+                } else {
+                    $doingSrc = @($snap | Where-Object {
+                            $_ -and $_ -match 'reviewer:|arbiter|fixer|scan:|scans\+tests skipped|tests skipped|compile:|test:'
+                        } | Select-Object -Last 1)
+                    if ($doingSrc) {
+                        $doing = 'DOING: ' + (("$doingSrc" -replace '^\[[^\]]+\]\s*', '') -replace '^EVT\s+', '')
+                    }
+                }
+                $progressKey = '{0}|{1}' -f $phaseLn, (Get-GateNowTickKey $doing)
+                $doingIsWait = Test-IsGateWaitNow $doing
+                if (-not $prime -and -not $doingIsWait -and $progressKey -ne $lastProgressKey) {
+                    [Console]::Out.WriteLine(('PROGRESS {0} | {1} | {2}' -f $elapsedLn, $phaseLn, $doing))
+                }
+                $lastProgressKey = $progressKey
                 $lastProgress = $nowTs
             }
         }
+        if ($prime) { $primedRun = $runId }
         if ($IdleSec -gt 0 -and $null -ne $idleSince -and ((Get-Date) - $idleSince).TotalSeconds -ge $IdleSec) {
             [Console]::Out.WriteLine('DONE')
             exit 0

@@ -41,6 +41,23 @@ function New-GateRunId {
     '{0}-{1}' -f $PID, (Get-Date -Format 'yyyyMMddHHmmssfff')
 }
 
+function ConvertTo-GatePlainText([string]$Text) {
+    # Status files are rewritten by Windows PowerShell 5.1. Non-ASCII (em dash,
+    # nbsp thousands separator) is read as ANSI and written back as UTF-8, so
+    # one dash grows into a new garbage line every heartbeat.
+    # watch-gate-now loads the copy in gate-chat-lib.ps1. Keep the bodies the same.
+    if ($null -eq $Text) { return '' }
+    $s = [string]$Text
+    $s = $s -replace '[\u2010-\u2015\u2212]', '-'
+    $s = $s -replace '[\u00A0\u202F\u2007\u2009]', ' '
+    $sb = New-Object System.Text.StringBuilder $s.Length
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if ($c -eq 9 -or ($c -ge 32 -and $c -le 126)) { [void]$sb.Append($ch) }
+    }
+    return (($sb.ToString() -replace '\s+', ' ').Trim())
+}
+
 function Write-GateFileRetry {
     param(
         [string]$Path,
@@ -54,7 +71,7 @@ function Write-GateFileRetry {
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
     $clean = foreach ($ln in @($Lines)) {
-        ("$ln" -replace '[\r\n]+', ' ').TrimEnd()
+        ConvertTo-GatePlainText (("$ln" -replace '[\r\n]+', ' ').TrimEnd())
     }
     $mutex = $null
     $owned = $false
@@ -175,7 +192,7 @@ function Test-GateAdvisoryFileInPaths {
         if (-not $c) { continue }
         $cn = (($c -replace '\\', '/').Trim().TrimStart('/'))
         if (-not $cn) { continue }
-        if ($norm -eq $cn) { return $true }
+        if ($norm -ceq $cn) { return $true }
         if ($cn.EndsWith('/' + $norm) -or $norm.EndsWith('/' + $cn)) { return $true }
     }
     return $false
@@ -196,8 +213,32 @@ function Get-GateFindingBucket([object]$item) {
     }
 }
 
+function ConvertTo-GateKeyPart([string]$Part) {
+    # '|' is the key separator. An id or file that contains '|' must not
+    # collapse into another row and drop an open next.
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in ([string]$Part).ToCharArray()) {
+        if ($ch -eq '\') {
+            [void]$sb.Append('\')
+            [void]$sb.Append('\')
+        } elseif ($ch -eq '|') {
+            [void]$sb.Append('\')
+            [void]$sb.Append('|')
+        } else {
+            [void]$sb.Append($ch)
+        }
+    }
+    return $sb.ToString()
+}
+
+function Get-GateAdvisoryItemKey {
+    param([string]$Cwd, [string]$Id, [string]$File)
+    $f = (([string]$File) -replace '\\', '/').Trim()
+    return '{0}|{1}|{2}' -f (ConvertTo-GateKeyPart (Normalize-VibeAdvisoryCwd $Cwd)), (ConvertTo-GateKeyPart $Id), (ConvertTo-GateKeyPart $f)
+}
+
 function Save-GateOpenAdvisories {
-    # Hashtable merge by cwd+id.
+    # Hashtable merge by cwd+id+file. '|' inside a part is escaped.
     # $Items = this round's next|later (blockers skipped). Those ids stay open.
     # Unseen open rows for this cwd:
     #   - file NOT in ChangedPaths → keep (carry-forward; do not re-review).
@@ -227,14 +268,16 @@ function Save-GateOpenAdvisories {
             throw "Unreadable open-advisories ledger (fail-closed, will not wipe): $path"
         }
     }
-    $byKey = @{}
+    $byKey = New-Object 'System.Collections.Hashtable' ([StringComparer]::Ordinal)
     foreach ($old in $prevItems) {
         $oc = Normalize-VibeAdvisoryCwd ([string]$old.cwd)
         $oid = [string]$old.id
         if (-not $oc -or -not $oid) { continue }
-        $byKey[('{0}|{1}' -f $oc, $oid)] = $old
+        # id alone is reused every round (correctness-1). The file is part of the key
+        # so a new finding cannot overwrite an open next on a different file.
+        $byKey[(Get-GateAdvisoryItemKey $oc $oid ([string]$old.file))] = $old
     }
-    $seen = @{}
+    $seen = New-Object 'System.Collections.Hashtable' ([StringComparer]::Ordinal)
     $nowIso = (Get-Date).ToString('o')
     foreach ($raw in @($Items | Where-Object { $_ })) {
         $id = [string]$raw.id
@@ -243,17 +286,24 @@ function Save-GateOpenAdvisories {
         $bucket = Get-GateFindingBucket $raw
         if ($bucket -eq 'blocker') { continue }
         if ($bucket -ne 'later') { $bucket = 'next' }
-        $k = '{0}|{1}' -f $Cwd, $id
+        $k = Get-GateAdvisoryItemKey $Cwd $id ([string]$raw.file)
         $seen[$k] = $true
         $opened = $nowIso
         $openedHead = $headNow
         if ($byKey.ContainsKey($k)) {
-            $prevOpened = [string]$byKey[$k].opened
-            if ($prevOpened) { $opened = $prevOpened }
-            $prevOH = [string]$byKey[$k].openedHead
-            if ($prevOH) { $openedHead = $prevOH }
-            $prevBucket = Get-GateFindingBucket $byKey[$k]
-            if ($prevBucket -eq 'next' -and $bucket -eq 'later') { $bucket = 'next' }
+            $prevFile = (([string]$byKey[$k].file) -replace '\\', '/').Trim()
+            $newFile = (([string]$raw.file) -replace '\\', '/').Trim()
+            # Identity is id + file. A title edit on the same file keeps the old
+            # SHA and cannot downgrade next to later. A different file is a new
+            # finding: new openedHead, and the new bucket stands.
+            if ($prevFile -ceq $newFile) {
+                $prevOpened = [string]$byKey[$k].opened
+                if ($prevOpened) { $opened = $prevOpened }
+                $prevOH = [string]$byKey[$k].openedHead
+                if ($prevOH) { $openedHead = $prevOH }
+                $prevBucket = Get-GateFindingBucket $byKey[$k]
+                if ($prevBucket -eq 'next' -and $bucket -eq 'later') { $bucket = 'next' }
+            }
         }
         $byKey[$k] = [pscustomobject]@{
             cwd        = $Cwd
@@ -471,12 +521,6 @@ function Stop-GateElapsedHeartbeat {
     $script:GateBeatPid = $null
 }
 
-function Write-GateNow([string]$Now, [string]$Phase) {
-    if ($Now) { $script:GateNow = $Now }
-    if ($Phase) { $script:GatePhase = $Phase }
-    Write-GateStatusFile
-}
-
 function Start-GateWatchPopup {
     # Opt-in only. Default surface is this Grok chat (poll gate-now.txt).
     if ($env:VIBE_GATE_POPUP -ne '1') { return }
@@ -652,12 +696,21 @@ function Set-GateVote {
     Write-GateStatusFile
 }
 
+function Write-GateNow([string]$Now, [string]$Phase) {
+    if ($Now) { $script:GateNow = (ConvertTo-GatePlainText $Now) }
+    if ($Phase) { $script:GatePhase = (ConvertTo-GatePlainText $Phase) }
+    Write-GateStatusFile
+}
+
 function Write-GateProgress {
     param(
         [string]$Message,
         [string]$Now,
         [string]$Phase
     )
+    $Message = ConvertTo-GatePlainText $Message
+    if ($Now) { $Now = ConvertTo-GatePlainText $Now }
+    if ($Phase) { $Phase = ConvertTo-GatePlainText $Phase }
     $line = '[{0:HH:mm:ss}] {1}' -f (Get-Date), $Message
     foreach ($writer in @([Console]::Out, [Console]::Error)) {
         try {

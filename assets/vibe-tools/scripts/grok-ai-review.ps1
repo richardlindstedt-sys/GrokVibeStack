@@ -118,7 +118,7 @@ function Resolve-GateProfile {
                 ArbiterMaxTurns   = 1
                 FixerMaxTurns     = 10
                 ReasoningEffort   = 'high'
-                Description       = '3 reviewers, 3 rounds, fix loop, higher budgets'
+                Description       = '3 reviewers, up to 3 rounds, one-shot reviewers, fixer cap 10'
             }
         }
         default {
@@ -149,7 +149,7 @@ function Get-GateChangedPaths {
             return $fromDiff
         }
     }
-    # name-status: include deletes + rename old/new (name-only drops the old path)
+    # name-status: include deletes + rename old/new (name-only drops the old path).
     try {
         $stagedNs = @(git -c core.quotepath=false diff --cached --name-status --diff-filter=ACMRD 2>$null | Where-Object { $_ })
         foreach ($line in $stagedNs) { Add-NameStatusLineToList $paths $line }
@@ -428,24 +428,158 @@ function Get-MachineVerdict([string]$text) {
     return $null
 }
 
-function ConvertFrom-JsonLoose([string]$text) {
-    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
-    # Prefer fenced json block
-    $m = [regex]::Match($text, '(?s)```(?:json)?\s*(\{.*?\})\s*```')
-    $candidates = @()
-    if ($m.Success) { $candidates += $m.Groups[1].Value }
-    # Whole text / last balanced-ish object
-    $candidates += $text.Trim()
-    $objMatch = [regex]::Matches($text, '(?s)\{(?:[^{}]|(?<open>\{)|(?<-open>\}))+(?(open)(?!))\}')
-    if ($objMatch.Count -gt 0) {
-        $candidates += $objMatch[$objMatch.Count - 1].Value
-    }
-    foreach ($c in $candidates) {
-        try {
-            return ($c | ConvertFrom-Json -ErrorAction Stop)
-        } catch {}
+function Get-JsonObjectAt([string]$Text, [int]$Start) {
+    if (-not $Text -or $Start -lt 0 -or $Start -ge $Text.Length -or $Text[$Start] -ne '{') { return $null }
+    $depth = 0
+    $inStr = $false
+    $esc = $false
+    for ($i = $Start; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+        if ($inStr) {
+            if ($esc) { $esc = $false; continue }
+            if ($ch -eq '\') { $esc = $true; continue }
+            if ($ch -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($ch -eq '"') { $inStr = $true; continue }
+        if ($ch -eq '{') { $depth++ }
+        elseif ($ch -eq '}') {
+            $depth--
+            if ($depth -eq 0) { return $Text.Substring($Start, $i - $Start + 1) }
+        }
     }
     return $null
+}
+
+function Get-TopLevelJsonObjects([string]$Text) {
+    # A truncated {"vote":"BLOCK","inner":{"vote":"APPROVE"} must not yield APPROVE.
+    # Reviewers quote that example and then emit a real vote. A later closed vote
+    # after prose still counts. An inner object with only JSON between it and the
+    # unclosed '{' does not.
+    function Test-JsonPrefixOnly([string]$Body, [int]$From, [int]$To) {
+        $inStr = $false
+        $esc = $false
+        for ($k = $From; $k -lt $To; $k++) {
+            $c = $Body[$k]
+            if ($inStr) {
+                if ($esc) { $esc = $false; continue }
+                if ($c -eq '\') { $esc = $true; continue }
+                if ($c -eq '"') { $inStr = $false }
+                continue
+            }
+            if ($c -eq '"') { $inStr = $true; continue }
+            if ([char]::IsWhiteSpace($c)) { continue }
+            if ('{}[]:,+-.'.Contains($c)) { continue }
+            if ($c -ge '0' -and $c -le '9') { continue }
+            if ($c -eq 'e' -or $c -eq 'E') { continue }
+            if ([char]::IsLetter($c)) {
+                $w = New-Object System.Text.StringBuilder
+                while ($k -lt $To -and [char]::IsLetter($Body[$k])) {
+                    [void]$w.Append($Body[$k])
+                    $k++
+                }
+                $k--
+                $word = $w.ToString()
+                if ($word -ne 'true' -and $word -ne 'false' -and $word -ne 'null') { return $false }
+                continue
+            }
+            return $false
+        }
+        return $true
+    }
+    function Test-NestedInUnclosedJson([string]$Body, [int]$ObjStart) {
+        $inStr = $false
+        $esc = $false
+        for ($u = 0; $u -lt $ObjStart; $u++) {
+            $c = $Body[$u]
+            if ($inStr) {
+                if ($esc) { $esc = $false; continue }
+                if ($c -eq '\') { $esc = $true; continue }
+                if ($c -eq '"') { $inStr = $false }
+                continue
+            }
+            if ($c -eq '"') { $inStr = $true; continue }
+            if ($c -ne '{') { continue }
+            $look = $u + 1
+            while ($look -lt $ObjStart -and [char]::IsWhiteSpace($Body[$look])) { $look++ }
+            if ($look -ge $Body.Length -or $Body[$look] -ne '"') { continue }
+            if (Get-JsonObjectAt $Body $u) { continue }
+            if (Test-JsonPrefixOnly $Body ($u + 1) $ObjStart) { return $true }
+        }
+        return $false
+    }
+    $list = New-Object System.Collections.Generic.List[string]
+    if (-not $Text) { return ,@() }
+    $inStr = $false
+    $esc = $false
+    for ($i = 0; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+        if ($inStr) {
+            if ($esc) { $esc = $false; continue }
+            if ($ch -eq '\') { $esc = $true; continue }
+            if ($ch -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($ch -eq '"') { $inStr = $true; continue }
+        if ($ch -eq '{') {
+            $obj = Get-JsonObjectAt $Text $i
+            if ($obj) {
+                if (-not (Test-NestedInUnclosedJson $Text $i)) {
+                    [void]$list.Add($obj)
+                }
+                $i += $obj.Length - 1
+            }
+        }
+    }
+    # Comma keeps a one-element array from unrolling into a bare string.
+    return ,$list.ToArray()
+}
+
+function Repair-LooseJson([string]$Json) {
+    # Models put raw newlines inside JSON strings. ConvertFrom-Json rejects those.
+    if (-not $Json) { return $Json }
+    $sb = New-Object System.Text.StringBuilder
+    $inStr = $false
+    $esc = $false
+    foreach ($ch in $Json.ToCharArray()) {
+        if ($inStr) {
+            if ($esc) { [void]$sb.Append($ch); $esc = $false; continue }
+            if ($ch -eq '\') { [void]$sb.Append($ch); $esc = $true; continue }
+            if ($ch -eq '"') { [void]$sb.Append($ch); $inStr = $false; continue }
+            if ($ch -eq "`n") { [void]$sb.Append('\n'); continue }
+            if ($ch -eq "`r") { [void]$sb.Append('\r'); continue }
+            if ($ch -eq "`t") { [void]$sb.Append('\t'); continue }
+            [void]$sb.Append($ch)
+            continue
+        }
+        if ($ch -eq '"') { $inStr = $true }
+        [void]$sb.Append($ch)
+    }
+    return $sb.ToString()
+}
+
+function Test-GateJsonReply($Obj) {
+    if (-not $Obj) { return $false }
+    $names = @($Obj.PSObject.Properties.Name)
+    return [bool]($names -contains 'vote' -or $names -contains 'verdict')
+}
+
+function ConvertFrom-JsonLoose([string]$text) {
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $fence = [regex]::Match($text, '(?s)```(?:json)?\s*(\{.*)\s*```')
+    if ($fence.Success) { [void]$candidates.Add($fence.Groups[1].Value.Trim()) }
+    foreach ($obj in (Get-TopLevelJsonObjects $text)) { [void]$candidates.Add([string]$obj) }
+    [void]$candidates.Add($text.Trim())
+    $fallback = $null
+    for ($i = $candidates.Count - 1; $i -ge 0; $i--) {
+        try {
+            $o = (Repair-LooseJson $candidates[$i]) | ConvertFrom-Json -ErrorAction Stop
+        } catch { continue }
+        if (Test-GateJsonReply $o) { return $o }
+        if (-not $fallback) { $fallback = $o }
+    }
+    return $fallback
 }
 
 function Limit-DiffText([string]$diff, [int]$maxChars = 160000) {
@@ -607,9 +741,235 @@ function ConvertTo-SinglePatchText($raw) {
     return $s
 }
 
+function Get-ReviewedBlobPath {
+    # One segment at a time. A backslash child is not a separator on PowerShell 7 for Linux.
+    # $HOME is a constant. A variable named $home is the same name and throws.
+    $userHome = $env:USERPROFILE
+    if ([string]::IsNullOrWhiteSpace($userHome)) { $userHome = $env:HOME }
+    if ([string]::IsNullOrWhiteSpace($userHome)) { return $null }
+    $dir = $userHome
+    foreach ($part in @('.grok', 'vibe-tools', 'reports')) {
+        $dir = Join-Path $dir $part
+    }
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    return (Join-Path $dir 'gate-reviewed-blobs.json')
+}
+
+function Get-ReviewedBlobMap {
+    $map = New-Object 'System.Collections.Hashtable' ([StringComparer]::Ordinal)
+    $path = Get-ReviewedBlobPath
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $map }
+    try {
+        $doc = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+    } catch { return $map }
+    $cwd = ''
+    try { $cwd = (Get-Location).Path } catch { $cwd = '' }
+    $docCwd = ''
+    try { $docCwd = [string]$doc.cwd } catch { $docCwd = '' }
+    # A blank cwd is not a global stamp. Case-folded paths are not the same tree.
+    if ([string]::IsNullOrWhiteSpace($docCwd) -or [string]::IsNullOrWhiteSpace($cwd)) { return $map }
+    $a = ($docCwd -replace '\\', '/').TrimEnd('/')
+    $b = ($cwd -replace '\\', '/').TrimEnd('/')
+    if (-not [string]::Equals($a, $b, [StringComparison]::Ordinal)) { return $map }
+    if ($doc.files) {
+        foreach ($p in @($doc.files.PSObject.Properties)) {
+            $map[$p.Name] = [string]$p.Value
+        }
+    }
+    return $map
+}
+
+function Get-PatchSha([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-StagedFileDiffText([string]$RelPath) {
+    if ([string]::IsNullOrWhiteSpace($RelPath)) { return $null }
+    # --literal-pathspecs only. Do not also add a pathspec-magic prefix; that names a missing file.
+    $raw = git --literal-pathspecs -c core.quotepath=false diff --cached --no-color -- $RelPath 2>$null
+    return (ConvertTo-SinglePatchText $raw)
+}
+
+function Get-StagedFileDiffSha([string]$RelPath) {
+    return (Get-PatchSha (Get-StagedFileDiffText $RelPath))
+}
+
+function Update-ReviewedPatchHashesFromIndex {
+    # Replace the pre-loop snapshot. The accepting round must hash the staged
+    # diffs this round's panel sees, then assert the index still matches.
+    $script:ReviewedPatchHashes = New-Object 'System.Collections.Hashtable' ([StringComparer]::Ordinal)
+    $names = @()
+    try {
+        $names = @(git --literal-pathspecs -c core.quotepath=false diff --cached --name-only 2>$null | Where-Object { $_ })
+    } catch { return }
+    foreach ($n in $names) {
+        if (-not $n) { continue }
+        $sha = Get-StagedFileDiffSha $n
+        if (-not $sha) { continue }
+        $key = (($n -replace '\\', '/').Trim())
+        $script:ReviewedPatchHashes[$key] = $sha
+    }
+}
+
+function Get-StagedPathsForReview {
+    # Hashtable so an empty path list is not unwrapped to $null.
+    # Staged=$false means the index has no diff. Paths empty + Staged=$true means
+    # every staged file matches the last passing review.
+    $names = @()
+    try {
+        # No letter filter. ACMRD misses type changes (T). Those must be reviewed or hashed.
+        $names = @(git --literal-pathspecs -c core.quotepath=false diff --cached --name-only 2>$null | Where-Object { $_ })
+    } catch { $names = @() }
+    if ($names.Count -eq 0) { return @{ Staged = $false; Paths = @() } }
+    $map = Get-ReviewedBlobMap
+    $keep = [System.Collections.Generic.List[string]]::new()
+    foreach ($n in $names) {
+        $key = (($n -replace '\\', '/').Trim())
+        $sha = Get-StagedFileDiffSha $n
+        $prev = ''
+        if ($map.ContainsKey($key)) { $prev = [string]$map[$key] }
+        if ($prev -and $sha -and $prev -eq $sha) { continue }
+        [void]$keep.Add($n)
+    }
+    return @{ Staged = $true; Paths = $keep }
+}
+
+function Assert-StagedIndexUnmoved {
+    param([hashtable]$ReviewedThisRound)
+    # Every current staged path. Skipped files must still match the last stamp.
+    # A path added or edited during the panel is not in that set.
+    $names = @()
+    try {
+        $names = @(git --literal-pathspecs -c core.quotepath=false diff --cached --name-only 2>$null | Where-Object { $_ })
+    } catch {
+        Write-GateFail ("could not list staged paths after review: {0}" -f $_.Exception.Message)
+        Exit-Gate -Code 1 -Reason 'index moved after review'
+        return
+    }
+    $map = Get-ReviewedBlobMap
+    foreach ($n in $names) {
+        if (-not $n) { continue }
+        $key = (($n -replace '\\', '/').Trim())
+        $now = Get-StagedFileDiffSha $n
+        if ($ReviewedThisRound -and $ReviewedThisRound.ContainsKey($key)) {
+            if ($now -ne [string]$ReviewedThisRound[$key]) {
+                Write-GateFail ("index moved after review for {0}; refusing to stamp an unreviewed diff" -f $key)
+                Exit-Gate -Code 1 -Reason 'index moved after review'
+                return
+            }
+            continue
+        }
+        $prev = ''
+        if ($map.ContainsKey($key)) { $prev = [string]$map[$key] }
+        if (-not $prev -or $now -ne $prev) {
+            Write-GateFail ("staged path was not reviewed or its diff changed: {0}" -f $key)
+            Exit-Gate -Code 1 -Reason 'index moved after review'
+            return
+        }
+    }
+}
+
+function Select-HashesPresentInPrompt {
+    param([hashtable]$Captured, [string]$PromptText)
+    # Stamp only patches that are still inside the exact text the panel received.
+    # A compressed brief lists every name and drops middle hunks. Those stay unstamped.
+    $keep = New-Object 'System.Collections.Hashtable' ([StringComparer]::Ordinal)
+    if (-not $Captured -or [string]::IsNullOrEmpty($PromptText)) { return $keep }
+    foreach ($k in @($Captured.Keys)) {
+        $text = Get-StagedFileDiffText $k
+        if ($text -and $PromptText.Contains($text)) { $keep[$k] = [string]$Captured[$k] }
+    }
+    return $keep
+}
+
+function Save-ReviewedBlobs([hashtable]$Captured) {
+    $cwd = ''
+    try { $cwd = (Get-Location).Path } catch { $cwd = '' }
+    if ([string]::IsNullOrWhiteSpace($cwd)) {
+        Write-GateFail 'refusing to save reviewed blobs with an empty cwd'
+        Exit-Gate -Code 1 -Reason 'empty cwd'
+        return
+    }
+    Assert-StagedIndexUnmoved -ReviewedThisRound $script:ReviewedPatchHashes
+    if (-not $Captured -or $Captured.Count -eq 0) { return }
+    $map = Get-ReviewedBlobMap
+    foreach ($k in @($Captured.Keys)) {
+        $map[$k] = [string]$Captured[$k]
+    }
+    $files = [ordered]@{}
+    foreach ($k in @($map.Keys | Sort-Object)) { $files[$k] = [string]$map[$k] }
+    $doc = [pscustomobject]@{ cwd = $cwd; files = [pscustomobject]$files }
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Get-ReviewedBlobPath), ($doc | ConvertTo-Json -Depth 6), $utf8)
+}
+
+function Exit-IfUnfixedPriorNext {
+    param([string]$Cwd)
+    if ($env:VIBE_ALLOW_OPEN_NEXT -eq '1') { return }
+    if (-not (Get-Command Get-UnfixedPriorNext -ErrorAction SilentlyContinue)) {
+        Write-GateFail "open-next helper missing (fail-closed)"
+        Exit-Gate -Code 1 -Reason 'open-next helper missing'
+        return
+    }
+    $here = $Cwd
+    if ([string]::IsNullOrWhiteSpace($here)) {
+        try { $here = (Get-Location).Path } catch { $here = '' }
+    }
+    try {
+        $leftover = @(Get-UnfixedPriorNext -Cwd $here)
+    } catch {
+        Write-GateFail ("ledger read failed (fail-closed): {0}" -f $_.Exception.Message)
+        Exit-Gate -Code 1 -Reason 'ledger read failed'
+        return
+    }
+    # Every previous-SHA next for this cwd. Not scoped to the partial re-review set.
+    if ($leftover.Count -gt 0) {
+        $ids = @($leftover | ForEach-Object { [string]$_.id } | Where-Object { $_ }) -join ', '
+        Write-GateFail ("OPEN NEXT from a previous SHA still open ({0}). Fix in this commit (stage those files). Emergency: VIBE_ALLOW_OPEN_NEXT=1" -f $ids)
+        Exit-Gate -Code 1 -Reason 'unfixed prior next'
+        return
+    }
+}
+
 function Get-GitDiffText {
-    param([string]$Override)
+    param([string]$Override, [switch]$StagedOnlyMode)
     if ($Override) { return (ConvertTo-SinglePatchText $Override) }
+    if ($StagedOnlyMode) {
+        $keepSet = Get-StagedPathsForReview
+        if ($keepSet.Staged) {
+            $keep = @($keepSet.Paths | Where-Object { $_ })
+            if ($keep.Count -eq 0) {
+                $script:StagedReviewUnchanged = $true
+                Write-Host "Staged files match the last review. Not reviewing them again." -ForegroundColor DarkGray
+                return $null
+            }
+            $script:ReviewedPatchHashes = New-Object 'System.Collections.Hashtable' ([StringComparer]::Ordinal)
+            $parts = New-Object System.Collections.Generic.List[string]
+            foreach ($n in $keep) {
+                $one = Get-StagedFileDiffText $n
+                if (-not $one) {
+                    Write-GateFail ("Staged path produced an empty diff: {0}. Refusing to skip review or the open-next check." -f $n)
+                    Exit-IfUnfixedPriorNext -Cwd $script:GateCwd
+                    Exit-Gate -Code 1 -Reason 'empty staged diff'
+                    return $null
+                }
+                $key = (($n -replace '\\', '/').Trim())
+                $script:ReviewedPatchHashes[$key] = Get-PatchSha $one
+                [void]$parts.Add($one)
+            }
+            Write-Host ("Using staged diff ({0} file(s) changed since the last review)." -f $keep.Count) -ForegroundColor Green
+            return ($parts -join "`n")
+        }
+    }
     $staged = ConvertTo-SinglePatchText (git diff --cached --no-color 2>$null)
     if ($staged) {
         Write-Host "Using staged diff (what will be committed)." -ForegroundColor Green
@@ -658,6 +1018,149 @@ function Get-VibeStreamRetryKind {
     return 'none'
 }
 
+function Get-VibeProcLogTail {
+    param([string]$OutFile, [string]$ErrFile)
+    $lines = @()
+    foreach ($f in @($OutFile, $ErrFile)) {
+        if ($f -and (Test-Path -LiteralPath $f)) {
+            try { $lines += @(Get-Content -LiteralPath $f -Tail 8 -Encoding UTF8 -ErrorAction SilentlyContinue) } catch {}
+        }
+    }
+    $pick = $null
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $t = ("$($lines[$i])" -replace '\x1b\[[0-9;]*[A-Za-z]', '').Trim()
+        if ($t) { $pick = $t; break }
+    }
+    if (-not $pick) { return 'waiting on model (no output yet)' }
+    if ($pick -match '"summary"\s*:\s*"([^"\\]{1,140})') { $pick = $Matches[1] }
+    if (Get-Command ConvertTo-GatePlainText -ErrorAction SilentlyContinue) {
+        $pick = ConvertTo-GatePlainText $pick
+    }
+    if (-not $pick) { return 'waiting on model (no output yet)' }
+    if ($pick.Length -gt 140) { return $pick.Substring(0, 137) + '...' }
+    return $pick
+}
+
+function Read-GateStreamAppend {
+    param([string]$Path, [long]$Position)
+    $none = @{ Text = ''; Position = $Position }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $none }
+    $fs = $null
+    try {
+        $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        if ($fs.Length -le $Position) { return $none }
+        [void]$fs.Seek($Position, 'Begin')
+        $n = [int]($fs.Length - $Position)
+        $buf = New-Object byte[] $n
+        [void]$fs.Read($buf, 0, $n)
+        return @{ Text = [System.Text.Encoding]::UTF8.GetString($buf); Position = [long]$fs.Length }
+    } catch {
+        return $none
+    } finally {
+        if ($fs) { $fs.Dispose() }
+    }
+}
+
+function Get-GrokNdjsonPiece([string]$Line) {
+    $result = @{ Show = ''; Final = '' }
+    $t = "$Line".Trim()
+    if (-not $t.StartsWith('{')) { return $result }
+    try { $o = $t | ConvertFrom-Json } catch { return $result }
+    $event = $o.event
+    if (-not $event -and "$($o.type)" -match 'delta') { $event = $o }
+    if ($event -and $event.delta) {
+        $d = $event.delta
+        $bit = ''
+        if ($d.text) { $bit = [string]$d.text }
+        elseif ($d.thinking) { $bit = [string]$d.thinking }
+        elseif ($d.partial_json) { $bit = [string]$d.partial_json }
+        if ($bit) { $result.Show = $bit }
+        return $result
+    }
+    $msg = $o.message
+    if (-not $msg -and "$($o.type)" -eq 'assistant') { $msg = $o }
+    if ($msg -and $msg.content) {
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($c in @($msg.content)) {
+            if ($c.text) { [void]$sb.Append([string]$c.text) }
+            elseif ($c.thinking) { [void]$sb.Append([string]$c.thinking) }
+        }
+        $result.Final = $sb.ToString()
+    }
+    return $result
+}
+
+function Write-GateStreamChunk([string]$Label, [string]$Text) {
+    if (-not $Text) { return }
+    if (-not (Get-Command Write-GateProgress -ErrorAction SilentlyContinue)) { return }
+    $flat = ($Text -replace '[\r\n]+', ' ').Trim()
+    if (-not $flat) { return }
+    $i = 0
+    while ($i -lt $flat.Length) {
+        $len = [Math]::Min(180, $flat.Length - $i)
+        Write-GateProgress ('STREAM: {0} {1}' -f $Label, $flat.Substring($i, $len))
+        $i += $len
+    }
+}
+
+function Update-GateModelStream {
+    param(
+        [string]$Path,
+        [string]$Label,
+        [ref]$Position,
+        [ref]$Pending,
+        [ref]$FinalText
+    )
+    $got = Read-GateStreamAppend -Path $Path -Position ([long]$Position.Value)
+    $raw = [string]$got.Text
+    if (-not $raw) { return }
+    $Position.Value = [long]$got.Position
+    $Pending.Value = [string]$Pending.Value + $raw
+    # -split with a comma is not a max-substring limit. It breaks the JSON lines.
+    $lines = @([regex]::Split([string]$Pending.Value, "\r\n|\n|\r"))
+    $complete = $Pending.Value.EndsWith("`n") -or $Pending.Value.EndsWith("`r")
+    if ($complete) {
+        $Pending.Value = ''
+        if ($lines.Length -gt 0 -and [string]$lines[-1] -eq '') {
+            if ($lines.Length -eq 1) { return }
+            $lines = $lines[0..($lines.Length - 2)]
+        }
+    } else {
+        $Pending.Value = [string]$lines[-1]
+        if ($lines.Length -le 1) { return }
+        $lines = $lines[0..($lines.Length - 2)]
+    }
+    $show = New-Object System.Text.StringBuilder
+    foreach ($line in $lines) {
+        $piece = Get-GrokNdjsonPiece $line
+        if ($piece.Show) { [void]$show.Append($piece.Show) }
+        if ($piece.Final) { $FinalText.Value = [string]$piece.Final }
+    }
+    if ($show.Length -gt 0) { Write-GateStreamChunk -Label $Label -Text $show.ToString() }
+}
+
+function Get-GrokStructuredReply([string]$Ndjson) {
+    # The last assistant message can be stop-hook chatter after a real vote.
+    # Keep the latest message that still parses as a vote or verdict.
+    if (-not $Ndjson) { return '' }
+    $finals = New-Object System.Collections.Generic.List[string]
+    foreach ($line in @([regex]::Split($Ndjson, "\r\n|\n|\r"))) {
+        $piece = Get-GrokNdjsonPiece $line
+        if ($piece.Final) { [void]$finals.Add([string]$piece.Final) }
+    }
+    for ($i = $finals.Count - 1; $i -ge 0; $i--) {
+        if (Test-GateJsonReply (ConvertFrom-JsonLoose $finals[$i])) {
+            return $finals[$i].TrimEnd()
+        }
+    }
+    if (Test-GateJsonReply (ConvertFrom-JsonLoose $Ndjson)) {
+        if ($finals.Count -gt 0) { return $finals[$finals.Count - 1].TrimEnd() }
+        return $Ndjson.TrimEnd()
+    }
+    if ($finals.Count -gt 0) { return $finals[$finals.Count - 1].TrimEnd() }
+    return ''
+}
+
 function Invoke-GrokHeadless {
     param(
         [Parameter(Mandatory)][string]$GrokExe,
@@ -694,6 +1197,10 @@ function Invoke-GrokHeadless {
     [void]$argList.Add($Effort)
     [void]$argList.Add('--max-turns')
     [void]$argList.Add("$MaxTurns")
+    # Token deltas. Plain stdout stays empty until the process exits, so chat never sees the model write.
+    [void]$argList.Add('--output-format')
+    [void]$argList.Add('streaming-messages-json')
+    [void]$argList.Add('--include-partial-messages')
     [void]$argList.Add('--permission-mode')
     [void]$argList.Add('bypassPermissions')
     # Read-only panel: one shot, no built-in tool schemas. Grok still attaches MCP
@@ -728,7 +1235,8 @@ function Invoke-GrokHeadless {
             Push-Location -LiteralPath $WorkingDirectory
             $pushed = $true
         }
-        if ($OnPulse) {
+        $streamIt = [bool]$OnPulse -or [bool](Get-Command Write-GateProgress -ErrorAction SilentlyContinue)
+        if ($streamIt) {
             $ownTemps = -not $OutLog
             $stdOut = if ($OutLog) { $OutLog } else { Join-Path $env:TEMP ('vibe-grok-' + [guid]::NewGuid().ToString('n') + '.log') }
             $stdErr = $stdOut + '.err'
@@ -749,23 +1257,44 @@ function Invoke-GrokHeadless {
             try {
                 $p = Start-Process @startArgs
                 if (-not $p) { throw 'Start-Process returned null' }
+                $streamPos = [long]0
+                $streamPending = ''
+                $streamFinal = ''
+                $nextPulse = [datetime]::UtcNow
                 while (-not $p.HasExited) {
-                    Start-Sleep -Seconds ([Math]::Max(2, $PulseSec))
-                    try {
-                        & $OnPulse
-                    } catch {
-                        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-                            Write-GateProgress ('fixer pulse error: {0}' -f $_.Exception.Message)
+                    Start-Sleep -Seconds 1
+                    Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal)
+                    if ([datetime]::UtcNow -ge $nextPulse) {
+                        $nextPulse = [datetime]::UtcNow.AddSeconds([Math]::Max(2, $PulseSec))
+                        if ($OnPulse) {
+                            try { & $OnPulse } catch {
+                                if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                                    Write-GateProgress ('fixer pulse error: {0}' -f $_.Exception.Message)
+                                }
+                            }
                         }
                     }
                 }
                 try { $p.WaitForExit(5000) | Out-Null } catch {}
+                Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal)
+                if ($streamPending) {
+                    $piece = Get-GrokNdjsonPiece $streamPending
+                    if ($piece.Show) { Write-GateStreamChunk -Label $Label -Text $piece.Show }
+                    if ($piece.Final) { $streamFinal = [string]$piece.Final }
+                }
                 $code = [int]$p.ExitCode
                 $outTxt = ''
                 $errTxt = ''
                 try { if (Test-Path -LiteralPath $stdOut) { $outTxt = [System.IO.File]::ReadAllText($stdOut) } } catch {}
                 try { if (Test-Path -LiteralPath $stdErr) { $errTxt = [System.IO.File]::ReadAllText($stdErr) } } catch {}
-                $output = @(($outTxt + "`n" + $errTxt).TrimEnd())
+                $structured = Get-GrokStructuredReply $outTxt
+                if ($structured) {
+                    $output = @($structured)
+                } elseif ($streamFinal -and $streamFinal.Trim()) {
+                    $output = @($streamFinal.TrimEnd())
+                } else {
+                    $output = @(($outTxt + "`n" + $errTxt).TrimEnd())
+                }
             } finally {
                 if ($ownTemps) {
                     try { if (Test-Path -LiteralPath $stdOut) { Remove-Item -LiteralPath $stdOut -Force -ErrorAction SilentlyContinue } } catch {}
@@ -1802,7 +2331,7 @@ function Update-GitStageAfterFix {
         foreach ($ps in @($PriorStaged)) {
             $norm = Normalize-RestagePath $ps
             if (-not $norm) { continue }
-            $dirty = git diff --name-only -- (':(literal)' + $norm) 2>$null
+            $dirty = git --literal-pathspecs diff --name-only -- $norm 2>$null
             if ($dirty) { [void]$paths.Add($norm) }
         }
         # Tracked paths dirtied during fix (in post-dirty, not in pre-fix snapshot)
@@ -1836,13 +2365,12 @@ function Update-GitStageAfterFix {
         foreach ($rawPath in @($paths)) {
             if (-not $rawPath) { continue }
             $p = $rawPath -replace '/', [IO.Path]::DirectorySeparatorChar
-            $spec = ':(literal)' + $rawPath
             $exists = Test-Path -LiteralPath $p -ErrorAction SilentlyContinue
             if (-not $exists) {
-                $ls = git ls-files --error-unmatch -- $spec 2>$null
+                $ls = git --literal-pathspecs ls-files --error-unmatch -- $rawPath 2>$null
                 if (-not $ls) { continue }
             }
-            git add -- $spec 2>$null | Out-Null
+            git --literal-pathspecs add -- $rawPath 2>$null | Out-Null
         }
     } finally {
         $ErrorActionPreference = $prev
@@ -1974,9 +2502,15 @@ Write-Host "  workdir=$WorkDir" -ForegroundColor DarkGray
 # Initial diff + compress large payloads so reviewers don't burn turns chunking.
 # Compress on RAW unified diff only — never Limit-DiffText first (head/tail splice
 # is not valid input for Get-DiffFileStats and drops middle files on huge commits).
-$rawDiff = Get-GitDiffText -Override $DiffOverride
+$rawDiff = Get-GitDiffText -Override $DiffOverride -StagedOnlyMode:$StagedOnly
 if ($StagedOnly -and -not $DiffOverride -and [string]::IsNullOrWhiteSpace($rawDiff)) {
-    Write-Host "PRE-COMMIT OK - nothing staged to review." -ForegroundColor Green
+    if ($script:StagedReviewUnchanged) {
+        Exit-IfUnfixedPriorNext -Cwd $script:GateCwd
+        Assert-StagedIndexUnmoved
+        Write-Host "PRE-COMMIT OK - staged files unchanged since last review." -ForegroundColor Green
+    } else {
+        Write-Host "PRE-COMMIT OK - nothing staged to review." -ForegroundColor Green
+    }
     Exit-Gate -Code 0 -Reason 'no staged diff'
 }
 $rawLen = if ($rawDiff) { $rawDiff.Length } else { 0 }
@@ -2034,6 +2568,10 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
         }
     }
     Save-Text (Join-Path $roundDir 'diff.patch') $diff
+    # Hashes follow this round's staged tree. Round 1's snapshot is stale after a fixer restage.
+    if ($StagedOnly -and -not $DiffOverride) {
+        Update-ReviewedPatchHashesFromIndex
+    }
 
     $roundRec = [ordered]@{
         number      = $round
@@ -2112,20 +2650,14 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
                 Write-GateFail ("ledger save failed (fail-closed): {0}" -f $_.Exception.Message)
                 Exit-Gate -Code 1 -Reason 'ledger save failed'
             }
-            $allowOpenNext = ($env:VIBE_ALLOW_OPEN_NEXT -eq '1')
-            if ($StagedOnly -and -not $allowOpenNext -and (Get-Command Get-UnfixedPriorNext -ErrorAction SilentlyContinue)) {
-                try {
-                    $leftover = @(Get-UnfixedPriorNext -Cwd $cwdNow)
-                } catch {
-                    Write-GateFail ("ledger read failed (fail-closed): {0}" -f $_.Exception.Message)
-                    Exit-Gate -Code 1 -Reason 'ledger read failed'
-                    $leftover = @()
-                }
-                if ($leftover.Count -gt 0) {
-                    $ids = @($leftover | ForEach-Object { [string]$_.id } | Where-Object { $_ }) -join ', '
-                    Write-GateFail ("OPEN NEXT from a previous SHA still open ({0}). Fix in this commit (stage those files). Emergency: VIBE_ALLOW_OPEN_NEXT=1" -f $ids)
-                    Exit-Gate -Code 1 -Reason 'unfixed prior next'
-                }
+            if ($StagedOnly) { Exit-IfUnfixedPriorNext -Cwd $cwdNow }
+            # Only the staged diff the panel actually reviewed. An override or a
+            # non-pre-commit diff must not stamp index hashes the reviewers did not see.
+            if ($StagedOnly -and -not $DiffOverride) {
+            try { Save-ReviewedBlobs (Select-HashesPresentInPrompt $script:ReviewedPatchHashes $diff) } catch {
+                Write-GateFail ("reviewed-blob save failed (fail-closed): {0}" -f $_.Exception.Message)
+                Exit-Gate -Code 1 -Reason 'reviewed-blob save failed'
+            }
             }
         }
         Write-Host ""

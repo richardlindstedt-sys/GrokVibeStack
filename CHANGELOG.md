@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-10-14
+
+### Fixed
+
+- Open-next ledger keys are case-sensitive, so `Foo.ps1` and `foo.ps1` stay separate rows with their own opened SHA.
+- Reviewed-blob stamps apply only when the saved cwd and the process cwd are both non-empty and equal (ordinal). An empty cwd does not skip review and is refused on save. Path keys are case-sensitive.
+- The prompt hook joins `gate-now.txt` and `gate-last-done.txt` one segment at a time. The `docs/specs` pin joins `docs` and `specs` separately so PowerShell 7 on Linux finds the directory.
+- After a fixer restage, the accepting round hashes the staged diffs that round's panel saw. The stamp check no longer compares the index to the pre-fix snapshot. `Exit-IfUnfixedPriorNext` returns after it blocks.
+- Reviewer stdout is `streaming-messages-json` with partial messages. Chat prints those `STREAM:` lines and skips the per-second "waiting on model" tick.
+- Stop hook block replies are hand-built JSON. A turn that already reported the gate run exits with no stdout, so the ignored `hookSpecificOutput` parse error is gone.
+- A later commit reviews only staged files whose diff changed since the last pass. Reviewed-blob hashes are written only after that commit passes the open-next check, and only for the staged diff the panel saw. The staged list has no diff-filter, so a file-type change is reviewed too. A hash is stored only when that file's full patch is still in the text the panel received. The blob file is joined one segment at a time under `USERPROFILE` or `HOME`. Every previous-SHA next still fails the commit. A reused finding id keeps the old SHA when the file is the same, even if the title changes.
+- Uninstall still removes a leftover `tokei.exe`.
+- A reviewer that writes vote JSON and then keeps talking still counts. The parser uses the last assistant message that contains `vote` or `verdict`, not the trailing chatter. A raw newline inside a JSON string is escaped before parse. `Get-TopLevelJsonObjects` returns one array even when it holds a single object. An unclosed `{` does not yield an inner APPROVE. A later closed vote after prose still counts.
+- The elapsed heartbeat no longer cuts `NOW:` at 300 characters, and it stores the same ASCII status text as the other gate writers. Open-next rows whose id or file contains `|` stay separate. The vote-parser smoke file name is unique per run.
+- Reviewed-blob paths no longer assign `$home`. That name is the read-only `$HOME` constant, so a passing gate died while saving the stamp.
+
 ## [2.7.0] - 2026-10-13
 
 ### Changed

@@ -4,16 +4,39 @@
     Shared gate-chat helpers (monitor, Stop hook, prompt inject).
 #>
 
+function ConvertTo-GatePlainText([string]$Text) {
+    # Status files are rewritten by Windows PowerShell 5.1. Non-ASCII (em dash,
+    # nbsp thousands separator) is read as ANSI and written back as UTF-8, so
+    # one dash grows into a new garbage line every heartbeat.
+    # Same body as gate-progress.ps1. watch-gate-now loads this file, not that one.
+    if ($null -eq $Text) { return '' }
+    $s = [string]$Text
+    $s = $s -replace '[\u2010-\u2015\u2212]', '-'
+    $s = $s -replace '[\u00A0\u202F\u2007\u2009]', ' '
+    $sb = New-Object System.Text.StringBuilder $s.Length
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if ($c -eq 9 -or ($c -ge 32 -and $c -le 126)) { [void]$sb.Append($ch) }
+    }
+    return (($sb.ToString() -replace '\s+', ' ').Trim())
+}
+
 function Get-GateNowTickKey([string]$NowLine) {
     $s = "$NowLine"
     $s = $s -replace '\s*\(~\d+s\)', ''
+    # Heartbeats rewrite "490s" and "out 0B". Those are not new content.
+    $s = $s -replace '\b\d+s\b', ''
+    $s = $s -replace '\bout\s+\d+B\b', 'out'
+    $s = $s -replace '\berr\s+\d+B\b', 'err'
     $s = $s -replace '\s{2,}', ' '
+    $s = $s -replace '\s+\|\s+\|', ' |'
     return $s.Trim()
 }
 
 function Test-IsGateWaitNow([string]$NowLine) {
     $s = (Get-GateNowTickKey $NowLine) -replace '^NOW:\s+', ''
-    return [bool]($s -match '(?i)^Waiting on\b')
+    # "reviewer:correctness 12s | ... | waiting on model" does not start with Waiting.
+    return [bool]($s -match '(?i)(^Waiting on\b|waiting on model|no output yet)')
 }
 
 function Get-GateFileRun([string[]]$Lines) {

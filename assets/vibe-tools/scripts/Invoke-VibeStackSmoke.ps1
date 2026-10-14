@@ -431,10 +431,50 @@ if ($rawReview -match 'Normalize-ReviewerVote' -and $rawReview -match 'Get-Panel
 }
 # Live restage must not call git add -u/-A (comments mentioning them OK)
 $restageLive = [regex]::Replace($rawReview, '(?m)^\s*#.*$', '')
-if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $rawReview -match 'PreFixUntracked' -and $rawReview -match 'ls-files --others --exclude-standard' -and $rawReview -match 'Normalize-RestagePath' -and $rawReview -match 'gate-path-parse\.ps1' -and $restageLive -match ':\(literal\)' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\s') {
+if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorStaged' -and $rawReview -match 'PreFixDirty' -and $rawReview -match 'PreFixUntracked' -and $rawReview -match 'ls-files --others --exclude-standard' -and $rawReview -match 'Normalize-RestagePath' -and $rawReview -match 'gate-path-parse\.ps1' -and $restageLive -match '--literal-pathspecs' -and $restageLive -match 'add -- ' -and $restageLive -notmatch 'git add -u' -and $restageLive -notmatch 'git add -A\b') {
     Ok 'review: scoped restage (blocker + prior-staged + PreFixDirty + new untracked); literal pathspec'
 } else {
-    Bad 'review restage still uses git add -u/-A or missing Normalize-RestagePath / :(literal)'
+    Bad 'review restage still uses git add -u/-A or missing Normalize-RestagePath / --literal-pathspecs / add --'
+}
+$voteTok = $null
+$voteErr = $null
+$voteAst = [System.Management.Automation.Language.Parser]::ParseFile($reviewSrc, [ref]$voteTok, [ref]$voteErr)
+$voteNames = @('Get-JsonObjectAt','Get-TopLevelJsonObjects','Repair-LooseJson','Test-GateJsonReply','ConvertFrom-JsonLoose')
+$voteBody = New-Object System.Text.StringBuilder
+$voteMissing = @()
+foreach ($voteName in $voteNames) {
+    $voteFn = $voteAst.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | Where-Object { $_.Name -eq $voteName } | Select-Object -First 1
+    if (-not $voteFn) { $voteMissing += $voteName } else { [void]$voteBody.AppendLine($voteFn.Extent.Text) }
+}
+if (@($voteErr).Count -gt 0 -or $voteMissing.Count -gt 0) {
+    Bad ('review vote parser missing: ' + (($voteMissing + @($voteErr)) -join ','))
+} else {
+    $voteTmp = Join-Path $env:TEMP ("vibe-vote-fns-smoke-{0}.ps1" -f [guid]::NewGuid().ToString('N'))
+    try {
+    [System.IO.File]::WriteAllText($voteTmp, $voteBody.ToString())
+    . $voteTmp
+    $oneJson = '{"vote":"APPROVE","summary":"x"}'
+    $one = Get-TopLevelJsonObjects $oneJson
+    $two = Get-TopLevelJsonObjects ($oneJson + '{"vote":"FAIL"}')
+    $nl = '{"vote":"APPROVE","summary":"line' + "`n" + ' two"}'
+    $got = ConvertFrom-JsonLoose ("prose `n" + $nl + "`nThe user is sending a stop hook { nope }")
+    $cut = '{"vote":"BLOCK","inner":{"vote":"APPROVE"}'
+    $cutObjs = Get-TopLevelJsonObjects $cut
+    $cutVote = ConvertFrom-JsonLoose $cut
+    $cutApprove = $false
+    foreach ($c in $cutObjs) { if ($c -match '"APPROVE"') { $cutApprove = $true } }
+    $closed = '{"vote":"BLOCK","inner":{"vote":"APPROVE"}}'
+    $closedObjs = Get-TopLevelJsonObjects $closed
+    $real = '{"vote":"BLOCK","summary":"kept"}'
+    $after = ConvertFrom-JsonLoose ($cut + " The real vote follows.`n" + $real)
+    if ($one.Count -eq 1 -and $one[0] -eq $oneJson -and $two.Count -eq 2 -and $two[0] -eq $oneJson -and $got.vote -eq 'APPROVE' -and $got.summary -eq ("line" + "`n" + " two") -and -not $cutApprove -and $cutObjs.Count -eq 0 -and -not ($cutVote -and $cutVote.vote -eq 'APPROVE') -and $closedObjs.Count -eq 1 -and $closedObjs[0] -eq $closed -and $after.vote -eq 'BLOCK' -and $after.summary -eq 'kept') {
+        Ok 'review: one JSON object stays an array; raw newline in a string still parses; unclosed JSON yields no inner APPROVE; a later closed vote still counts'
+    } else {
+        Bad 'review: JSON list unroll, raw-newline parse, or unclosed JSON inner vote'
+    }
+    } finally {
+        Remove-Item -LiteralPath $voteTmp -Force -ErrorAction SilentlyContinue
+    }
 }
 if ($rawReview -match 'Get-PathsFromDiffText' -and $rawReview -match 'Add-NameStatusLineToList' -and $rawReview -match 'name-status') {
     Ok 'AutoProfile: quoted headers + rename both sides (name-status)'
@@ -629,6 +669,13 @@ if ($rawReview -match 'function Get-VibeSpecExcerpt' -and $rawReview -match 'SPE
 } else {
     Bad 'review missing SPEC EXCERPT helper'
 }
+$blobOrder = ($rawReview.IndexOf('Exit-IfUnfixedPriorNext -Cwd $cwdNow') -ge 0 -and $rawReview.IndexOf('Exit-IfUnfixedPriorNext -Cwd $cwdNow') -lt $rawReview.IndexOf('Save-ReviewedBlobs (Select-HashesPresentInPrompt'))
+$blobPathOk = ($rawReview.Contains("'.grok', 'vibe-tools', 'reports'")) -and (-not $rawReview.Contains("Join-Path `$env:USERPROFILE '.grok\vibe-tools\reports'"))
+if ($rawReview -match 'function Exit-IfUnfixedPriorNext' -and $rawReview -match 'StagedReviewUnchanged' -and $rawReview -match '--literal-pathspecs' -and $rawReview -notmatch ':\(literal\)' -and $rawReview -match 'ReviewedPatchHashes' -and $rawReview -match 'function Assert-StagedIndexUnmoved' -and $rawReview -match 'index moved after review' -and $rawReview -match 'open-next helper missing' -and $rawReview -match 'empty staged diff' -and $rawReview -match 'StringComparer\]::Ordinal' -and $rawReview -match 'IsNullOrWhiteSpace\(\$docCwd\)' -and $rawReview -match 'refusing to save reviewed blobs with an empty cwd' -and $rawReview -match 'StagedOnlyMode' -and $blobOrder -and $blobPathOk) {
+    Ok 'review: blob hashes saved only after the open-next check; literal paths; PS7 home'
+} else {
+    Bad 'review saves reviewed blobs before the open-next fail, or pathspec/home path is unsafe'
+}
 if ($rawReview -match 'RaiseSecurityNext' -and $rawReview -match 'quadratic' -and $rawReview -match 'THIS GATE: exploitable') {
     Ok 'review: strict/sensitive security next->blocker; simplicity perf hunt'
 } else {
@@ -642,7 +689,7 @@ if ($promptCtx -match 'GATE LIVE' -and $promptCtx -match 'gate-now\.txt' -and $p
 $gateChat = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-gate-chat.ps1') -Raw -ErrorAction SilentlyContinue
 $watchNow = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\watch-gate-now.ps1') -Raw -ErrorAction SilentlyContinue
 $stopSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\run-vibe-stop-remind.ps1') -Raw -ErrorAction SilentlyContinue
-if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -match 'Heartbeat' -and $watchNow -match 'VibeGateNowWrite' -and $progSrc -match 'Start-GateElapsedHeartbeat' -and $stopSrc -match 'lastAssistantMessage' -and $stopSrc -match "decision = 'block'" -and $vibeHookTpl -match 'run-vibe-gate-chat\.ps1' -and $hooksInstSrc -match 'run-vibe-gate-chat\.ps1') {
+if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -match 'Heartbeat' -and $watchNow -match 'VibeGateNowWrite' -and $progSrc -match 'Start-GateElapsedHeartbeat' -and $stopSrc -match 'lastAssistantMessage' -and $stopSrc -match '"decision":"block"' -and $vibeHookTpl -match 'run-vibe-gate-chat\.ps1' -and $hooksInstSrc -match 'run-vibe-gate-chat\.ps1') {
     Ok 'gate no-silence: 15s poll clamp + Stop keep-alive + ELAPSED heartbeat'
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
@@ -652,12 +699,17 @@ if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 60
 } else {
     Bad 'watch-gate-now missing sawLive arm / 600s linger / PROGRESS pulse / Heartbeat-only exit'
 }
-if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function Get-GateSnapshot' -and $watchNow -notmatch 'function Get-GateHead' -and $watchNow -match "EVT " -and $watchNow -match "'VOTE'" -and $watchNow -match 'seenEventsRun' -and $watchNow -match 'seenEvents.Clear' -and $promptCtx -match 'VOTES \(verdict' -and $promptCtx -notmatch '-Tail 80' -and $rawReview -match 'Publish-ReviewerVoteNow' -and $rawReview -match 'VoteNowPublished\[\$Role\] = \$evt' -and $rawReview -match 'Set-GateWaitNow' -and $progSrc -match 'function Set-GateVote' -and $progSrc -match 'VOTE:') {
+if ($watchNow -match 'Get-InterestingGateEvents' -and $watchNow -match 'function Get-GateSnapshot' -and $watchNow -match 'ReadAllLines' -and $watchNow -match 'DOING: ' -and $progSrc -match 'function ConvertTo-GatePlainText' -and $rawReview -match 'waiting on model' -and $watchNow -notmatch 'function Get-GateHead' -and $watchNow -match "EVT " -and $watchNow -match "'VOTE'" -and $watchNow -match 'seenEventsRun' -and $watchNow -match 'seenEvents.Clear' -and $promptCtx -match 'VOTES \(verdict' -and $promptCtx -notmatch '-Tail 80' -and $rawReview -match 'Publish-ReviewerVoteNow' -and $rawReview -match 'VoteNowPublished\[\$Role\] = \$evt' -and $rawReview -match 'Set-GateWaitNow' -and $progSrc -match 'function Set-GateVote' -and $progSrc -match 'VOTE:') {
     Ok 'gate chat: sticky VOTE lines + full-file snapshot + inject VOTES block'
 } else {
     Bad 'gate chat missing sticky votes / Get-GateSnapshot / inject VOTES'
 }
 $chatLibSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-chat-lib.ps1') -Raw -ErrorAction SilentlyContinue
+if ($watchNow -match 'ConvertTo-GatePlainText' -and $watchNow -notmatch 'Substring\(0, 300\)' -and $chatLibSrc -match 'function ConvertTo-GatePlainText' -and $progSrc -match 'function ConvertTo-GateKeyPart') {
+    Ok 'gate heartbeat: ASCII status, no NOW truncation; advisory key escapes pipe'
+} else {
+    Bad 'watch heartbeat still truncates NOW, or advisory key does not escape pipe'
+}
 $ctxSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-review-context.ps1') -Raw -ErrorAction SilentlyContinue
 if ($ctxSrc -match 'GIT_INDEX_FILE' -and $ctxSrc -match 'fromFile -eq \$head') {
     Ok 'intent: hook ignores COMMIT_EDITMSG when it still equals HEAD'
@@ -777,6 +829,40 @@ Save-GateOpenAdvisories -Items @(
 $docD = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
 $stamped = @($docD.items) | Where-Object { $_.id -eq 'stamp-1' } | Select-Object -First 1
 if (-not $stamped -or [string]$stamped.bucket -ne 'next') { Write-Output 'later-downgrade-of-next-allowed'; exit 1 }
+if ([string]$stamped.openedHead -ne 'aaa') { Write-Output 'title-change-reset-openedHead'; exit 1 }
+$env:VIBE_GATE_HEAD_SHA = 'ccc'
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'stamp-1'; title = 'other file'; file = 'other.ps1'; severity = 'later' }
+) -RunId 'other' -Cwd $cwd -ChangedPaths @('other.ps1')
+$docO = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$kept = @($docO.items) | Where-Object { $_.id -eq 'stamp-1' -and ([string]$_.file -replace '\\','/') -match 'gate-progress\.ps1$' } | Select-Object -First 1
+$other = @($docO.items) | Where-Object { $_.id -eq 'stamp-1' -and ([string]$_.file -replace '\\','/') -eq 'other.ps1' } | Select-Object -First 1
+if (-not $kept -or [string]$kept.status -ne 'open' -or [string]$kept.bucket -ne 'next' -or [string]$kept.openedHead -ne 'aaa') { Write-Output 'other-file-clobbered-open-next'; exit 1 }
+if (-not $other -or [string]$other.bucket -ne 'later' -or [string]$other.openedHead -ne 'ccc') { Write-Output 'other-file-not-separate-row'; exit 1 }
+$still = @(Get-UnfixedPriorNext -Cwd $cwd -CurrentHead 'ccc')
+if (@($still | Where-Object { $_.id -eq 'stamp-1' -and ([string]$_.file -replace '\\','/') -match 'gate-progress\.ps1$' }).Count -eq 0) { Write-Output 'old-next-dropped-on-id-reuse'; exit 1 }
+$env:VIBE_GATE_HEAD_SHA = 'ddd'
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'case-1'; title = 'upper'; file = 'Foo.ps1'; severity = 'next' }
+) -RunId 'caseA' -Cwd $cwd -ChangedPaths @('Foo.ps1')
+$env:VIBE_GATE_HEAD_SHA = 'eee'
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'case-1'; title = 'lower'; file = 'foo.ps1'; severity = 'next' }
+) -RunId 'caseB' -Cwd $cwd -ChangedPaths @('foo.ps1')
+$docC = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$upper = @($docC.items) | Where-Object { $_.id -eq 'case-1' -and ([string]$_.file) -ceq 'Foo.ps1' } | Select-Object -First 1
+$lower = @($docC.items) | Where-Object { $_.id -eq 'case-1' -and ([string]$_.file) -ceq 'foo.ps1' } | Select-Object -First 1
+if (-not $upper -or [string]$upper.status -ne 'open' -or [string]$upper.openedHead -cne 'ddd') { Write-Output 'case-upper-row-lost'; exit 1 }
+if (-not $lower -or [string]$lower.status -ne 'open' -or [string]$lower.openedHead -cne 'eee') { Write-Output 'case-lower-row-lost'; exit 1 }
+$env:VIBE_GATE_HEAD_SHA = 'fff'
+Save-GateOpenAdvisories -Items @(
+    [pscustomobject]@{ id = 'pipe|left'; title = 'left'; file = 'right.ps1'; severity = 'next' },
+    [pscustomobject]@{ id = 'pipe'; title = 'right'; file = 'left|right.ps1'; severity = 'next' }
+) -RunId 'pipe' -Cwd $cwd -ChangedPaths @('right.ps1', 'left|right.ps1')
+$docPipe = Get-Content -LiteralPath $Ledger -Raw -Encoding utf8 | ConvertFrom-Json
+$pipeA = @($docPipe.items) | Where-Object { $_.id -eq 'pipe|left' -and ([string]$_.status) -eq 'open' } | Select-Object -First 1
+$pipeB = @($docPipe.items) | Where-Object { $_.id -eq 'pipe' -and ([string]$_.file) -eq 'left|right.ps1' -and ([string]$_.status) -eq 'open' } | Select-Object -First 1
+if (-not $pipeA -or -not $pipeB) { Write-Output 'pipe-key-collapsed-rows'; exit 1 }
 [System.IO.File]::WriteAllText($Ledger, 'NOT-JSON', $utf8)
 $threw = $false
 try {
@@ -915,19 +1001,39 @@ try {
         'CWD:     x'
         'LOG:     y'
         'EVENTS:  z'
-        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
-        ''
-        '[21:00:00] scan: Trivy ok'
     ) | Set-Content -LiteralPath $voteNow -Encoding ascii
     $voteProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
         '-Monitor', '-IdleSec', '0', '-IntervalSec', '1', '-NowFile', $voteNow
     ) -RedirectStandardOutput $voteOut -WindowStyle Hidden -PassThru
-    Start-Sleep -Milliseconds 1800
+    # First poll primes the run so a restarted watch does not replay history.
+    Start-Sleep -Milliseconds 2500
+    @(
+        'RUN:     vote-test-1'
+        'NOW:     Waiting on vibe-correctness (~15s)'
+        'ELAPSED: 15s'
+        'PHASE:   reviewers'
+        'PID:     1'
+        'CWD:     x'
+        'LOG:     y'
+        'EVENTS:  z'
+        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
+        ''
+        '[21:00:00] scan: Trivy ok'
+    ) | Set-Content -LiteralPath $voteNow -Encoding ascii
+    $voteSaw = $false
+    $voteUntil = (Get-Date).AddSeconds(6)
+    while ((Get-Date) -lt $voteUntil) {
+        $voteTxt = Get-Content -LiteralPath $voteOut -Raw -ErrorAction SilentlyContinue
+        if ($voteTxt -match '(?m)^VOTE .*security: APPROVE' -and $voteTxt -match '(?m)^EVT .*scan: Trivy ok') {
+            $voteSaw = $true
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    }
     try { Stop-Process -Id $voteProc.Id -Force -ErrorAction SilentlyContinue } catch {}
     try { $voteProc.WaitForExit(3000) | Out-Null } catch {}
-    $voteTxt = Get-Content -LiteralPath $voteOut -Raw -ErrorAction SilentlyContinue
-    if ($voteTxt -match '(?m)^VOTE .*security: APPROVE' -and $voteTxt -match '(?m)^EVT .*scan: Trivy ok') {
+    if ($voteSaw) {
         Ok 'gate monitor: full snapshot emits VOTE + EVT'
     } else {
         Bad 'gate monitor fixture missing VOTE/EVT (Get-GateSnapshot not seeing body)'
@@ -948,14 +1054,20 @@ try {
         'RUN:     wait-test-1'
         'NOW:     Waiting on vibe-correctness (~15s)'
         'ELAPSED: 15s'
-        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
-        ''
-        '[21:00:00] scan: Trivy ok'
     ) | Set-Content -LiteralPath $waitNow -Encoding ascii
     $waitProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript,
         '-Monitor', '-IdleSec', '0', '-IntervalSec', '1', '-NowFile', $waitNow
     ) -RedirectStandardOutput $waitOut -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 2500
+    @(
+        'RUN:     wait-test-1'
+        'NOW:     Waiting on vibe-correctness (~15s)'
+        'ELAPSED: 15s'
+        'VOTE:    security: APPROVE (0 finding(s)) - no secrets'
+        ''
+        '[21:00:00] scan: Trivy ok'
+    ) | Set-Content -LiteralPath $waitNow -Encoding ascii
     $sawVote = $false
     $until = (Get-Date).AddSeconds(8)
     while ((Get-Date) -lt $until) {
@@ -1238,7 +1350,9 @@ try {
     $kFile = Join-Path $kTmp 'headroom-keeper.pid'
     Set-Content -LiteralPath $kFile -Value "$PID" -Encoding ascii -NoNewline
     $deadScript = Test-VibeKeeperAlive -Port 8787 -PidFile $kFile
-    $kProc = Start-Process -FilePath "$PSHOME\powershell.exe" -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 40; # keep-headroom-proxy.ps1 -Port 8788') -WindowStyle Hidden -PassThru
+    $kExe = Join-Path $PSHOME 'powershell.exe'
+    if (-not (Test-Path -LiteralPath $kExe)) { $kExe = Join-Path $PSHOME 'pwsh.exe' }
+    $kProc = Start-Process -FilePath $kExe -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 40; # keep-headroom-proxy.ps1 -Port 8788') -WindowStyle Hidden -PassThru
     Start-Sleep -Milliseconds 400
     Set-Content -LiteralPath $kFile -Value "$($kProc.Id)" -Encoding ascii -NoNewline
     $k8788 = Test-VibeKeeperAlive -Port 8788 -PidFile $kFile

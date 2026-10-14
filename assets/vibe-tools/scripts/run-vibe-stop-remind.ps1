@@ -10,8 +10,22 @@
 #>
 $ErrorActionPreference = 'SilentlyContinue'
 
-function Write-Json([hashtable]$Obj) {
-    Write-Output (($Obj | ConvertTo-Json -Compress -Depth 6))
+function Write-StopBlock([string]$Reason) {
+    # Hand-built ASCII JSON. ConvertTo-Json plus hookSpecificOutput was rejected
+    # at a fixed column ("expected , or }") and ignored on every review turn.
+    if ($null -eq $Reason) { $Reason = '' }
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $Reason.ToCharArray()) {
+        $c = [int]$ch
+        if ($ch -eq '\') { [void]$sb.Append('\\') }
+        elseif ($ch -eq '"') { [void]$sb.Append('\"') }
+        elseif ($ch -eq "`r") { [void]$sb.Append('\r') }
+        elseif ($ch -eq "`n") { [void]$sb.Append('\n') }
+        elseif ($ch -eq "`t") { [void]$sb.Append('\t') }
+        elseif ($c -ge 32 -and $c -le 126) { [void]$sb.Append($ch) }
+        else { [void]$sb.AppendFormat('\u{0:x4}', $c) }
+    }
+    [Console]::Out.WriteLine(('{{"decision":"block","reason":"{0}"}}' -f $sb.ToString()))
 }
 
 function Invoke-EditRemind {
@@ -96,25 +110,18 @@ if (($env:VIBE_GATE_STOP -ne '0') -and (Test-Path -LiteralPath $nowFile)) {
         $spokeKey = Get-GateNowTickKey $spokeNow
         if (-not $spoke -and $spokeKey -and $nowKey -eq $spokeKey) { $spoke = $true }
         $snap = @"
-GATE LIVE — Speak scan/vote/arbiter/fixer/DONE and PROGRESS (phase + elapsed). Never 'still waiting' or 'no new votes'.
+GATE LIVE - speak scan/vote/arbiter/fixer/DONE and PROGRESS (phase + elapsed). Never 'still waiting' or 'no new votes'.
 $run
 $now
 $elapsed
 Optional: start monitor on ~/.grok/vibe-tools/scripts/watch-gate-now.ps1 -Monitor
 "@
         if (-not $spoke) {
-            Write-Json @{
-                decision = 'block'
-                reason   = $snap
-            }
+            Write-StopBlock $snap
             exit 0
         }
-        Write-Json @{
-            hookSpecificOutput = @{
-                hookEventName     = 'Stop'
-                additionalContext = $snap
-            }
-        }
+        # Already in chat. Empty stdout lets the turn end. Do not emit
+        # hookSpecificOutput here; that reply was ignored as invalid JSON.
         exit 0
     }
     # Fresh GATE DONE: do not let the turn end until chat has the recap.
@@ -151,10 +158,7 @@ $now
 $elapsed$voteBlock
 "@
         if (-not $spoke) {
-            Write-Json @{
-                decision = 'block'
-                reason   = $snap
-            }
+            Write-StopBlock $snap
             exit 0
         }
     }

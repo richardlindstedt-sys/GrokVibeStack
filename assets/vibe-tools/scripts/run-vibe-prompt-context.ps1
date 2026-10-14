@@ -59,8 +59,13 @@ $elapsed$evtBlock
 "@)
 }
 
-$nowFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-now.txt'
-$lastDoneFile = Join-Path $env:USERPROFILE '.grok\vibe-tools\reports\gate-last-done.txt'
+$reportDir = $env:USERPROFILE
+if ([string]::IsNullOrWhiteSpace($reportDir)) { $reportDir = $env:HOME }
+foreach ($part in @('.grok', 'vibe-tools', 'reports')) {
+    $reportDir = Join-Path $reportDir $part
+}
+$nowFile = Join-Path $reportDir 'gate-now.txt'
+$lastDoneFile = Join-Path $reportDir 'gate-last-done.txt'
 $liveLines = @()
 if (Test-Path -LiteralPath $nowFile) {
     $liveLines = @(Get-Content -LiteralPath $nowFile)
@@ -102,6 +107,7 @@ $specHits = New-Object System.Collections.Generic.List[string]
 foreach ($n in $specNames) {
     if (Test-Path -LiteralPath (Join-Path (Get-Location).Path $n)) { [void]$specHits.Add($n) }
 }
+# Split on '/' so PowerShell 7 on Linux does not treat a backslash as a filename character.
 foreach ($label in @('specs/', 'docs/specs/')) {
     $specDir = (Get-Location).Path
     foreach ($part in ($label.TrimEnd('/') -split '/')) {

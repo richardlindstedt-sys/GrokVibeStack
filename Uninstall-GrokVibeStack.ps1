@@ -382,7 +382,7 @@ Remove-FileSafe (Join-Path $GrokHome 'VERSION')
 Write-Step "Bin shims (never grok.exe / agent.exe)"
 $shims = New-Object System.Collections.Generic.List[string]
 foreach ($shim in @($m.binShims)) { if ($shim) { [void]$shims.Add([string]$shim) } }
-foreach ($extra in @('checkov.cmd')) {
+foreach ($extra in @('checkov.cmd', 'tokei.exe')) {
     if (-not ($shims -contains $extra)) { [void]$shims.Add($extra) }
 }
 foreach ($shim in $shims) {
