@@ -1,8 +1,8 @@
 # --- grok-vibe-stack managed block (begin) ---
 # MAX quality gates + MAX token savings (interactive session)
 [session]
-# Compact earlier than default 70 - shrinks long sessions harder
-auto_compact_threshold_percent = 55
+# CLI default is 85. 55 fired near half the window and hung sessions.
+auto_compact_threshold_percent = 85
 
 [features]
 two_pass_compaction = true
@@ -95,6 +95,6 @@ context_window = 500000
 
 [models]
 default = "grok-4.7"
-# medium for interactive chat savings; commit/push AI review forces high via grok-ai-review.ps1
+# medium for interactive chat. Commit standard and version-tag strict use high. Push fast stays medium.
 default_reasoning_effort = "medium"
 # --- grok-vibe-stack managed block (end) ---

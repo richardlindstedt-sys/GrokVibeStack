@@ -481,7 +481,7 @@ if (Test-Path -LiteralPath $cfg) {
     }
     $effort = [regex]::Match([string]$cfgTxt, "default_reasoning_effort\s*=\s*`"([^`"]+)`"")
     if ($effort.Success) {
-        Write-Host ("  default_reasoning_effort: {0} (interactive chat; gates force high)" -f $effort.Groups[1].Value)
+        Write-Host ("  default_reasoning_effort: {0} (interactive chat; commit/tag gates use high, push fast stays medium)" -f $effort.Groups[1].Value)
     }
     if ($cfgTxt -match '(?s)\[model\."grok-4\.[67]"\].{0,400}env_key') {
         Write-Host '  WARN: Headroom model table still has env_key. Unset the XAI_API_KEY environment variable and remove env_key. Re-run installer or start-grok repair.' -ForegroundColor Yellow
@@ -544,7 +544,7 @@ Write-Host '  caveman: ultra (chat output)'
 Write-Host '  rtk:     prefix noisy shell (git/test/build/docker/gh/...)'
 Write-Host '  proxy:   mode=token lossless code-aware target-ratio=0.35 no-ccr'
 Write-Host '  mcp:     max_output_bytes=20000 (config)'
-Write-Host '  compact: 55% + two-pass'
+Write-Host '  compact: 85% + two-pass'
 Write-Host '  gates:   profiles fast|standard|strict; AI fail-closed; reports under vibe-tools/reports'
 Write-Host ""
 Write-Host 'Skills: caveman + token-save under ~/.grok/skills'

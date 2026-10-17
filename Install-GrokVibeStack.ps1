@@ -1299,7 +1299,9 @@ set "SCRIPTS=%USERPROFILE%\.grok\token-saving\venv\Scripts"
 set "PATH=%SCRIPTS%;%PATH%"
 "%SCRIPTS%\headroom.exe" mcp serve %*
 "@
-    [System.IO.File]::WriteAllText((Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'), ($mcpCmd -replace "`n", "`r`n"))
+    # Here-strings on Windows are already CRLF. A second `n -> `r`n pass writes CR CR LF.
+    $mcpNorm = ($mcpCmd -replace "`r`n", "`n") -replace "`n", "`r`n"
+    [System.IO.File]::WriteAllText((Join-Path $TokenRoot 'scripts\headroom-mcp-serve.cmd'), $mcpNorm)
 }
 Write-Ok "Deployed rules, skills, scripts, shims, docs"
 

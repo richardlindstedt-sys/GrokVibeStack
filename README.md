@@ -20,7 +20,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.8.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.8.1** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -40,7 +40,7 @@ Plain Grok Build is the engine. This is the drivetrain: the agent still writes, 
 | **Project tests** | Optional, if you remember | **On every commit** against the working tree. Test layout present but skipped → **fail** (unless `VIBE_ALLOW_SKIP_TESTS=1`) |
 | **Review** | One chat, one opinion | **3-role panel** (correctness, security, simplicity) + **arbiter** + fixer loop. Fail-closed if grok/proxy/votes are missing or unparseable |
 | **“Fix it later”** | Forgotten | `next` **ships this SHA**, then **host-fails the next commit** until those files are actually fixed. `later` is ledger-only (doctor lists) |
-| **Chat cost** | Full dumps, fat MCP, long sessions | **RTK** on noisy shell, Headroom keep-ratio **~0.35**, caveman replies, compact at **55%**, MCP cap **20 KB**, coding profile = Serena+Headroom only |
+| **Chat cost** | Full dumps, fat MCP, long sessions | **RTK** on noisy shell, Headroom keep-ratio **~0.35**, caveman replies, compact at **85%**, MCP cap **20 KB**, coding profile = Serena+Headroom only |
 | **Where tokens go** | Every turn | Chat stays **medium** effort. **High-effort multi-reviewer spend is at git** — on purpose |
 | **Hooks** | None | Per-repo pre-commit / pre-push. Doctor / `start-grok` **tell you** if `.git` has no vibe hooks (no silent install) |
 
@@ -237,10 +237,10 @@ Configured defaults (not a promise of one fixed % on your whole bill):
 | **Headroom proxy** | keep-ratio **target 0.35** (lossless + code-aware) | On traffic the proxy compresses, aim to **keep ~35%** of tokens → up to **~65% cut** on that path. Best on long sessions, big tool dumps, log/JSON-heavy turns. Does not shrink every prompt the same way. |
 | **RTK** | enforce prefix on **each** noisy shell segment (`&&`/`||`/`;`/newline/bare `&`) | Often **large** stdout cuts on `git`/`test`/`docker`/`gh` when every noisy leg uses `rtk …` (see `rtk gain`). One `rtk` does not unlock the rest of a chain. Residual: `\|` pipelines, `2>&1`/`&>` redirects, leading `&` call operator, backticks/heredocs. |
 | **Caveman** | chat style **ultra** | Shorter model **replies** day-to-day (output tokens), not input context. |
-| **Compact** | fire at **55%** context, two-pass | Compacts earlier than a high threshold → fewer giant multi-hour contexts. |
+| **Compact** | fire at **85%** context, two-pass | Same threshold as the CLI default. Avoids compacting near half the window. |
 | **MCP** | `max_output_bytes = 20000` | Caps each MCP tool payload at **20 KB** so one tool cannot flood context. |
 | **Interactive effort** | default **medium** | Lower thinking cost for normal chat vs always-high. |
-| **Commit/push AI gates** | forced **high** effort, multi-reviewer | These **spend** tokens on purpose for quality (not a savings feature). |
+| **Commit / tag AI gates** | **high** effort, multi-reviewer | Commit is standard. Version-tag push is strict. Ordinary push is fast at **medium**. These **spend** tokens on purpose. |
 
 **How to measure on your machine** (after some real use):
 
@@ -391,10 +391,10 @@ GrokVibeStack/
 
 | You save on | You spend on |
 |-------------|--------------|
-| Compressible context via Headroom (~**0.35 keep** ⇒ up to ~**65%** off that path) | Commit/push **AI** multi-reviewer gates (high effort, by design) |
+| Compressible context via Headroom (~**0.35 keep** ⇒ up to ~**65%** off that path) | Commit standard and version-tag strict (high). Ordinary push is fast (medium). |
 | Noisy shell stdout via **RTK** (see `rtk gain`) | First install (winget/npm/pip time + disk) |
 | Shorter chat replies (caveman ultra) + medium interactive effort | |
-| Earlier compact (55%) + MCP 20 KB caps | |
+| Compact at 85% + MCP 20 KB caps | |
 
 Measure live: `headroom savings` · `rtk gain` · `start-grok -Status` · `doctor.ps1`  
 Details: [Token savings table](#token-savings-max-profile--knobs-and-what-they-mean) above.

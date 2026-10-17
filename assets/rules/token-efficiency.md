@@ -7,7 +7,7 @@ Save context and tokens without losing correctness.
 - **Headroom proxy** via `start-grok` / built-in `grok-4.7` override on `:8787` (one proxy; gates sequential on the same port). Target keep-ratio **0.35**, lossless + code-aware. `grok-4.7-direct` is emergency only if `:8787` is down. `grok-4.6` still Headroom.
 - **RTK** on noisy shell — enforced by PreToolUse hook (`run-rtk-enforce.ps1`)
 - **Caveman ultra** for chat output
-- **Compact** at **55%** context + two-pass
+- **Compact** at **85%** context + two-pass
 - **MCP** tool output capped at **20k** bytes. **Headroom MCP** (`headroom__*`) is **on by default**; optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
 - **Coding MCP profile:** `grok-mcp-coding` / `start-grok -McpProfile coding` disables mail/calendar/drive/tasks (tool schemas every turn). Restore: `grok-mcp-personal`.
 - Interactive reasoning default **medium**; AI gates are **fail-closed**. Effort by profile: **standard/strict = high**, **fast = medium** (push / docs-only)

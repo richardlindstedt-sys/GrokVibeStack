@@ -186,11 +186,16 @@ while ((Get-Date) -lt $deadline) {
         }
         # ELAPSED-only must not wake. Wait ticks must not print. Every stdout line wakes chat.
         # PROGRESS prints only when the phase or the step text changes. A second counter is not a change.
-        # First sight of a run marks the log already on disk. A restarted watch must not replay it.
+        # First sight of a finished run must not replay it.
+        # A live run still prints VOTE lines already on disk (late attach).
         $prime = ($null -ne $runId -and $primedRun -ne $runId)
         if ($prime) {
             foreach ($evt in (Get-InterestingGateEvents $snap)) {
-                [void]$seenEvents.Add([string]$evt)
+                $evtText = [string]$evt
+                if (-not $done -and $evtText -match '(?i)^VOTE:') {
+                    [Console]::Out.WriteLine($evtText)
+                }
+                [void]$seenEvents.Add($evtText)
             }
         }
         $tick = ('{0} | {1}' -f $runLine, (Get-GateNowTickKey $nowLine))

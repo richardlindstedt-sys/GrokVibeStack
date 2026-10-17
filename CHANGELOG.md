@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-10-17
+
+### Fixed
+
+- A push or tag review no longer writes the open-next ledger. An omitted `next` on the push panel cannot mark that debt resolved.
+- A pass-cache hit and an empty staged commit still run the previous-SHA open-next check.
+- Ledger paths on a passing commit come from the diff the accepting round reviewed, including files the fixer staged.
+- A diff override (push range, version tag) forces the fixer off. Later rounds keep that override diff instead of the checkout index.
+- Vote objects copied from the diff are ignored when the whole line matches, or when the compact JSON sits inside a longer diff line. `VERDICT:` lines stay whole-line, so `VERDICT: APPROVE` does not match inside `VERDICT: APPROVE_WITH_CHANGES`. A git header is skipped only when the line is `+++ a/`, `+++ b/`, `--- a/`, `--- b/`, or `/dev/null` and it has no `{` and no `VERDICT:`. A line stored as `+++ b/{json}` or `--- a/{json}` is still an echo. If an ignored echo is `BLOCK` or `APPROVE_WITH_CHANGES`, the gate returns no verdict instead of an earlier weaker one.
+- A later review round reads the staged index (`-StagedOnlyMode`). An empty accepting diff does not fall back to the round-1 paths.
+- A reviewer is stopped 20s after a parsed vote that is not a diff echo, or after 10 minutes with no output. A `"vote":` substring does not arm that stop. The stop kills the process tree and does not parse stdout when the process is still alive. The vote scan is one linear pass from the start of the text. A long reply keeps the first complete object and objects on a newline-aligned last 64KB. A quoted vote inside that window is not a second object. Compact JSON inside a longer diff line is an echo. `VERDICT: APPROVE` still does not match inside `VERDICT: APPROVE_WITH_CHANGES`.
+- A monitor that attaches to a live gate prints `VOTE` lines already on disk. A finished run is not replayed.
+- Compact threshold is **85%** (CLI default). 55% was compacting near half the window and hanging sessions.
+- `headroom-mcp-serve.cmd` is no longer written with a doubled CR.
+
 ## [2.8.0] - 2026-10-14
 
 ### Fixed

@@ -18,7 +18,7 @@ user-invocable: true
 5. **MCP cap** - large MCP results truncated (`[mcp] max_output_bytes=20000`).
 6. **Headroom proxy** - `grok-4.7` (default), `grok-4.6`, and `grok-gate` on `:8787` (one proxy, gates sequential). `--mode token --lossless --code-aware --target-ratio 0.35` + `--no-ccr-proactive-expansion`.
 7. **Headroom MCP** - `headroom__*` tools for on-demand compress/retrieve. **Default on.** Optional off: `[mcp_servers.headroom] enabled = false` in `~/.grok/config.toml` (proxy + RTK stay on).
-8. **Compaction** - **55%** auto + two-pass.
+8. **Compaction** - **85%** auto + two-pass.
 
 **Not default:** Headroom `--memory` / `--learn`, `HEADROOM_OUTPUT_SHAPER`, profile `agent-90`.
 

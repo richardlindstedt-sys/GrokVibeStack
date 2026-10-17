@@ -270,6 +270,9 @@ if ([string]::IsNullOrWhiteSpace($ReasoningEffort)) {
 if (-not $PSBoundParameters.ContainsKey('NoFix') -and $script:ResolvedProfile.NoFixDefault) {
     $NoFix = $true
 }
+# A push or tag diff is not the checkout index. The fixer would edit HEAD,
+# and a later round would approve that checkout while the tag still ships.
+if ($DiffOverride) { $NoFix = $true }
 if (-not $PSBoundParameters.ContainsKey('SequentialReviewers')) {
     # Headroom chat proxy cannot take parallel SSE, on any --port (not only :8787).
     $mn = [string]$Model
@@ -419,11 +422,50 @@ function Test-ReviewPreflight {
     return @{ Exe = $exe; Model = $resolvedModel }
 }
 
-function Get-MachineVerdict([string]$text) {
+function Test-DiffEchoesLine([string]$Needle, [string]$DiffText) {
+    if ([string]::IsNullOrWhiteSpace($Needle) -or [string]::IsNullOrWhiteSpace($DiffText)) { return $false }
+    $want = ($Needle -replace '\s+', ' ').Trim()
+    # JSON only. A verdict line stays whole-line so APPROVE does not match APPROVE_WITH_CHANGES.
+    $compact = $null
+    if ($want.StartsWith('{')) { $compact = ($want -replace '\s+', '') }
+    foreach ($raw in ($DiffText -split '\r?\n')) {
+        $line = [string]$raw
+        # Skip a real git header only when that line has no vote text.
+        # Added "++ b/{json}" is stored as "+++ b/{json}" and must still be checked.
+        $isHeader = [regex]::IsMatch($line, '^(\+\+\+|---) (a/|b/|/dev/null)')
+        if ($isHeader -and $line.IndexOf('{') -lt 0 -and $line.IndexOf('VERDICT:') -lt 0) { continue }
+        if ($line.Length -gt 0 -and ($line[0] -eq '+' -or $line[0] -eq '-')) { $line = $line.Substring(1) }
+        $line = ($line -replace '\s+', ' ').Trim()
+        if ($line -eq $want) { return $true }
+        if ($compact -and $line.Replace(' ', '').Contains($compact)) { return $true }
+    }
+    return $false
+}
+
+function Get-GateVoteRank([string]$Token) {
+    switch -Regex ([string]$Token) {
+        'BLOCK' { return 3 }
+        'APPROVE_WITH_CHANGES' { return 2 }
+        default { return 1 }
+    }
+}
+
+function Get-MachineVerdict([string]$text, [string]$IgnoreText) {
     if ([string]::IsNullOrWhiteSpace($text)) { return $null }
     $verdictMatches = [regex]::Matches($text, '(?im)^\s*VERDICT\s*:\s*(STRONG_APPROVE|APPROVE_WITH_CHANGES|APPROVE|BLOCK)\s*$')
-    if ($verdictMatches.Count -gt 0) {
-        return $verdictMatches[$verdictMatches.Count - 1].Groups[1].Value.ToUpperInvariant()
+    $skippedRank = 0
+    for ($i = $verdictMatches.Count - 1; $i -ge 0; $i--) {
+        $line = $verdictMatches[$i].Value.Trim()
+        $token = $verdictMatches[$i].Groups[1].Value.ToUpperInvariant()
+        # Whole diff line only. APPROVE must not match inside APPROVE_WITH_CHANGES.
+        if (Test-DiffEchoesLine $line $IgnoreText) {
+            $rank = Get-GateVoteRank $token
+            if ($rank -gt $skippedRank) { $skippedRank = $rank }
+            continue
+        }
+        # A planted BLOCK must not leave an earlier APPROVE in force.
+        if ($skippedRank -gt (Get-GateVoteRank $token)) { return $null }
+        return $token
     }
     return $null
 }
@@ -452,66 +494,28 @@ function Get-JsonObjectAt([string]$Text, [int]$Start) {
 }
 
 function Get-TopLevelJsonObjects([string]$Text) {
-    # A truncated {"vote":"BLOCK","inner":{"vote":"APPROVE"} must not yield APPROVE.
-    # Reviewers quote that example and then emit a real vote. A later closed vote
-    # after prose still counts. An inner object with only JSON between it and the
-    # unclosed '{' does not.
-    function Test-JsonPrefixOnly([string]$Body, [int]$From, [int]$To) {
-        $inStr = $false
-        $esc = $false
-        for ($k = $From; $k -lt $To; $k++) {
-            $c = $Body[$k]
-            if ($inStr) {
-                if ($esc) { $esc = $false; continue }
-                if ($c -eq '\') { $esc = $true; continue }
-                if ($c -eq '"') { $inStr = $false }
-                continue
-            }
-            if ($c -eq '"') { $inStr = $true; continue }
-            if ([char]::IsWhiteSpace($c)) { continue }
-            if ('{}[]:,+-.'.Contains($c)) { continue }
-            if ($c -ge '0' -and $c -le '9') { continue }
-            if ($c -eq 'e' -or $c -eq 'E') { continue }
-            if ([char]::IsLetter($c)) {
-                $w = New-Object System.Text.StringBuilder
-                while ($k -lt $To -and [char]::IsLetter($Body[$k])) {
-                    [void]$w.Append($Body[$k])
-                    $k++
-                }
-                $k--
-                $word = $w.ToString()
-                if ($word -ne 'true' -and $word -ne 'false' -and $word -ne 'null') { return $false }
-                continue
-            }
-            return $false
-        }
-        return $true
-    }
-    function Test-NestedInUnclosedJson([string]$Body, [int]$ObjStart) {
-        $inStr = $false
-        $esc = $false
-        for ($u = 0; $u -lt $ObjStart; $u++) {
-            $c = $Body[$u]
-            if ($inStr) {
-                if ($esc) { $esc = $false; continue }
-                if ($c -eq '\') { $esc = $true; continue }
-                if ($c -eq '"') { $inStr = $false }
-                continue
-            }
-            if ($c -eq '"') { $inStr = $true; continue }
-            if ($c -ne '{') { continue }
-            $look = $u + 1
-            while ($look -lt $ObjStart -and [char]::IsWhiteSpace($Body[$look])) { $look++ }
-            if ($look -ge $Body.Length -or $Body[$look] -ne '"') { continue }
-            if (Get-JsonObjectAt $Body $u) { continue }
-            if (Test-JsonPrefixOnly $Body ($u + 1) $ObjStart) { return $true }
-        }
-        return $false
-    }
+    # One linear pass from the real start. String state and depth stay correct,
+    # so a quoted {"vote":...} cannot become a top-level object and an unclosed
+    # '{' cannot yield an inner APPROVE. A long text keeps the first complete
+    # object plus any object that starts on the newline-aligned last 64KB.
+    # There is no mid-buffer resync.
     $list = New-Object System.Collections.Generic.List[string]
     if (-not $Text) { return ,@() }
+    $tailAt = 0
+    if ($Text.Length -gt 65536) {
+        $cutAt = $Text.Length - 65536
+        $nlAt = $Text.IndexOf("`n", $cutAt)
+        if ($nlAt -ge 0 -and $nlAt -lt ($Text.Length - 1)) {
+            $tailAt = $nlAt + 1
+        } else {
+            $tailAt = -1
+        }
+    }
     $inStr = $false
     $esc = $false
+    $depth = 0
+    $objStart = -1
+    $keptFirst = $false
     for ($i = 0; $i -lt $Text.Length; $i++) {
         $ch = $Text[$i]
         if ($inStr) {
@@ -521,13 +525,38 @@ function Get-TopLevelJsonObjects([string]$Text) {
             continue
         }
         if ($ch -eq '"') { $inStr = $true; continue }
+        # 1e10 is JSON. A bare word that is not true/false/null is prose, so an
+        # unclosed '{' does not swallow a later vote that follows that prose.
+        if ($ch -eq 'e' -or $ch -eq 'E') { continue }
+        if ([char]::IsLetter($ch)) {
+            $w = New-Object System.Text.StringBuilder
+            while ($i -lt $Text.Length -and [char]::IsLetter($Text[$i])) {
+                [void]$w.Append($Text[$i])
+                $i++
+            }
+            $i--
+            $word = $w.ToString()
+            if ($depth -gt 0 -and $word -ne 'true' -and $word -ne 'false' -and $word -ne 'null') {
+                $depth = 0
+                $objStart = -1
+            }
+            continue
+        }
         if ($ch -eq '{') {
-            $obj = Get-JsonObjectAt $Text $i
-            if ($obj) {
-                if (-not (Test-NestedInUnclosedJson $Text $i)) {
-                    [void]$list.Add($obj)
+            if ($depth -eq 0) { $objStart = $i }
+            $depth++
+            continue
+        }
+        if ($ch -eq '}') {
+            if ($depth -gt 0) { $depth-- }
+            if ($depth -eq 0 -and $objStart -ge 0) {
+                $onTail = ($tailAt -ge 0 -and $objStart -ge $tailAt)
+                $keepFirst = -not $keptFirst
+                if ($tailAt -eq 0 -or $onTail -or $keepFirst) {
+                    [void]$list.Add($Text.Substring($objStart, $i - $objStart + 1))
+                    $keptFirst = $true
                 }
-                $i += $obj.Length - 1
+                $objStart = -1
             }
         }
     }
@@ -564,21 +593,60 @@ function Test-GateJsonReply($Obj) {
     return [bool]($names -contains 'vote' -or $names -contains 'verdict')
 }
 
-function ConvertFrom-JsonLoose([string]$text) {
+function ConvertFrom-JsonLoose([string]$text, [string]$IgnoreText) {
     if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    # Cap the fence regex with the same newline tail. It must not scan a megabyte transcript.
+    $capped = $false
+    $fenceText = $text
+    if ($fenceText.Length -gt 65536) {
+        $capped = $true
+        $cutAt = $fenceText.Length - 65536
+        $nlAt = $fenceText.IndexOf("`n", $cutAt)
+        if ($nlAt -ge 0 -and $nlAt -lt ($fenceText.Length - 1)) {
+            $fenceText = $fenceText.Substring($nlAt + 1)
+        } else {
+            $fenceText = ''
+        }
+    }
     $candidates = New-Object System.Collections.Generic.List[string]
-    $fence = [regex]::Match($text, '(?s)```(?:json)?\s*(\{.*)\s*```')
-    if ($fence.Success) { [void]$candidates.Add($fence.Groups[1].Value.Trim()) }
+    if ($fenceText) {
+        $fence = [regex]::Match($fenceText, '(?s)```(?:json)?\s*(\{.*)\s*```')
+        if ($fence.Success) {
+            $fenced = $fence.Groups[1].Value.Trim()
+            $balanced = Get-JsonObjectAt $fenced 0
+            # A torn tail match is not a candidate. Depth-0 balance through the capture, or nothing.
+            if ($balanced -and $balanced.Length -eq $fenced.Length) { [void]$candidates.Add($balanced) }
+        }
+    }
     foreach ($obj in (Get-TopLevelJsonObjects $text)) { [void]$candidates.Add([string]$obj) }
-    [void]$candidates.Add($text.Trim())
+    if (-not $capped) { [void]$candidates.Add($text.Trim()) }
     $fallback = $null
+    $skippedRank = 0
     for ($i = $candidates.Count - 1; $i -ge 0; $i--) {
+        $cand = [string]$candidates[$i]
+        # Whole line, or compact JSON inside a longer diff line.
+        if (Test-DiffEchoesLine $cand $IgnoreText) {
+            try {
+                $echoObj = (Repair-LooseJson $cand) | ConvertFrom-Json -ErrorAction Stop
+            } catch { $echoObj = $null }
+            if ($echoObj -and (Test-GateJsonReply $echoObj)) {
+                $rank = Get-GateVoteRank ([string]$echoObj.vote)
+                if ($rank -gt $skippedRank) { $skippedRank = $rank }
+            }
+            continue
+        }
         try {
-            $o = (Repair-LooseJson $candidates[$i]) | ConvertFrom-Json -ErrorAction Stop
+            $o = (Repair-LooseJson $cand) | ConvertFrom-Json -ErrorAction Stop
         } catch { continue }
-        if (Test-GateJsonReply $o) { return $o }
+        if (Test-GateJsonReply $o) {
+            # An ignored BLOCK must not leave an earlier APPROVE in force.
+            if ($skippedRank -gt (Get-GateVoteRank ([string]$o.vote))) { return $null }
+            return $o
+        }
         if (-not $fallback) { $fallback = $o }
     }
+    # A capped reply with no balanced vote fails closed. Do not return a torn fragment.
+    if ($capped) { return $null }
     return $fallback
 }
 
@@ -1153,10 +1221,7 @@ function Get-GrokStructuredReply([string]$Ndjson) {
             return $finals[$i].TrimEnd()
         }
     }
-    if (Test-GateJsonReply (ConvertFrom-JsonLoose $Ndjson)) {
-        if ($finals.Count -gt 0) { return $finals[$finals.Count - 1].TrimEnd() }
-        return $Ndjson.TrimEnd()
-    }
+    # Never scan the raw NDJSON log. That is the whole thinking transcript.
     if ($finals.Count -gt 0) { return $finals[$finals.Count - 1].TrimEnd() }
     return ''
 }
@@ -1175,7 +1240,8 @@ function Invoke-GrokHeadless {
         [string]$WorkingDirectory = '',
         [scriptblock]$OnPulse = $null,
         [int]$PulseSec = 8,
-        [switch]$NoHatchRetry
+        [switch]$NoHatchRetry,
+        [string]$EchoDiff = ''
     )
 
     $needsProxy = Test-VibeNeedsHeadroomProxy $ModelName
@@ -1185,7 +1251,7 @@ function Invoke-GrokHeadless {
     if ($needsProxy -and -not $NoHatchRetry -and -not $preflightUsable) { $vanillaOk = [bool](Test-VanillaHatchEndpoint -HatchModel $hatch) }
     if ((Get-VibePreflightHatchKind -NeedsProxy $needsProxy -NoHatchRetry ([bool]$NoHatchRetry) -ProxyUsable $preflightUsable -VanillaHatchOk $vanillaOk) -eq 'direct') {
         Write-Host ("  proxy down - {0} using {1}" -f $Label, $hatch) -ForegroundColor Yellow
-        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $hatch -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -ReadOnlyReview:$ReadOnlyReview -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $hatch -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -ReadOnlyReview:$ReadOnlyReview -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry -EchoDiff $EchoDiff
     }
 
     $argList = [System.Collections.Generic.List[string]]::new()
@@ -1261,9 +1327,48 @@ function Invoke-GrokHeadless {
                 $streamPending = ''
                 $streamFinal = ''
                 $nextPulse = [datetime]::UtcNow
+                $lastSize = [long]0
+                $lastGrowth = [datetime]::UtcNow
+                $voteReady = $false
+                $stopFault = $null
+                $lengthFailSince = $null
+                $stoppedIdle = $false
                 while (-not $p.HasExited) {
                     Start-Sleep -Seconds 1
                     Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal)
+                    # A "vote": substring is not a finished vote. Arm only after a parsed vote that is not a diff echo.
+                    if (-not $voteReady -and $streamFinal) {
+                        $gateObj = ConvertFrom-JsonLoose ([string]$streamFinal) $EchoDiff
+                        if (Test-GateJsonReply $gateObj) { $voteReady = $true }
+                    }
+                    $len = [long]0
+                    $lenOk = $false
+                    $lenErr = ''
+                    try {
+                        $len = [long](Get-Item -LiteralPath $stdOut -ErrorAction Stop).Length
+                        $lenOk = $true
+                    } catch {
+                        $lenErr = $_.Exception.Message
+                    }
+                    if ($lenOk) {
+                        $lengthFailSince = $null
+                        if ($len -gt $lastSize) { $lastSize = $len; $lastGrowth = [datetime]::UtcNow }
+                    } elseif (-not $lengthFailSince) {
+                        $lengthFailSince = [datetime]::UtcNow
+                    } elseif (([datetime]::UtcNow - $lengthFailSince).TotalSeconds -ge 30) {
+                        $stopFault = "stdout length unreadable: $lenErr"
+                        break
+                    }
+                    $idle = ([datetime]::UtcNow - $lastGrowth).TotalSeconds
+                    # A parsed vote with a quiet CLI, or a CLI that stops writing, must not hold the gate.
+                    $stopForIdle = ($voteReady -and $idle -ge 20) -or ($idle -ge 600)
+                    if ($stopForIdle) {
+                        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                            Write-GateProgress ("reviewer idle {0:n0}s after vote={1}; stopping the process" -f $idle, $voteReady)
+                        }
+                        $stoppedIdle = $true
+                        break
+                    }
                     if ([datetime]::UtcNow -ge $nextPulse) {
                         $nextPulse = [datetime]::UtcNow.AddSeconds([Math]::Max(2, $PulseSec))
                         if ($OnPulse) {
@@ -1275,7 +1380,22 @@ function Invoke-GrokHeadless {
                         }
                     }
                 }
-                try { $p.WaitForExit(5000) | Out-Null } catch {}
+                if ($stoppedIdle -and $p -and -not $p.HasExited) {
+                    $killErr = ''
+                    try { $null = & taskkill.exe /F /T /PID "$($p.Id)" 2>&1 } catch { $killErr = $_.Exception.Message }
+                    if (-not $p.HasExited) {
+                        try { $p.Kill() } catch { if (-not $killErr) { $killErr = $_.Exception.Message } }
+                    }
+                    $dead = $false
+                    try { $dead = [bool]$p.WaitForExit(5000) } catch { if (-not $killErr) { $killErr = $_.Exception.Message } }
+                    if (-not $p.HasExited) { $stopFault = "reviewer still alive after kill: $killErr" }
+                } else {
+                    try { if ($p) { $null = $p.WaitForExit(5000) } } catch {}
+                }
+                if ($stopFault -or ($stoppedIdle -and -not $voteReady)) {
+                    $code = -1
+                    $output = @($(if ($stopFault) { $stopFault } else { 'reviewer stopped with no parsed vote' }))
+                } else {
                 Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal)
                 if ($streamPending) {
                     $piece = Get-GrokNdjsonPiece $streamPending
@@ -1283,6 +1403,7 @@ function Invoke-GrokHeadless {
                     if ($piece.Final) { $streamFinal = [string]$piece.Final }
                 }
                 $code = [int]$p.ExitCode
+                if ($stoppedIdle -and $voteReady) { $code = 0 }
                 $outTxt = ''
                 $errTxt = ''
                 try { if (Test-Path -LiteralPath $stdOut) { $outTxt = [System.IO.File]::ReadAllText($stdOut) } } catch {}
@@ -1294,6 +1415,7 @@ function Invoke-GrokHeadless {
                     $output = @($streamFinal.TrimEnd())
                 } else {
                     $output = @(($outTxt + "`n" + $errTxt).TrimEnd())
+                }
                 }
             } finally {
                 if ($ownTemps) {
@@ -1331,7 +1453,7 @@ function Invoke-GrokHeadless {
         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
             Write-GateProgress ("proxy stream fail - retry {0} on {1}" -f $Label, $ModelName)
         }
-        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -ReadOnlyReview:$ReadOnlyReview -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry
+        return Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $PromptFile -Label $Label -Effort $Effort -MaxTurns $MaxTurns -AllowWrites:$AllowWrites -ReadOnlyReview:$ReadOnlyReview -OutLog $OutLog -WorkingDirectory $WorkingDirectory -OnPulse $OnPulse -PulseSec $PulseSec -NoHatchRetry -EchoDiff $EchoDiff
     }
     return @{ Ok = $ok; Text = $text; ExitCode = $code; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
 }
@@ -1758,7 +1880,8 @@ function Publish-ReviewerVoteNow {
     param(
         [string]$Role,
         $Result,
-        [string]$WaitingOn = ''
+        [string]$WaitingOn = '',
+        [string]$DiffText = ''
     )
     if (-not $script:VoteNowPublished) { $script:VoteNowPublished = @{} }
     if ($script:VoteNowPublished.ContainsKey($Role)) { return }
@@ -1766,7 +1889,7 @@ function Publish-ReviewerVoteNow {
     $reason = 'no parseable vote'
     $fc = 0
     if ($Result -and $Result.Ok) {
-        $obj = ConvertFrom-JsonLoose $Result.Text
+        $obj = ConvertFrom-JsonLoose $Result.Text $DiffText
         if ($obj) {
             if (-not $obj.reviewer_id) { $obj | Add-Member -NotePropertyName reviewer_id -NotePropertyValue $Role -Force }
             $obj = Normalize-ReviewerVote $obj
@@ -1829,8 +1952,8 @@ function Invoke-ReviewerPanel {
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers -RaiseSecurityNext:([bool]$script:RaiseSecurityNext))
-            $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf
-            Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn (($left | ForEach-Object { "vibe-$_" }) -join ', ')
+            $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf -EchoDiff $DiffText
+            Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn (($left | ForEach-Object { "vibe-$_" }) -join ', ') -DiffText $DiffText
         }
     } else {
         $jobs = @()
@@ -1904,7 +2027,7 @@ function Invoke-ReviewerPanel {
                     $results[$roleName] = @{ Ok = $false; Text = ''; ExitCode = -1; Seconds = 0 }
                 }
                 $waitNames = (@($still | ForEach-Object { $_.Name })) -join ', '
-                Publish-ReviewerVoteNow -Role $roleName -Result $results[$roleName] -WaitingOn $waitNames
+                Publish-ReviewerVoteNow -Role $roleName -Result $results[$roleName] -WaitingOn $waitNames -DiffText $DiffText
             }
             $pending = $still
             if ($pending.Count -eq 0) { break }
@@ -1935,7 +2058,7 @@ function Invoke-ReviewerPanel {
         $r = $results[$role]
         Write-Host ("  reviewer:{0} ok={1} {2}s exit={3}" -f $role, $r.Ok, $r.Seconds, $r.ExitCode) -ForegroundColor DarkCyan
         if (-not $r.Ok) { $fail += $role; continue }
-        $obj = ConvertFrom-JsonLoose $r.Text
+        $obj = ConvertFrom-JsonLoose $r.Text $DiffText
         if (-not $obj) {
             # Fail-closed: no vote-only / empty-findings APPROVE path (false confidence)
             Write-Host ("    unparseable JSON from {0} (fail-closed)" -f $role) -ForegroundColor Yellow
@@ -1955,7 +2078,7 @@ function Invoke-ReviewerPanel {
         $fc = @($obj.findings).Count
         Write-Host ("    vote={0} findings={1}" -f $voteStr, $fc) -ForegroundColor Gray
         if (-not ($script:VoteNowPublished -and $script:VoteNowPublished.ContainsKey($role))) {
-            Publish-ReviewerVoteNow -Role $role -Result $r
+            Publish-ReviewerVoteNow -Role $role -Result $r -DiffText $DiffText
         }
     }
 
@@ -2142,14 +2265,14 @@ function Invoke-Arbiter {
     $lf = Join-Path $RoundDir 'arbiter.log.txt'
     Save-Text $pf (New-ArbiterPrompt -DiffText $DiffText -PanelJson $panelJson -Round $Round)
     Save-Text (Join-Path $RoundDir 'panel.json') $panelJson
-    $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'arbiter' -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf
+    $r = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label 'arbiter' -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf -EchoDiff $DiffText
     if (-not $r.Ok) {
         return @{ Ok = $false; Error = "Arbiter failed (exit $($r.ExitCode))"; Text = $r.Text }
     }
-    $obj = ConvertFrom-JsonLoose $r.Text
+    $obj = ConvertFrom-JsonLoose $r.Text $DiffText
     $verdict = $null
     if ($obj -and $obj.verdict) { $verdict = "$($obj.verdict)".ToUpperInvariant().Trim() }
-    if (-not $verdict) { $verdict = Get-MachineVerdict $r.Text }
+    if (-not $verdict) { $verdict = Get-MachineVerdict $r.Text $DiffText }
     if (-not $verdict) {
         return @{ Ok = $false; Error = 'Arbiter missing verdict'; Text = $r.Text; Result = $obj }
     }
@@ -2504,8 +2627,9 @@ Write-Host "  workdir=$WorkDir" -ForegroundColor DarkGray
 # is not valid input for Get-DiffFileStats and drops middle files on huge commits).
 $rawDiff = Get-GitDiffText -Override $DiffOverride -StagedOnlyMode:$StagedOnly
 if ($StagedOnly -and -not $DiffOverride -and [string]::IsNullOrWhiteSpace($rawDiff)) {
+    # Empty index and unchanged staged set are still the next commit.
+    Exit-IfUnfixedPriorNext -Cwd $script:GateCwd
     if ($script:StagedReviewUnchanged) {
-        Exit-IfUnfixedPriorNext -Cwd $script:GateCwd
         Assert-StagedIndexUnmoved
         Write-Host "PRE-COMMIT OK - staged files unchanged since last review." -ForegroundColor Green
     } else {
@@ -2513,6 +2637,9 @@ if ($StagedOnly -and -not $DiffOverride -and [string]::IsNullOrWhiteSpace($rawDi
     }
     Exit-Gate -Code 0 -Reason 'no staged diff'
 }
+$script:PassRawDiffSet = $false
+$script:PassRawDiff = $rawDiff
+$script:PassRawDiffSet = $true
 $rawLen = if ($rawDiff) { $rawDiff.Length } else { 0 }
 $initialDiff = Compress-DiffForReview $rawDiff
 if (Get-Command Add-ReviewContext -ErrorAction SilentlyContinue) {
@@ -2529,6 +2656,8 @@ if ($rawLen -gt 48000 -and $initialDiff.Length -lt $rawLen) {
 
 $cached = Test-GatePassCache -DiffHash $diffHash -ProfileName $script:ResolvedProfile.Name -ModelName $useModel
 if ($cached) {
+    # StagedOnly cache hit still owes a previous-SHA next.
+    if ($StagedOnly) { Exit-IfUnfixedPriorNext -Cwd $script:GateCwd }
     $script:GateRun.cacheHit = $true
     $script:GateRun.verdict = $cached.verdict
     $script:GateRun.passed = $true
@@ -2556,10 +2685,13 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     $roundDir = Join-Path $WorkDir "round-$round"
     New-Item -ItemType Directory -Force -Path $roundDir | Out-Null
 
-    $diff = if ($round -eq 1) {
+    $diff = if ($round -eq 1 -or $DiffOverride) {
         $initialDiff
     } else {
-        $rawRound = Get-GitDiffText -Override $null
+        # Same staged-index switch as round 1. An omitted switch is not the worktree diff.
+        $rawRound = Get-GitDiffText -Override $null -StagedOnlyMode:$StagedOnly
+        $script:PassRawDiff = [string]$rawRound
+        $script:PassRawDiffSet = $true
         $next = Compress-DiffForReview $rawRound
         if (Get-Command Add-ReviewContext -ErrorAction SilentlyContinue) {
             Add-ReviewContext -Brief $next -RawDiff $rawRound -ProfileName $script:ResolvedProfile.Name -Round $round
@@ -2633,7 +2765,8 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
         $elapsed = [math]::Round($script:overallSw.Elapsed.TotalSeconds, 1)
         $cwdNow = ''
         try { $cwdNow = (Get-Location).Path } catch { $cwdNow = [string]$script:GateCwd }
-        if (Get-Command Save-GateOpenAdvisories -ErrorAction SilentlyContinue) {
+        # Push and tag reviews must not resolve or rewrite open-next rows.
+        if ($StagedOnly -and -not $DiffOverride -and (Get-Command Save-GateOpenAdvisories -ErrorAction SilentlyContinue)) {
             $ledgerNow = @()
             if ($arb.Next) { $ledgerNow += @($arb.Next) }
             elseif ($arb.Result -and $arb.Result.next) { $ledgerNow += @($arb.Result.next) }
@@ -2641,8 +2774,10 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
             if ($arb.Later) { $ledgerNow += @($arb.Later) }
             elseif ($arb.Result -and $arb.Result.later) { $ledgerNow += @($arb.Result.later) }
             $savePaths = @()
+            # Empty is a real accepting diff (no paths). Fall back only when it was never set.
+            $pathSource = if ($script:PassRawDiffSet) { [string]$script:PassRawDiff } else { $rawDiff }
             if (Get-Command Get-ChangedPathsFromDiff -ErrorAction SilentlyContinue) {
-                $savePaths = @(Get-ChangedPathsFromDiff $rawDiff)
+                $savePaths = @(Get-ChangedPathsFromDiff $pathSource)
             }
             try {
                 Save-GateOpenAdvisories -Items $ledgerNow -RunId $(if ($script:GateRunId) { $script:GateRunId } else { '' }) -Cwd $cwdNow -ChangedPaths $savePaths
@@ -2650,14 +2785,11 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
                 Write-GateFail ("ledger save failed (fail-closed): {0}" -f $_.Exception.Message)
                 Exit-Gate -Code 1 -Reason 'ledger save failed'
             }
-            if ($StagedOnly) { Exit-IfUnfixedPriorNext -Cwd $cwdNow }
-            # Only the staged diff the panel actually reviewed. An override or a
-            # non-pre-commit diff must not stamp index hashes the reviewers did not see.
-            if ($StagedOnly -and -not $DiffOverride) {
+            Exit-IfUnfixedPriorNext -Cwd $cwdNow
+            # Only the staged diff the panel actually reviewed.
             try { Save-ReviewedBlobs (Select-HashesPresentInPrompt $script:ReviewedPatchHashes $diff) } catch {
                 Write-GateFail ("reviewed-blob save failed (fail-closed): {0}" -f $_.Exception.Message)
                 Exit-Gate -Code 1 -Reason 'reviewed-blob save failed'
-            }
             }
         }
         Write-Host ""
