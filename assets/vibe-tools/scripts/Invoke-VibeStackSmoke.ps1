@@ -382,6 +382,20 @@ if (Test-Path -LiteralPath $ptLib) {
         } else {
             if ($null -eq $npmVitest) { Ok 'project-tools: npm absent so vitest plan skipped' } else { Bad 'project-tools: npm plan without Win32 npm' }
         }
+        $prevE2e = $env:VIBE_RUN_E2E
+        Remove-Item Env:VIBE_RUN_E2E -ErrorAction SilentlyContinue
+        Set-Content -LiteralPath (Join-Path $ptDir 'package.json') -Value '{"scripts":{"test":"playwright test"}}' -Encoding utf8
+        $e2eOff = Get-VibeNpmTestInvocation -Root $ptDir
+        $env:VIBE_RUN_E2E = '1'
+        $e2eOn = Get-VibeNpmTestInvocation -Root $ptDir
+        if ($null -ne $prevE2e) { $env:VIBE_RUN_E2E = $prevE2e } else { Remove-Item Env:VIBE_RUN_E2E -ErrorAction SilentlyContinue }
+        if ($null -eq $e2eOff -and $npmApp.Count -gt 0 -and $e2eOn -and @($e2eOn.Args) -contains 'test') {
+            Ok 'project-tools: playwright skipped unless VIBE_RUN_E2E=1'
+        } elseif ($null -eq $e2eOff -and $npmApp.Count -eq 0 -and $null -eq $e2eOn) {
+            Ok 'project-tools: playwright skipped (npm absent)'
+        } else {
+            Bad 'project-tools: playwright default skip / VIBE_RUN_E2E opt-in failed'
+        }
         Set-Content -LiteralPath (Join-Path $ptDir 'Cargo.toml') -Value '# vibe-smoke-cargo' -Encoding utf8
         $cCargo = @(Get-VibeProjectCompilePlan -Root $ptDir)
         $cargoExe = Get-Command cargo -ErrorAction SilentlyContinue
@@ -565,6 +579,16 @@ if ($progSrc -match 'function Write-GateProgress' -and $progSrc -match 'live-gat
 } else {
     Bad 'gate-progress.ps1 missing RUN token / append-only status / recap / popup or not wired'
 }
+. (Join-Path $RepoRoot 'assets\vibe-tools\scripts\gate-progress.ps1')
+$keyCr = ConvertTo-GateKeyPart ("a" + [char]13 + "b")
+$keyLf = ConvertTo-GateKeyPart ("a" + [char]10 + "b")
+$keyBar = ConvertTo-GateKeyPart 'a|b'
+$keySlashR = ConvertTo-GateKeyPart 'a\r'
+if ($keyCr -eq 'a\rb' -and $keyLf -eq 'a\nb' -and $keyBar -eq 'a\|b' -and $keySlashR -eq 'a\\r' -and $keyCr -ne $keySlashR -and $keyCr -notmatch "[`r`n]") {
+    Ok 'gate key: CR/LF escaped; literal backslash-r stays distinct'
+} else {
+    Bad ("gate key escape cr={0} lf={1} bar={2} slashr={3}" -f $keyCr, $keyLf, $keyBar, $keySlashR)
+}
 $rtkSrc2 = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\run-rtk-enforce.ps1') -Raw
 if ($rtkSrc2 -match 'ast-grep' -and $rtkSrc2 -match 'tokei' -and $rtkSrc2 -match 'zizmor' -and $rtkSrc2 -match 'difft' -and $rtkSrc2 -notmatch '\\bfind\\b') {
     Ok 'rtk: sg/ast-grep/difft/tokei/zizmor + no bare find'
@@ -712,6 +736,11 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
     Ok 'gate no-silence: 15s poll clamp + Stop keep-alive + ELAPSED heartbeat'
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
+}
+if ($stopSrc -match 'VIBE_GATE_CHILD' -and $stopSrc -match 'never block' -and $rawReview -match 'function New-HostSeatJson' -and $rawReview -match 'function ConvertTo-GateJsonString' -and $rawReview -match 'fromSpoken' -and $rawReview -match 'host vote recorded' -and $rawReview -match 'reviewer vote parsed; stopping the process' -and $rawReview -match 'reviewer wall' -and $rawReview -match 'reviewer emitted no vote') {
+    Ok 'gate cannot loop: child Stop is silent, vote kills the process, missing vote is a real BLOCK'
+} else {
+    Bad 'gate loop guards missing (child stop / vote kill / host BLOCK)'
 }
 if ($watchNow -match 'GATE DONE is a tick' -and $watchNow -match '\$IdleSec = 600' -and $watchNow -match '\$ProgressSec = 60' -and $watchNow -match 'PROGRESS ' -and $watchNow -match '\$sawLive' -and $watchNow -match 'Do not idle until a live gate' -and $watchNow -match '\$done -and \$Heartbeat -and -not \$Monitor') {
     Ok 'gate monitor: leftover GATE DONE does not arm idle; 600s linger + PROGRESS pulse'
@@ -1176,6 +1205,29 @@ if ($instSrc -notmatch 'maxSavingsProfile') {
 } else {
     Bad 'installer still has unused maxSavingsProfile'
 }
+if ($instSrc -match '\[switch\]\$Offline' -and $instSrc -match 'MODE: OFFLINE' -and $instSrc -match 'offline: keep existing venv' -and $instSrc -match 'offline: skip deptry pip' -and $instSrc -match 'offline: skip headroom tools install' -and $instSrc -match 'offline: skip proxy start' -and $instSrc -match 'offline: skip Install-Module' -and $instSrc -match 'offline: rtk missing') {
+    Ok 'installer: -Offline skips winget/npm/pip/GitHub/uv and keeps a seeded venv'
+} else {
+    Bad 'installer -Offline path missing'
+}
+$offProbe = Join-Path $env:TEMP ('vibe-off-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
+try {
+    New-Item -ItemType Directory -Path $offProbe | Out-Null
+    $offOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot 'Install-GrokVibeStack.ps1') -Offline -OfflineVenvProbe $offProbe 2>&1 | Out-String
+    $offCode = $LASTEXITCODE
+    $refused = $offOut -match 'refusing pip'
+    $kept = $offOut -match 'no pip'
+    $noCreate = $offOut -notmatch 'Creating venv'
+    if ($offCode -eq 0 -and $refused -and $kept -and $noCreate) {
+        Ok 'installer: -Offline missing venv fails closed; seeded venv skips pip'
+    } else {
+        Bad ("offline venv probe exit={0} refused={1} kept={2} noCreate={3}" -f $offCode, $refused, $kept, $noCreate)
+    }
+} catch {
+    Bad "offline venv probe: $_"
+} finally {
+    Remove-Item -LiteralPath $offProbe -Recurse -Force -ErrorAction SilentlyContinue
+}
 $startSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
 if ($startSrc -match 'Test-ProxyMatchesStack' -and $startSrc -match 'Get-ProxyStackFingerprintBase' -and $startSrc -match 'Save-ProxyFingerprint' -and $startSrc -match 'require the flag pair' -and $startSrc -match 'function Test-ProxyCommandLineIsHeadroom') {
     Ok 'start-grok: proxy fingerprint / stale restart (loose stop match)'
@@ -1226,19 +1278,31 @@ if ($probeSrc -match 'state == MIB_TCP_STATE_LISTEN' -and $probeSrc -match 'TCP_
 $listener = $null
 $tcpUpAlive = $false
 $tcpDownDead = $false
+$httpDown = $false
+$ep = $null
 try {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
     $listener.Start()
     $ep = [System.Net.IPEndPoint]$listener.LocalEndpoint
     $tcpUpAlive = [bool](Test-VibeProxyAliveListenOnly -Port $ep.Port)
+    $httpDown = $true
+    try {
+        $req = [System.Net.HttpWebRequest]::Create(('http://127.0.0.1:{0}/readyz' -f $ep.Port))
+        $req.Timeout = 400
+        $req.ReadWriteTimeout = 400
+        $null = $req.GetResponse()
+        $httpDown = $false
+    } catch {
+        $httpDown = $true
+    }
 } finally {
     if ($listener) { try { $listener.Stop() } catch {} }
 }
 if ($ep) { $tcpDownDead = -not [bool](Test-VibeProxyAliveListenOnly -Port $ep.Port) }
-if ($tcpUpAlive -and $tcpDownDead -and $probeSrc -match 'function Test-VibeProxyAliveListenOnly' -and $keepSrc -match 'Test-VibeProxyAliveListenOnly' -and $probeSrc -notmatch 'Test-VibeShouldStopHeadroomOnReadyzFail' -and $keepSrc -match 'Never probe /readyz' -and $startSrc -notmatch 'function Test-ProxyHttpReady') {
-    Ok 'runtime: TCP-up HTTP-down stays alive (listen-only liveness; no HTTP kill)'
+if ($tcpUpAlive -and $tcpDownDead -and $httpDown -and $probeSrc -match 'function Test-VibeProxyAliveListenOnly' -and $keepSrc -match 'Test-VibeProxyAliveListenOnly' -and $probeSrc -notmatch 'Test-VibeShouldStopHeadroomOnReadyzFail' -and $keepSrc -match 'Never probe /readyz' -and $startSrc -notmatch 'function Test-ProxyHttpReady') {
+    Ok 'runtime: TCP-up HTTP-down stays alive (listen-only liveness; /readyz fail does not clear it)'
 } else {
-    Bad 'TCP-up HTTP-down runtime hatch failed or keeper not wired to listen-only liveness'
+    Bad ('TCP-up HTTP-down runtime hatch failed up={0} down={1} httpDown={2}' -f $tcpUpAlive, $tcpDownDead, $httpDown)
 }
 if ($probeSrc -match 'GetActiveTcpListeners' -and $probeSrc -match 'AF_INET6' -and $probeSrc -match 'VibeListenTable4' -and $probeSrc -match 'ERROR_INSUFFICIENT_BUFFER' -and $probeSrc -notmatch 'Get-NetTCPConnection -LocalPort' -and $startSrc -match 'Test-VibePortListening' -and $keepSrc -match 'Test-VibePortListening' -and $rawReview -match 'Test-VibePortListening' -and $startSrc -notmatch 'GetActiveTcpListeners' -and $keepSrc -notmatch 'GetActiveTcpListeners' -and $rawReview -notmatch 'GetActiveTcpListeners' -and $startSrc -notmatch 'BeginConnect' -and $rawReview -notmatch 'BeginConnect' -and $keepSrc -notmatch 'BeginConnect') {
     Ok 'tcp probe: ListenProbe GetActiveTcpListeners; start/keep/review wrap it (no connect/Get-NetTCPConnection)'
@@ -1804,6 +1868,26 @@ enabled = true
         } else {
             Bad 'MCP personal profile wiped custom deny or left personal names'
         }
+        $poisonCfg = Join-Path $mcpDir 'poison.toml'
+        $poisonState = Join-Path $mcpDir 'poison-state.json'
+        $poisonToml = @'
+disabled_mcp_servers = ["my-custom-deny", "say \"hi\""]
+'@
+        [System.IO.File]::WriteAllText($poisonCfg, $poisonToml.Trim() + "`r`n")
+        $livePath = Join-Path $mcpDir 'live.json'
+        $liveJson = @'
+[{"name":"gmail","description":"calendar drive tasks mail"},{"name":"mydrive"},{"name":"google-calendar"},{"name":"evil\"], hacked = true, x = [\""}]
+'@
+        [System.IO.File]::WriteAllText($livePath, $liveJson.Trim())
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $mcpPs1 -Profile coding -ConfigPath $poisonCfg -StatePath $poisonState -LiveNamesPath $livePath 2>&1 | Out-Null
+        $c3 = Get-Content -LiteralPath $poisonCfg -Raw -ErrorAction SilentlyContinue
+        $quoteKept = $c3.Contains('say \"hi\"')
+        $noInject = ($c3 -notmatch 'mydrive') -and ($c3 -notmatch 'hacked')
+        if ($LASTEXITCODE -eq 0 -and $quoteKept -and $noInject -and $c3 -match '"gmail"' -and $c3 -match 'google-calendar' -and $c3 -match 'my-custom-deny') {
+            Ok 'MCP coding: exact server ids only; escaped quote round-trips; description substrings ignored'
+        } else {
+            Bad ("MCP harvest/escape exit={0} quoteKept={1}" -f $LASTEXITCODE, $quoteKept)
+        }
     } catch {
         Bad "MCP profile smoke: $_"
     } finally {
@@ -1811,21 +1895,36 @@ enabled = true
     }
 
     $affPs1 = Join-Path $RepoRoot 'assets\vibe-tools\scripts\Get-VibeAffectedTests.ps1'
+    $affDir = Join-Path $env:TEMP ('vibe-aff-' + [guid]::NewGuid().ToString('n').Substring(0, 8))
     try {
-        $json = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $affPs1 -Root $RepoRoot -Json 2>$null
-        if ($LASTEXITCODE -eq 0) { Ok 'Get-VibeAffectedTests -Json exit 0' }
-        else { Bad "Get-VibeAffectedTests -Json exit $LASTEXITCODE" }
-        $null = $json
+        New-Item -ItemType Directory -Path $affDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $affDir 'test_widget.py') -Value "def test_widget():`n    assert True`n" -Encoding utf8
+        $jsonHit = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $affPs1 -Root $affDir -Paths 'test_widget.py' -Json 2>$null
+        $hitCode = $LASTEXITCODE
+        $jsonMiss = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $affPs1 -Root $affDir -Paths 'README.md' -Json 2>$null
+        $missCode = $LASTEXITCODE
+        $hitTxt = @($jsonHit) -join "`n"
+        $missTxt = @($jsonMiss) -join "`n"
+        $pyOk = [bool](Get-Command python -ErrorAction SilentlyContinue) -or [bool](Get-Command pytest -ErrorAction SilentlyContinue)
+        $hitNamesWidget = $hitTxt -match 'test_widget\.py' -and $hitTxt -match 'pytest \(affected\)'
+        $missOmits = $missTxt -notmatch 'test_widget\.py'
+        if ($hitCode -eq 0 -and $missCode -eq 0 -and $missOmits -and ((-not $pyOk) -or $hitNamesWidget)) {
+            Ok 'Get-VibeAffectedTests: pytest row follows the changed test file'
+        } else {
+            Bad ("Get-VibeAffectedTests hit={0} miss={1} py={2}" -f $hitCode, $missCode, $pyOk)
+        }
     } catch {
         Bad "Get-VibeAffectedTests: $_"
+    } finally {
+        Remove-Item -LiteralPath $affDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     $bootPs1 = Join-Path $RepoRoot 'assets\vibe-tools\scripts\Initialize-VibeRepo.ps1'
     $bootSrc = Get-Content -LiteralPath $bootPs1 -Raw -ErrorAction SilentlyContinue
-    if ($bootSrc -match 'install-vibe-hooks' -and $bootSrc -match 'ensure-serena' -and $bootSrc -match 'AGENTS.md') {
-        Ok 'Initialize-VibeRepo: hooks + serena + AGENTS stub'
+    if ($bootSrc -match 'install-vibe-hooks' -and $bootSrc -match 'ensure-serena' -and $bootSrc -match 'AGENTS.md' -and $bootSrc -match 'vibe-user-repo.yml') {
+        Ok 'Initialize-VibeRepo: hooks + serena + AGENTS stub + CI twin reminder'
     } else {
-        Bad 'Initialize-VibeRepo missing hooks/serena/AGENTS'
+        Bad 'Initialize-VibeRepo missing hooks/serena/AGENTS/CI twin reminder'
     }
     $startMcp = Get-Content -LiteralPath (Join-Path $RepoRoot 'assets\token-saving\scripts\start-grok.ps1') -Raw
     if ($startMcp -match 'McpProfile' -and $startMcp -match 'BootstrapRepo' -and $startMcp -match 'Set-GrokMcpProfile') {

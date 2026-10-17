@@ -65,7 +65,7 @@ If `.git` exists and hooks missing `Vibe pre-`:
 - **pre-commit** — scans (staged-first) + AI (`-AutoProfile`, default base standard)
 - **pre-push** — scans (full / cache) + AI fast (version tags → strict, parent..tip)
 - **on-edit** — global PostToolUse fast checks; findings injected on next `UserPromptSubmit`
-- **watch** — `monitor` on `watch-gate-now.ps1 -Monitor` is the only wake. Keep it through the commit+push pair (10 min linger after GATE DONE). Speak: scan/vote/arbiter/fixer/DONE and **PROGRESS** (phase + elapsed). Never "still waiting" or "no new votes". Recap votes+arbiter+DONE before next git. Latch new `RUN:`. Kill watch after last gate of the pair. Inject includes `gate-last-done.txt`. Popup only if `VIBE_GATE_POPUP=1`.
+- **watch** — `monitor` on `watch-gate-now.ps1 -Monitor` is the only wake. Keep it through the commit+push pair (10 min linger after GATE DONE). Speak: scan/vote/arbiter/fixer/DONE and **PROGRESS** (phase + elapsed). Never "still waiting" or "no new votes". Recap votes+arbiter+DONE before next git. Latch new `RUN:`. Kill watch after last gate of the pair. Stop is silent during a live gate and blocks once on GATE DONE. Inject includes `gate-last-done.txt`. Popup only if `VIBE_GATE_POPUP=1`.
 
 After install: if Grok was already open → `/hooks` then `r`, or restart.
 
@@ -80,6 +80,14 @@ project compile/tests if cargo/go/dotnet/pytest/npm/mvn/gradle/Pester exist
 rg for TODO/FIXME/unwired.
 
 Prefer orchestrator `run-vibe-scans.ps1` over inventing one-off commands.
+
+## Effort, memory, worktrees
+
+- Interactive chat effort stays **medium**. Bump **high** only for risky or multi-file work. Use plan mode first, then implement.
+- One memory system per repo: **Serena project memories**. Do not also enable Grok `[memory]` / `memory_v2`, and do not turn on `/implement` memory by default.
+- Risky implement runs in `spawn_subagent` with `isolation=worktree`. This skill is the only place that is documented. There is no extra script.
+- Playwright and Cypress stay out of default `npm test`. Set `VIBE_RUN_E2E=1` for that opt-in. They are not part of the scanner Full pass.
+- Bootstrap prints the CI twin path: copy `vibe-user-repo.yml` (scanners only, no LLM).
 
 ## Serena
 

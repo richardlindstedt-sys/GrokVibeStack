@@ -66,7 +66,8 @@ function Test-VibeRepoHasFile {
 function Get-VibeNpmTestInvocation {
     <#
       Returns @{ FilePath; Args } or $null when the test script is missing,
-      a placeholder, watch-mode, or an e2e runner we will not launch.
+      a placeholder, watch-mode, or an e2e runner. Playwright/Cypress/Nightwatch/
+      WebDriver stay off unless VIBE_RUN_E2E=1. Not part of the scanner Full pass.
     #>
     param([string]$Root)
     $pkgPath = Join-Path $Root 'package.json'
@@ -82,7 +83,8 @@ function Get-VibeNpmTestInvocation {
     if ($pkg.scripts -and $pkg.scripts.test) { $script = [string]$pkg.scripts.test }
     if ([string]::IsNullOrWhiteSpace($script)) { return $null }
     if ($script -match '(?i)no test specified') { return $null }
-    if ($script -match '(?i)\b(cypress|playwright|nightwatch|webdriver)\b') { return $null }
+    $isE2e = $script -match '(?i)\b(cypress|playwright|nightwatch|webdriver)\b'
+    if ($isE2e -and $env:VIBE_RUN_E2E -ne '1') { return $null }
     if ($script -match '(?i)\bwatch\b' -and $script -notmatch '(?i)watchAll\s*=\s*false' -and $script -notmatch '(?i)\brun\b') {
         return $null
     }

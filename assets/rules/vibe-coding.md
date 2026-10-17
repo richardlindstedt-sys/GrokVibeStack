@@ -26,6 +26,12 @@ Ship solid code. Prefer quality at the **commit gate**; keep chat light.
 | `git push` | pre-push: scans + fast AI (security role if sensitive paths) |
 | Explicit | `vibe-review` / `grok-ai-review.ps1 -Profile standard\|strict\|fast` |
 
-**Watch the gate in chat.** Background commit/push. Start `monitor` on `watch-gate-now.ps1 -Monitor` when a gate starts — that is the only wake. Keep it through the commit+push pair (linger 10 min after GATE DONE). Speak: scan result, vote, arbiter, fixer file, GATE DONE, and **PROGRESS** (one line: phase + elapsed). Never "still waiting" or "no new votes". Recap votes+arbiter+DONE before next git. AWC ships this commit. **next** must be fixed in the next commit (`gate-open-advisories.json` — not auto-fixed, not droppable). **later** is ledger-only (doctor lists; no auto-fail). Latch new `RUN:`. Kill watch after last gate of the pair. Stop does not nag on wait ticks. No popup unless `VIBE_GATE_POPUP=1`.
+**Watch the gate in chat.** Background commit/push. Start `monitor` on `watch-gate-now.ps1 -Monitor` when a gate starts — that is the only wake. Keep it through the commit+push pair (linger 10 min after GATE DONE). Speak: scan result, vote, arbiter, fixer file, GATE DONE, and **PROGRESS** (one line: phase + elapsed). Never "still waiting" or "no new votes". Recap votes+arbiter+DONE before next git. AWC ships this commit. **next** must be fixed in the next commit (`gate-open-advisories.json` — not auto-fixed, not droppable). **later** is ledger-only (doctor lists; no auto-fail). Latch new `RUN:`. Kill watch after last gate of the pair. Stop stays quiet while a gate is live. No popup unless `VIBE_GATE_POPUP=1`.
 
-Deep workflow, scanner list, hook install: skill **vibe-coding** (`/vibe-coding` or skill load).
+Hook install and the full workflow: skill **vibe-coding**.
+
+## Scope
+
+- Chat effort stays **medium**. High only for risky or multi-file work, and plan mode comes first.
+- One memory system per repo: Serena project memories. Do not also enable Grok `[memory]` / `memory_v2` or `/implement` memory.
+- `npm test` does not run Playwright or Cypress unless `VIBE_RUN_E2E=1`.

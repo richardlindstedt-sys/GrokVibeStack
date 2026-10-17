@@ -49,8 +49,16 @@
 .PARAMETER DryRun
   Print actions only.
 
+.PARAMETER Offline
+  Zero-network reinstall. No winget, npm, pip, GitHub release download, uv, or
+  headroom tools install. Keeps an existing venv and any pinned exe already on disk.
+  A missing venv fails closed. First-time setup still needs a normal (online) install.
+
 .EXAMPLE
   .\Install-GrokVibeStack.ps1
+
+.EXAMPLE
+  .\Install-GrokVibeStack.ps1 -Offline
 #>
 [CmdletBinding()]
 param(
@@ -62,7 +70,12 @@ param(
     [switch]$SkipGitInstall,
     [switch]$SkipNodeInstall,
     [switch]$UseFrozenReqs,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Offline,
+
+    # Test seam. Temp directory. Exits before any install step.
+    # Missing venv must fail closed. A seeded Scripts\python.exe must skip pip.
+    [string]$OfflineVenvProbe = ''
 )
 
 Set-StrictMode -Version Latest
@@ -95,6 +108,15 @@ function Get-StackVersion {
     return '0.0.0'
 }
 $script:StackVersion = Get-StackVersion
+if ($Offline) {
+    $SkipWinget = $true
+    $SkipNpm = $true
+    $SkipSerena = $true
+    $SkipPythonInstall = $true
+    $SkipGitInstall = $true
+    $SkipNodeInstall = $true
+}
+$script:Offline = [bool]$Offline
 
 $script:Manifest = [ordered]@{
     version              = 1
@@ -630,8 +652,16 @@ function New-VenvAndPip {
         Write-Fail "Missing requirements: $ReqFile"
         return $false
     }
-    Ensure-Dir (Split-Path $VenvDir -Parent)
     $pyExe = Join-Path $VenvDir 'Scripts\python.exe'
+    if ($script:Offline) {
+        if (Test-Path -LiteralPath $pyExe) {
+            Write-Ok "offline: keep existing venv $Label (no pip)"
+            return $true
+        }
+        Write-Fail "offline: venv missing for $Label (refusing pip)"
+        return $false
+    }
+    Ensure-Dir (Split-Path $VenvDir -Parent)
     if (-not (Test-Path -LiteralPath $pyExe)) {
         Write-Info "Creating venv $VenvDir"
         if (-not $DryRun) {
@@ -929,6 +959,14 @@ function Install-GithubReleaseBinary {
             return $true
         }
     }
+    if ($script:Offline) {
+        if ((Test-Path -LiteralPath $dest) -and -not $reinstall) {
+            Write-Ok "offline: keep $DestName (no GitHub download)"
+            return $true
+        }
+        Write-Warn2 "offline: $DestName not downloaded"
+        return $true
+    }
     if ($DryRun) {
         if ($reinstall) {
             Write-Info ('DRY would reinstall {0} from {1}@{2} ({3})' -f $DestName, $repo, $tag, $asset)
@@ -1072,6 +1110,15 @@ function Install-Serena {
 }
 
 function Install-PsModules {
+    if ($script:Offline) {
+        Write-Info 'offline: skip Install-Module'
+        foreach ($mod in @('PSScriptAnalyzer', 'Pester')) {
+            $have = Get-Module -ListAvailable $mod -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($have) { Write-Ok "offline: PS module $mod present" }
+            else { Write-Warn2 "offline: PS module $mod missing (not downloading)" }
+        }
+        return
+    }
     foreach ($mod in @('PSScriptAnalyzer', 'Pester')) {
         $have = Get-Module -ListAvailable $mod -ErrorAction SilentlyContinue |
             Sort-Object Version -Descending |
@@ -1229,6 +1276,28 @@ function Test-StackHealth {
 }
 
 # ===================== MAIN =====================
+if (-not [string]::IsNullOrWhiteSpace($OfflineVenvProbe)) {
+    $script:Offline = $true
+    $req = Join-Path $Assets 'requirements\vibe-tools-freeze.txt'
+    $pyInfo = [pscustomobject]@{ Exe = 'python'; Args = @() }
+    $code = 0
+    $missing = Join-Path $OfflineVenvProbe 'missing-venv'
+    $okMiss = New-VenvAndPip -VenvDir $missing -ReqFile $req -Label 'probe-missing' -PyInfo $pyInfo
+    if ($okMiss) {
+        Write-Fail 'offline probe: missing venv returned success'
+        $code = 1
+    }
+    $seed = Join-Path $OfflineVenvProbe 'seed-venv'
+    $py = Join-Path $seed 'Scripts\python.exe'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $py) | Out-Null
+    [System.IO.File]::WriteAllText($py, '')
+    $okSeed = New-VenvAndPip -VenvDir $seed -ReqFile $req -Label 'probe-seed' -PyInfo $pyInfo
+    if (-not $okSeed) {
+        Write-Fail 'offline probe: seeded venv did not skip pip'
+        $code = 1
+    }
+    exit $code
+}
 Write-Host ""
 Write-Host "+================================================================+" -ForegroundColor Magenta
 Write-Host ('|  Install-GrokVibeStack  {0,-39}|' -f $script:StackVersion) -ForegroundColor Magenta
@@ -1237,6 +1306,7 @@ Write-Host "+================================================================+" 
 Write-Host "Assets: $Assets"
 Write-Host "Target: $GrokHome"
 if ($DryRun) { Write-Host "MODE: DRY RUN" -ForegroundColor Yellow }
+if ($script:Offline) { Write-Host "MODE: OFFLINE (no winget, npm, pip, GitHub, uv)" -ForegroundColor Yellow }
 
 if (-not (Test-Path -LiteralPath $Assets)) {
     Write-Error "assets/ folder missing next to this script. Copy/clone the full repo."
@@ -1367,7 +1437,9 @@ if (-not $DryRun -and $vibeOk) {
     # deptry stays out of vibe-tools.txt / the freeze (checkov still forces asteval==1.0.6).
     # Exact pin plus the freeze as --constraint so this pip cannot upgrade frozen dists.
     # A failed install warns; the scanner skips when the module is missing.
-    if (Test-Path -LiteralPath $vPy) {
+    if ($script:Offline) {
+        Write-Info 'offline: skip deptry pip'
+    } elseif (Test-Path -LiteralPath $vPy) {
         $deptryConstraint = Join-Path $Assets 'requirements\vibe-tools-freeze.txt'
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -1402,7 +1474,13 @@ $env:PATH = "$(Join-Path $TokenRoot 'venv\Scripts');$(Join-Path $VibeRoot 'venv\
 
 Write-Step "RTK (Rust Token Killer)"
 $ensureRtk = Join-Path $TokenRoot 'scripts\ensure-rtk.ps1'
-if (Test-Path -LiteralPath $ensureRtk) {
+if ($script:Offline) {
+    if ((Test-Path (Join-Path $GrokBin 'rtk.exe')) -or (Test-CommandExists 'rtk')) {
+        Write-Ok 'offline: rtk present (not downloaded)'
+    } else {
+        Write-Warn2 'offline: rtk missing (not downloaded)'
+    }
+} elseif (Test-Path -LiteralPath $ensureRtk) {
     if ($DryRun) {
         Write-Info "DRY ensure-rtk"
     } else {
@@ -1457,7 +1535,9 @@ foreach ($pinnedBin in @('scc.exe', 'actionlint.exe', 'typos.exe', 'zizmor.exe',
 }
 # Headroom bundles ast-grep + difft + scc into user cache (structural diff = fewer tokens than raw diffs)
 $hrExe = Join-Path $TokenRoot 'venv\Scripts\headroom.exe'
-if ((Test-Path -LiteralPath $hrExe) -and -not $DryRun) {
+if ($script:Offline) {
+    Write-Info 'offline: skip headroom tools install'
+} elseif ((Test-Path -LiteralPath $hrExe) -and -not $DryRun) {
     Write-Info "headroom tools install (ast-grep, difft, scc)"
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -1528,7 +1608,9 @@ $healthy = $true
 if (-not $DryRun) {
     $healthy = Test-StackHealth
 }
-if (-not $DryRun -and $hrOk) {
+if ($script:Offline) {
+    Write-Info 'offline: skip proxy start'
+} elseif (-not $DryRun -and $hrOk) {
     Write-Step "Headroom proxy + keeper"
     $startPs1 = Join-Path $TokenRoot 'scripts\start-grok.ps1'
     if (Test-Path -LiteralPath $startPs1) {

@@ -56,20 +56,22 @@ if (-not $Paths -or $Paths.Count -eq 0) {
 $plan = @(Get-VibeProjectTestPlan -Root $Root)
 $rows = New-Object System.Collections.Generic.List[object]
 
-function Add-Row([string]$Label, [string]$FilePath, [string[]]$Args) {
+function Add-Row([string]$Label, [string]$FilePath, [string[]]$ArgumentList) {
+    # $Args is an automatic variable. A parameter with that name drops the list.
     if (-not $FilePath) { return }
+    $safe = @($ArgumentList | Where-Object { $_ })
     $cmd = $FilePath
-    if ($Args -and $Args.Count) { $cmd = $FilePath + ' ' + ($Args -join ' ') }
+    if ($safe.Count) { $cmd = $FilePath + ' ' + ($safe -join ' ') }
     [void]$rows.Add([pscustomobject]@{
             Label    = $Label
             FilePath = $FilePath
-            Args     = @($Args)
+            Args     = $safe
             Command  = $cmd
         })
 }
 
 foreach ($item in $plan) {
-    Add-Row -Label ([string]$item.Label) -FilePath ([string]$item.FilePath) -Args @($item.Args)
+    Add-Row -Label ([string]$item.Label) -FilePath ([string]$item.FilePath) -ArgumentList @($item.Args)
 }
 
 # Narrow extra cmds when paths look like tests or nearby sources.
@@ -121,21 +123,21 @@ $py = Get-VibeProjectPythonExe $Root
 if ($pyTests.Count -gt 0) {
     $uniq = @($pyTests | Select-Object -Unique)
     if ($py) {
-        Add-Row -Label 'pytest (affected)' -FilePath $py -Args (@('-m', 'pytest', '-q', '--tb=line') + $uniq)
+        Add-Row -Label 'pytest (affected)' -FilePath $py -ArgumentList (@('-m', 'pytest', '-q', '--tb=line') + $uniq)
     } elseif ($pytestExe) {
-        Add-Row -Label 'pytest (affected)' -FilePath $pytestExe -Args (@('-q', '--tb=line') + $uniq)
+        Add-Row -Label 'pytest (affected)' -FilePath $pytestExe -ArgumentList (@('-q', '--tb=line') + $uniq)
     }
 }
 
 $go = Resolve-VibeCommandPath 'go'
 if ($go -and $goDirs.Count -gt 0) {
     $pkgs = @($goDirs | ForEach-Object { if ($_ -eq '.' -or $_ -eq '') { './...' } else { './' + $_ } })
-    Add-Row -Label 'go test (affected)' -FilePath $go -Args (@('test') + $pkgs)
+    Add-Row -Label 'go test (affected)' -FilePath $go -ArgumentList (@('test') + $pkgs)
 }
 
 $cargo = Resolve-VibeCommandPath 'cargo'
 if ($cargo -and $rsCrate -and (Test-Path -LiteralPath (Join-Path $Root 'Cargo.toml'))) {
-    Add-Row -Label 'cargo test (crate)' -FilePath $cargo -Args @('test', '--quiet')
+    Add-Row -Label 'cargo test (crate)' -FilePath $cargo -ArgumentList @('test', '--quiet')
 }
 
 # Dedup by Command

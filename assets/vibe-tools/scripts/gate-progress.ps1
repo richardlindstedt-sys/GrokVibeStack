@@ -214,8 +214,9 @@ function Get-GateFindingBucket([object]$item) {
 }
 
 function ConvertTo-GateKeyPart([string]$Part) {
-    # '|' is the key separator. An id or file that contains '|' must not
-    # collapse into another row and drop an open next.
+    # '|' is the key separator. CR/LF must not survive into the key: a newline
+    # splits a text row and can collide with another id. '\' is escaped first,
+    # so a literal backslash-r stays '\\r' and a real CR becomes '\r'.
     $sb = New-Object System.Text.StringBuilder
     foreach ($ch in ([string]$Part).ToCharArray()) {
         if ($ch -eq '\') {
@@ -224,6 +225,12 @@ function ConvertTo-GateKeyPart([string]$Part) {
         } elseif ($ch -eq '|') {
             [void]$sb.Append('\')
             [void]$sb.Append('|')
+        } elseif ($ch -eq "`r") {
+            [void]$sb.Append('\')
+            [void]$sb.Append('r')
+        } elseif ($ch -eq "`n") {
+            [void]$sb.Append('\')
+            [void]$sb.Append('n')
         } else {
             [void]$sb.Append($ch)
         }

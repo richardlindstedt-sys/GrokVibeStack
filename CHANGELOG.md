@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-10-17
+
+### Fixed
+
+- Coding MCP profile stores a personal server only when the whole `name` or `id` from `grok mcp list --json` is a known connector. Words such as `drive` or `calendar` inside a description are ignored, and so is a longer id such as `mydrive`. Deny-list strings are TOML basic-string escaped. A quote in an existing custom deny round-trips.
+- Open-next ledger keys escape CR and LF. A real newline stays distinct from a literal backslash-r, and a `|` inside an id still cannot merge two rows.
+- A proxy that is listening with `/readyz` down stays up. Smoke opens a loopback socket, confirms the HTTP request fails, and confirms listen-only liveness is still true.
+- `Get-VibeAffectedTests.ps1` kept the argument list. The row builder parameter was named `$Args`, which PowerShell treats as the automatic variable, so every planned command dropped its arguments. A changed `test_*.py` is now the pytest target. Smoke checks that, and checks that an unrelated path is not.
+- MCP smoke requires the escaped quote in `say \"hi\"` to survive the profile write. A quote-strip still matches the word `say` and no longer passes.
+- `Install-GrokVibeStack.ps1 -OfflineVenvProbe` runs the venv branch only. Smoke checks that a missing venv refuses pip and a seeded `python.exe` does not create a venv.
+- A live gate no longer blocks the Stop hook. The monitor is the only wake. That block was a new user turn with the same GATE LIVE text, so the session and the reviewer looped and the vote already in the stream was never recorded. Reviewer processes set `VIBE_GATE_CHILD=1` and their Stop hook exits. A parsed vote is recorded and the process is stopped immediately, including a vote that arrived only as stream deltas and never as a final message event. A finished vote at the end of a long transcript is parsed on its own. A host no-vote seat does not veto the commit when another reviewer returned a real approval. The arbiter stops only on an object that has `verdict`. A reviewer vote quoted in its prompt does not end that seat. The host BLOCK JSON is escaped with a real JSON string encoder, so a Windows path cannot break it. Echoing the gate watcher with no vote is killed immediately. A silent read-only seat is killed after 45 seconds with no new output. If 8 minutes pass with no JSON, the host writes a real BLOCK vote so the gate finishes. The fixer wall is 20 minutes. GATE DONE asks for one recap, then stays quiet.
+
+### Changed
+
+- Playwright, Cypress, Nightwatch, and WebDriver stay out of default `npm test` unless `VIBE_RUN_E2E=1`. That opt-in is not a scanner Full pass.
+- `Install-GrokVibeStack.ps1 -Offline` is the zero-network reinstall. It does not call winget, npm, pip, GitHub, uv, `headroom tools`, or the proxy. An existing venv and a pinned exe already on disk are kept. A missing venv fails closed. A first install still needs network.
+- Chat effort stays medium (high only for risky or multi-file work, plan mode first). One memory system per repo: Serena project memories. Risky implement uses `spawn_subagent` `isolation=worktree`, documented in the vibe-coding skill only.
+- Repo bootstrap already prints the CI twin path. Smoke now locks that line.
+
+### Not in this release
+
+- macOS and Linux are still not a supported install target.
+
 ## [2.8.1] - 2026-10-17
 
 ### Fixed

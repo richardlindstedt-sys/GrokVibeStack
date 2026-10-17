@@ -29,7 +29,11 @@ param(
 
     [string]$ConfigPath = '',
     [string]$StatePath = '',
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    # Test seam. When set, this JSON is the only live probe (grok is not started).
+    [string]$LiveNamesJson = '',
+    [string]$LiveNamesPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,41 +62,66 @@ $script:PersonalMcpNames = @(
 )
 $script:CodingKeepServers = @('headroom', 'serena')
 
+function Test-IsPersonalMcpServerName([string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $n = $Name.Trim()
+    # Whole server id only. A description that mentions drive, or a server named mydrive, is not a hit.
+    return $n -match '^(?i:gmail|google_calendar|google-calendar|google_drive|google-drive|outlook|outlook_calendar|outlook-calendar|tasks|calendar|drive|mail)$'
+}
+
+function Add-PersonalMcpName($Names, [string]$Candidate) {
+    if (-not (Test-IsPersonalMcpServerName $Candidate)) { return }
+    $v = $Candidate.Trim()
+    if (-not ($Names -contains $v)) { [void]$Names.Add($v) }
+}
+
+function Add-PersonalMcpNamesFromJson($Names, $Node) {
+    if ($null -eq $Node) { return }
+    if ($Node -is [string]) { return }
+    # -is [pscustomobject] is true for an array (PowerShell enumerates). Walk lists first.
+    if ($Node -is [System.Array] -or ($Node -is [System.Collections.IList] -and -not ($Node -is [string]))) {
+        foreach ($item in @($Node)) { Add-PersonalMcpNamesFromJson $Names $item }
+        return
+    }
+    $n = $null
+    if ($Node.PSObject.Properties['name']) { $n = [string]$Node.name }
+    elseif ($Node.PSObject.Properties['Name']) { $n = [string]$Node.Name }
+    elseif ($Node.PSObject.Properties['id']) { $n = [string]$Node.id }
+    Add-PersonalMcpName $Names $n
+    foreach ($prop in @('servers', 'mcp_servers', 'mcpServers', 'items')) {
+        $p = $Node.PSObject.Properties[$prop]
+        if ($p) { Add-PersonalMcpNamesFromJson $Names $p.Value }
+    }
+}
+
 function Get-LivePersonalMcpNames {
     $names = New-Object System.Collections.Generic.List[string]
     foreach ($n in $script:PersonalMcpNames) { [void]$names.Add($n) }
-    $grok = Get-Command grok -ErrorAction SilentlyContinue
-    if (-not $grok) { return @($names) }
     $txt = ''
-    try {
-        $job = Start-Job -ScriptBlock {
-            param($exe)
-            & $exe mcp list --json 2>&1
-        } -ArgumentList $grok.Source
-        $null = Wait-Job -Job $job -Timeout 8
-        if ($job.State -eq 'Completed') {
-            $txt = @(Receive-Job -Job $job | ForEach-Object { "$_" }) -join "`n"
-        }
-        Stop-Job -Job $job -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-    } catch {}
-    if ([string]::IsNullOrWhiteSpace($txt)) { return @($names) }
-    $rx = [regex]'(?i)(gmail|google_calendar|google-calendar|google_drive|google-drive|outlook_calendar|outlook-calendar|outlook|tasks|calendar|drive)'
-    foreach ($m in $rx.Matches($txt)) {
-        $v = [string]$m.Value
-        if ($v -and -not ($names -contains $v)) { [void]$names.Add($v) }
+    if (-not [string]::IsNullOrWhiteSpace($LiveNamesPath)) {
+        $txt = [System.IO.File]::ReadAllText($LiveNamesPath)
+    } elseif (-not [string]::IsNullOrWhiteSpace($LiveNamesJson)) {
+        $txt = $LiveNamesJson
+    } else {
+        $grok = Get-Command grok -ErrorAction SilentlyContinue
+        if (-not $grok) { return @($names) }
+        try {
+            $job = Start-Job -ScriptBlock {
+                param($exe)
+                & $exe mcp list --json 2>&1
+            } -ArgumentList $grok.Source
+            $null = Wait-Job -Job $job -Timeout 8
+            if ($job.State -eq 'Completed') {
+                $txt = @(Receive-Job -Job $job | ForEach-Object { "$_" }) -join "`n"
+            }
+            Stop-Job -Job $job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        } catch {}
     }
+    if ([string]::IsNullOrWhiteSpace($txt)) { return @($names) }
     try {
         $j = $txt | ConvertFrom-Json -ErrorAction Stop
-        foreach ($item in @($j)) {
-            $n = $null
-            if ($item.name) { $n = [string]$item.name }
-            elseif ($item.Name) { $n = [string]$item.Name }
-            elseif ($item.id) { $n = [string]$item.id }
-            if ($n -and $n -match '(?i)(gmail|calendar|drive|outlook|tasks|mail)' -and -not ($names -contains $n)) {
-                [void]$names.Add($n)
-            }
-        }
+        Add-PersonalMcpNamesFromJson $names $j
     } catch {}
     return @($names)
 }
@@ -104,11 +133,28 @@ function Get-PersonalNameSet {
     return $set
 }
 
+function ConvertTo-TomlBasicString([string]$Value) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    foreach ($ch in $Value.ToCharArray()) {
+        $code = [int]$ch
+        if ($ch -eq '\') { [void]$sb.Append('\\') }
+        elseif ($ch -eq '"') { [void]$sb.Append('\"') }
+        elseif ($ch -eq "`n") { [void]$sb.Append('\n') }
+        elseif ($ch -eq "`r") { [void]$sb.Append('\r') }
+        elseif ($ch -eq "`t") { [void]$sb.Append('\t') }
+        elseif ($code -lt 32) { [void]$sb.Append(('\u{0:x4}' -f $code)) }
+        else { [void]$sb.Append($ch) }
+    }
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
 function Format-TomlStringArray([string[]]$Items) {
     $q = New-Object System.Collections.Generic.List[string]
     foreach ($i in @($Items)) {
         if ([string]::IsNullOrWhiteSpace($i)) { continue }
-        [void]$q.Add(('"{0}"' -f ($i -replace '"', '')))
+        [void]$q.Add((ConvertTo-TomlBasicString $i))
     }
     return ('[{0}]' -f ($q -join ', '))
 }
@@ -116,8 +162,49 @@ function Format-TomlStringArray([string[]]$Items) {
 function Get-QuotedStrings([string]$Text) {
     $out = New-Object System.Collections.Generic.List[string]
     if ([string]::IsNullOrEmpty($Text)) { return @() }
-    foreach ($m in [regex]::Matches($Text, '"([^"]+)"')) {
-        [void]$out.Add([string]$m.Groups[1].Value)
+    $i = 0
+    $n = $Text.Length
+    while ($i -lt $n) {
+        if ($Text[$i] -ne '"') { $i++; continue }
+        $i++
+        $sb = New-Object System.Text.StringBuilder
+        $closed = $false
+        while ($i -lt $n) {
+            $c = $Text[$i]
+            if ($c -eq '"') { $i++; $closed = $true; break }
+            if ($c -eq '\') {
+                $i++
+                if ($i -ge $n) { break }
+                $e = $Text[$i]
+                switch ($e) {
+                    'n' { [void]$sb.Append("`n"); $i++ }
+                    'r' { [void]$sb.Append("`r"); $i++ }
+                    't' { [void]$sb.Append("`t"); $i++ }
+                    '"' { [void]$sb.Append('"'); $i++ }
+                    '\' { [void]$sb.Append('\'); $i++ }
+                    'u' {
+                        if (($i + 4) -lt $n) {
+                            $hex = $Text.Substring($i + 1, 4)
+                            if ($hex -match '^[0-9a-fA-F]{4}$') {
+                                [void]$sb.Append([char][Convert]::ToInt32($hex, 16))
+                                $i += 5
+                            } else {
+                                [void]$sb.Append($e)
+                                $i++
+                            }
+                        } else {
+                            [void]$sb.Append($e)
+                            $i++
+                        }
+                    }
+                    default { [void]$sb.Append($e); $i++ }
+                }
+                continue
+            }
+            [void]$sb.Append($c)
+            $i++
+        }
+        if ($closed) { [void]$out.Add($sb.ToString()) }
     }
     return @($out)
 }

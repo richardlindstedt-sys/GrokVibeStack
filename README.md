@@ -20,7 +20,7 @@ GrokVibeStack/ (this repo)
 
 | | |
 |--|--|
-| **Version** | **2.8.1** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
+| **Version** | **2.9.0** ([changelog](./CHANGELOG.md); source: [`VERSION`](./VERSION)) |
 | **License** | [MIT](./LICENSE) |
 | **Security** | [SECURITY.md](./SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
@@ -54,10 +54,9 @@ It is still not a proof of correctness and not a human pentest. It *is* the diff
 - You are fine with first install pulling scanners and Python/Node tooling (network + disk + time).
 - You accept that **AI review on commit/push spends tokens and can take minutes** — that spend is the quality feature.
 
-## Who this is not for (yet)
+## Who this is not for
 
-- macOS / Linux as a first-class target  
-- Teams that need a zero-network / air-gapped default  
+- macOS / Linux as a first-class target
 - A substitute for a human security audit  
 
 ---
@@ -68,7 +67,7 @@ It is still not a proof of correctness and not a human pentest. It *is* the diff
 |------|--------|
 | Windows 10/11 | Primary supported OS |
 | Grok Build CLI | Installed and logged in; this repo does **not** ship `grok.exe` |
-| Network | winget / npm / pip / optional Serena on first install; AI gates need model access |
+| Network | First install: winget / npm / pip / optional Serena. Later reinstall with no network: `Install-GrokVibeStack.ps1 -Offline` (keeps an existing venv and pinned exes; a missing venv fails closed). AI gates still need model access |
 | Headroom proxy | One chat proxy: `grok-4.7` (default) / `grok-4.6` / `grok-4.7-build-fast` / `grok-gate` / `grok-via-headroom` (default `:8787`). Multi-reviewer SSE is **sequential on any Headroom port**. `grok-4.7-direct` / `grok-4.6-direct` skip the proxy and may run reviewers in parallel. |
 | Admin (sometimes) | winget package installs may prompt; user-scope PATH preferred |
 
@@ -344,7 +343,7 @@ Optional desktop window: `$env:VIBE_GATE_POPUP=1`. Full log: `live-gate.log`. Re
 
 **Headroom MCP** (`headroom__*` tools) is **on by default**. Optional off: set `enabled = false` under `[mcp_servers.headroom]` in `~/.grok/config.toml`. Proxy + RTK stay on. Re-run installer to restore the managed block, or edit that key only.
 
-**MCP coding profile** (`start-grok -McpProfile coding` / `grok-mcp-coding`) denies mail/calendar/drive/tasks in `disabled_mcp_servers` + managed gateway connectors, keeps Serena + Headroom. Names are live-probed with `grok mcp list --json` (8s); static list if the CLI is missing. Unrelated custom denies are kept. Restore: `grok-mcp-personal`.
+**MCP coding profile** (`start-grok -McpProfile coding` / `grok-mcp-coding`) denies mail/calendar/drive/tasks in `disabled_mcp_servers` + managed gateway connectors, keeps Serena + Headroom. Live names come from `grok mcp list --json` (8s) and only when the whole server id is a known connector. Substrings inside descriptions are ignored. Static list if the CLI is missing. Unrelated custom denies are kept and TOML-escaped. Restore: `grok-mcp-personal`.
 
 Emergency:
 
