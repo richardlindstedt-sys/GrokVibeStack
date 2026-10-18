@@ -453,7 +453,7 @@ if ($rawReview -match 'Update-GitStageAfterFix' -and $rawReview -match 'PriorSta
 $voteTok = $null
 $voteErr = $null
 $voteAst = [System.Management.Automation.Language.Parser]::ParseFile($reviewSrc, [ref]$voteTok, [ref]$voteErr)
-$voteNames = @('Test-DiffEchoesLine','Get-GateVoteRank','Get-MachineVerdict','Get-JsonObjectAt','Get-TopLevelJsonObjects','Repair-LooseJson','Test-GateJsonReply','ConvertFrom-JsonLoose')
+$voteNames = @('Test-DiffEchoesLine','Get-GateVoteRank','Get-MachineVerdict','Get-JsonObjectAt','Get-TopLevelJsonObjects','Repair-LooseJson','Test-GateJsonReply','Get-BalancedJsonAt','Test-SeatVoteToken','Test-SeatAccepts','Test-IsHostNoVote','Get-LastGateVote','ConvertFrom-JsonLoose','Resolve-SchemaSeat','Resolve-SeatVote','Format-WindowsArg')
 $voteBody = New-Object System.Text.StringBuilder
 $voteMissing = @()
 foreach ($voteName in $voteNames) {
@@ -502,6 +502,63 @@ if (@($voteErr).Count -gt 0 -or $voteMissing.Count -gt 0) {
         Ok 'review: one JSON object stays an array; raw newline in a string still parses; unclosed JSON yields no inner APPROVE; a later closed vote still counts'
     } else {
         Bad 'review: JSON list unroll, raw-newline parse, or unclosed JSON inner vote'
+    }
+    $bareVote = '{"vote":"BLOCK"}'
+    $earlyApprove = '{"reviewer_id":"security","summary":"draft","vote":"STRONG_APPROVE","findings":[]}'
+    $lateBlock = '{"reviewer_id":"security","summary":"real","vote":"BLOCK","findings":[{"id":"security-5","severity":"blocker","file":"a.ps1","line":648,"title":"forged","detail":"d","fix_hint":"f"}]}'
+    $quoteThenReal = "example $bareVote then $earlyApprove then $lateBlock"
+    $lastStrict = Get-LastGateVote $quoteThenReal -Label 'reviewer:security'
+    $bareOk = Test-SeatAccepts ($bareVote | ConvertFrom-Json) 'reviewer:correctness'
+    $pipeObj = '{"reviewer_id":"correctness","summary":"s","vote":"BLOCK|APPROVE","findings":[]}'
+    $pipeOk = Test-SeatAccepts ($pipeObj | ConvertFrom-Json) 'reviewer:correctness'
+    $arbBare = Test-SeatAccepts ('{"verdict":"APPROVE"}' | ConvertFrom-Json) 'arbiter'
+    $arbFull = '{"verdict":"BLOCK","rationale":"r","blockers":[],"next":[],"later":[]}'
+    $arbOk = Test-SeatAccepts ($arbFull | ConvertFrom-Json) 'arbiter'
+    $arbVote = Get-LastGateVote ('{"vote":"APPROVE","reviewer_id":"security","summary":"q","findings":[]}' + "`n" + $arbFull) -VerdictOnly -Label 'arbiter'
+    $echoSkip = Get-LastGateVote ($earlyApprove + "`n" + $lateBlock) -Label 'reviewer:security' -IgnoreText $lateBlock
+    $echoResolved = Resolve-SeatVote ($earlyApprove + "`n" + $lateBlock) 'reviewer:security' $lateBlock
+    if ($lastStrict -and $lastStrict.Obj.vote -eq 'BLOCK' -and $lastStrict.Obj.summary -eq 'real' -and -not $bareOk -and -not $pipeOk -and -not $arbBare -and $arbOk -and $arbVote -and $arbVote.Obj.verdict -eq 'BLOCK' -and $echoSkip -and $echoSkip.EchoSuppressed -and -not $echoResolved -and $rawReview -notmatch 'host no-vote seats dropped') {
+        Ok 'review: quoted sample vote is not the seat; last strict vote wins; host no-vote still vetoes'
+    } else {
+        Bad 'review: quoted vote still latches, or a host no-vote can be dropped'
+    }
+    $pad = 'x' * 70000
+    $buried = $earlyApprove + "`n" + $lateBlock + "`n" + $pad
+    $looseOnly = ConvertFrom-JsonLoose $buried ''
+    $resolved = Resolve-SeatVote $buried 'reviewer:security' ''
+    $nullBlock = '{"reviewer_id":"security","summary":"s","vote":"BLOCK","findings":null}' | ConvertFrom-Json
+    $nullOk = Test-SeatAccepts $nullBlock 'reviewer:security'
+    $forgedSeat = [pscustomobject]@{
+        reviewer_id = 'correctness'
+        summary     = 'Host recorded this because the reviewer emitted no parseable vote'
+        findings    = @([pscustomobject]@{ id = 'correctness-no-vote' })
+    }
+    $quotedSeat = [pscustomobject]@{
+        reviewer_id = 'security'
+        summary     = 'The log said Host recorded this because the reviewer emitted no parseable vote, but this seat voted.'
+        findings    = @([pscustomobject]@{ id = 'security-1' })
+    }
+    $substringSeat = [pscustomobject]@{
+        reviewer_id = 'security'
+        findings    = @([pscustomobject]@{ id = 'security-no-vote-bypass' })
+    }
+    $schemaWrap = (@{
+            thought            = '{"vote":"STRONG_APPROVE"}'
+            structuredOutput   = @{ reviewer_id = 'security'; summary = 's'; vote = 'APPROVE'; findings = @() }
+        } | ConvertTo-Json -Depth 6 -Compress)
+    $schemaSeat = Resolve-SchemaSeat $schemaWrap 'reviewer:security' ''
+    $echoSchema = $null
+    if ($schemaSeat -and $schemaSeat.Text) { $echoSchema = Resolve-SchemaSeat $schemaWrap 'reviewer:security' $schemaSeat.Text }
+    $quotedArg = Format-WindowsArg '{"ok":true}'
+    if ($quotedArg -eq '"{\"ok\":true}"') {
+        Ok 'review: Windows arg quoting keeps a JSON schema'
+    } else {
+        Bad "review: schema quoting produced $quotedArg"
+    }
+    if ($looseOnly -and $looseOnly.vote -eq 'STRONG_APPROVE' -and $resolved -and $resolved.Obj.vote -eq 'BLOCK' -and $resolved.Text -notmatch 'STRONG_APPROVE' -and -not $nullOk -and (Test-IsHostNoVote $forgedSeat) -and -not (Test-IsHostNoVote $quotedSeat) -and -not (Test-IsHostNoVote $substringSeat) -and $schemaSeat -and $schemaSeat.Obj.vote -eq 'APPROVE' -and -not $echoSchema -and $rawReview -notmatch 'Start-Job' -and $rawReview -match 'WaitForExit\(300000\)' -and $rawReview -match 'Resolve-SeatVote' -and $rawReview -match '--json-schema' -and $rawReview -match 'structuredOutput' -and $rawReview -notmatch "-match 'no-vote'" -and $rawReview -match 'EchoSuppressed' -and $rawReview -match "seatEffort = 'low'" -and $rawReview -match '4000 characters' -and $rawReview -match 'Answer text and the final message only' -and $rawReview -match '\$wallSec = 240' -and $rawReview -notmatch 'if ($spoken) { $combined' -and $rawReview -notmatch "psum -match 'Host recorded") {
+        Ok 'review: last strict vote beats an early loose approve; null findings are not a BLOCK; veto uses the no-vote id'
+    } else {
+        Bad 'review: loose parse still hides the later BLOCK, or the host veto still keys off prose'
     }
     } finally {
         Remove-Item -LiteralPath $voteTmp -Force -ErrorAction SilentlyContinue
@@ -713,7 +770,7 @@ if ($rawReview -match 'function Get-VibeSpecExcerpt' -and $rawReview -match 'SPE
 $blobOrder = ($rawReview.IndexOf('Exit-IfUnfixedPriorNext -Cwd $cwdNow') -ge 0 -and $rawReview.IndexOf('Exit-IfUnfixedPriorNext -Cwd $cwdNow') -lt $rawReview.IndexOf('Save-ReviewedBlobs (Select-HashesPresentInPrompt'))
 $blobPathOk = ($rawReview.Contains("'.grok', 'vibe-tools', 'reports'")) -and (-not $rawReview.Contains("Join-Path `$env:USERPROFILE '.grok\vibe-tools\reports'"))
 $pushLedger = $rawReview.Contains('if ($StagedOnly -and -not $DiffOverride -and (Get-Command Save-GateOpenAdvisories')
-$overrideSafe = $rawReview.Contains('if ($DiffOverride) { $NoFix = $true }') -and $rawReview.Contains('$round -eq 1 -or $DiffOverride') -and $rawReview.Contains('StagedOnly cache hit still owes') -and $rawReview.Contains('Get-GitDiffText -Override $null -StagedOnlyMode:$StagedOnly') -and $rawReview.Contains('if ($script:PassRawDiffSet)') -and $rawReview.Contains('reviewer idle') -and $rawReview.Contains('65536')
+$overrideSafe = $rawReview.Contains('if ($DiffOverride) { $NoFix = $true }') -and $rawReview.Contains('$round -eq 1 -or $DiffOverride') -and $rawReview.Contains('StagedOnly cache hit still owes') -and $rawReview.Contains('Get-GitDiffText -Override $null -StagedOnlyMode:$StagedOnly') -and $rawReview.Contains('if ($script:PassRawDiffSet)') -and $rawReview.Contains('reviewer idle') -and $rawReview.Contains('else { 180 }') -and $rawReview.Contains('65536')
 if ($rawReview -match 'function Exit-IfUnfixedPriorNext' -and $rawReview -match 'StagedReviewUnchanged' -and $rawReview -match '--literal-pathspecs' -and $rawReview -notmatch ':\(literal\)' -and $rawReview -match 'ReviewedPatchHashes' -and $rawReview -match 'function Assert-StagedIndexUnmoved' -and $rawReview -match 'index moved after review' -and $rawReview -match 'open-next helper missing' -and $rawReview -match 'empty staged diff' -and $rawReview -match 'StringComparer\]::Ordinal' -and $rawReview -match 'IsNullOrWhiteSpace\(\$docCwd\)' -and $rawReview -match 'refusing to save reviewed blobs with an empty cwd' -and $rawReview -match 'StagedOnlyMode' -and $blobOrder -and $blobPathOk -and $pushLedger -and $overrideSafe) {
     Ok 'review: blob hashes saved only after the open-next check; push does not clear next; override cannot fixer-approve the checkout'
 } else {
@@ -737,7 +794,7 @@ if ($gateChat -match 'timeout_ms' -and $gateChat -match '15000' -and $watchNow -
 } else {
     Bad 'gate no-silence wiring missing (clamp / Stop / heartbeat / hook)'
 }
-if ($stopSrc -match 'VIBE_GATE_CHILD' -and $stopSrc -match 'never block' -and $rawReview -match 'function New-HostSeatJson' -and $rawReview -match 'function ConvertTo-GateJsonString' -and $rawReview -match 'fromSpoken' -and $rawReview -match 'host vote recorded' -and $rawReview -match 'reviewer vote parsed; stopping the process' -and $rawReview -match 'reviewer wall' -and $rawReview -match 'reviewer emitted no vote') {
+if ($stopSrc -match 'VIBE_GATE_CHILD' -and $stopSrc -match 'never block' -and $rawReview -match 'function New-HostSeatJson' -and $rawReview -match 'function ConvertTo-GateJsonString' -and $rawReview -match 'Resolve-SeatVote' -and $rawReview -match '\$spoken' -and $rawReview -match 'host vote recorded' -and $rawReview -match 'reviewer vote parsed; stopping the process' -and $rawReview -match 'reviewer wall' -and $rawReview -match 'reviewer emitted no vote') {
     Ok 'gate cannot loop: child Stop is silent, vote kills the process, missing vote is a real BLOCK'
 } else {
     Bad 'gate loop guards missing (child stop / vote kill / host BLOCK)'

@@ -593,11 +593,62 @@ function Test-GateJsonReply($Obj) {
     return [bool]($names -contains 'vote' -or $names -contains 'verdict')
 }
 
+function Test-SeatVoteToken([string]$Vote) {
+    $v = ''
+    try { $v = $Vote.ToUpperInvariant().Trim() } catch { return $false }
+    return @('STRONG_APPROVE', 'APPROVE', 'APPROVE_WITH_CHANGES', 'BLOCK') -contains $v
+}
+
 function Test-SeatAccepts($Obj, [string]$Label) {
     if (-not (Test-GateJsonReply $Obj)) { return $false }
-    # The arbiter prompt quotes reviewer votes. Those are not an arbiter verdict.
-    if ($Label -eq 'arbiter') { return [bool]$Obj.verdict }
+    # A bare {"vote":"BLOCK"} or the prompt's "vote": "BLOCK|APPROVE|..." sample
+    # is not a finished seat. The prompt quotes those. They must not stop the process.
+    if ($Label -eq 'arbiter') {
+        $verdict = ''
+        try { $verdict = ("$($Obj.verdict)").ToUpperInvariant().Trim() } catch { return $false }
+        if (-not (Test-SeatVoteToken $verdict)) { return $false }
+        foreach ($need in @('blockers', 'next', 'later')) {
+            if ($null -eq $Obj.PSObject.Properties[$need]) { return $false }
+        }
+        return $true
+    }
+    if ($Label -notmatch '^reviewer:(.+)$') { return $false }
+    $role = $Matches[1]
+    $rid = ''
+    try { $rid = [string]$Obj.reviewer_id } catch { $rid = '' }
+    if ($rid -ne $role) { return $false }
+    $vote = ''
+    try { $vote = ("$($Obj.vote)").ToUpperInvariant().Trim() } catch { return $false }
+    if (-not (Test-SeatVoteToken $vote)) { return $false }
+    if ($null -eq $Obj.PSObject.Properties['findings']) { return $false }
+    # Normalize-ReviewerVote rejects BLOCK with zero findings. Do not stop on it.
+    # Windows PowerShell 5.1: ConvertFrom-Json turns [] and null into $null, and
+    # @($null).Count is 1, so a count check would accept an empty BLOCK.
+    if ($vote -eq 'BLOCK') {
+        $rawFindings = $Obj.findings
+        if ($null -eq $rawFindings) { return $false }
+        $findingCount = 0
+        foreach ($oneFinding in @($rawFindings)) {
+            if ($null -ne $oneFinding) { $findingCount++ }
+        }
+        if ($findingCount -eq 0) { return $false }
+    }
     return $true
+}
+
+function Test-IsHostNoVote($Seat) {
+    # The veto is the finding id. A summary that quotes the host sentence is not a missing vote.
+    if (-not $Seat) { return $false }
+    foreach ($oneFinding in @($Seat.findings)) {
+        if ($null -eq $oneFinding) { continue }
+        $fid = ''
+        try { $fid = [string]$oneFinding.id } catch { $fid = '' }
+        # Exact host id only. A real finding that merely contains no-vote is not a missing seat.
+        $role = ''
+        try { $role = [string]$Seat.reviewer_id } catch { $role = '' }
+        if ($role -match '^[A-Za-z0-9_-]+$' -and $fid -eq "$role-no-vote") { return $true }
+    }
+    return $false
 }
 
 function Get-BalancedJsonAt([string]$Text, [int]$Start) {
@@ -625,7 +676,9 @@ function Get-BalancedJsonAt([string]$Text, [int]$Start) {
 
 # The thinking transcript is full of braces, so a loose scan misses a finished
 # vote that sits at the end. Walk back from the last vote or verdict key.
-function Get-LastGateVote([string]$Text, [switch]$VerdictOnly) {
+# A sample object that fails Test-SeatAccepts is skipped. A later strict vote wins.
+# LastIndexOf(string, int, int) is the count overload on Windows PowerShell 5.1.
+function Get-LastGateVote([string]$Text, [switch]$VerdictOnly, [string]$Label, [string]$IgnoreText) {
     if (-not $Text) { return $null }
     $keys = @('"vote"', '"verdict"')
     if ($VerdictOnly) { $keys = @('"verdict"') }
@@ -643,9 +696,14 @@ function Get-LastGateVote([string]$Text, [switch]$VerdictOnly) {
                 $guard++
                 $slice = Get-BalancedJsonAt $Text $start
                 if ($slice) {
+                    # Latest acceptable object is walked first. If that object is
+                    # only in the diff, do not revive an earlier APPROVE.
+                    $isEcho = [bool]($IgnoreText -and (Test-DiffEchoesLine $slice $IgnoreText))
                     try {
                         $obj = $slice | ConvertFrom-Json
-                        if (Test-GateJsonReply $obj) { return @{ Obj = $obj; Text = $slice } }
+                        $ok = if ($Label) { Test-SeatAccepts $obj $Label } else { Test-GateJsonReply $obj }
+                        if ($ok -and $isEcho) { return @{ Obj = $null; Text = ''; EchoSuppressed = $true } }
+                        if ($ok) { return @{ Obj = $obj; Text = $slice; EchoSuppressed = $false } }
                     } catch {}
                 }
                 if ($start -le $from) { break }
@@ -713,6 +771,45 @@ function ConvertFrom-JsonLoose([string]$text, [string]$IgnoreText) {
     # A capped reply with no balanced vote fails closed. Do not return a torn fragment.
     if ($capped) { return $null }
     return $fallback
+}
+
+# Last strict vote wins. A loose parse of a long transcript keeps the first object
+# plus the tail, so an early APPROVE must not hide a later BLOCK.
+function Resolve-SchemaSeat([string]$Text, [string]$Label, [string]$IgnoreText) {
+    # Headless JSON mode wraps the vote. structuredOutput is the vote.
+    # The thought field is not.
+    if (-not $Text) { return $null }
+    try { $wrap = $Text | ConvertFrom-Json } catch { return $null }
+    $obj = $null
+    if ($wrap.PSObject.Properties['structuredOutput'] -and $wrap.structuredOutput) {
+        $obj = $wrap.structuredOutput
+    }
+    if ($obj -and (Test-SeatAccepts $obj $Label)) {
+        $slice = $obj | ConvertTo-Json -Compress -Depth 12
+        # Same rule as the streaming path. An echoed vote is not a vote.
+        # Do not fall through to the thought field or a loose parse.
+        if ($IgnoreText -and (Test-DiffEchoesLine $slice $IgnoreText)) { return $null }
+        return @{ Obj = $obj; Text = $slice; EchoSuppressed = $false }
+    }
+    if ($wrap.PSObject.Properties['text'] -and $wrap.text) {
+        return Resolve-SeatVote ([string]$wrap.text) $Label $IgnoreText
+    }
+    return $null
+}
+
+function Resolve-SeatVote([string]$Text, [string]$Label, [string]$IgnoreText) {
+    if (-not $Text) { return $null }
+    $hit = Get-LastGateVote $Text -VerdictOnly:($Label -eq 'arbiter') -Label $Label -IgnoreText $IgnoreText
+    # An echoed later vote must not fall through to an earlier object or to loose parse.
+    if ($hit -and $hit.EchoSuppressed) { return $null }
+    if ($hit -and (Test-SeatAccepts $hit.Obj $Label)) { return $hit }
+    $loose = ConvertFrom-JsonLoose $Text $IgnoreText
+    if (Test-SeatAccepts $loose $Label) {
+        # Panel parses Text again. The full transcript lets an earlier object win.
+        $slice = $loose | ConvertTo-Json -Compress -Depth 12
+        return @{ Obj = $loose; Text = $slice; EchoSuppressed = $false }
+    }
+    return $null
 }
 
 function Limit-DiffText([string]$diff, [int]$maxChars = 160000) {
@@ -1195,7 +1292,7 @@ function Read-GateStreamAppend {
 }
 
 function Get-GrokNdjsonPiece([string]$Line) {
-    $result = @{ Show = ''; Final = '' }
+    $result = @{ Show = ''; Answer = ''; Final = '' }
     $t = "$Line".Trim()
     if (-not $t.StartsWith('{')) { return $result }
     try { $o = $t | ConvertFrom-Json } catch { return $result }
@@ -1203,22 +1300,27 @@ function Get-GrokNdjsonPiece([string]$Line) {
     if (-not $event -and "$($o.type)" -match 'delta') { $event = $o }
     if ($event -and $event.delta) {
         $d = $event.delta
-        $bit = ''
-        if ($d.text) { $bit = [string]$d.text }
-        elseif ($d.thinking) { $bit = [string]$d.thinking }
-        elseif ($d.partial_json) { $bit = [string]$d.partial_json }
-        if ($bit) { $result.Show = $bit }
+        # Thinking is not the vote. A draft JSON in the thinking channel must
+        # not stop the seat. Only answer text can.
+        if ($d.text) {
+            $result.Answer = [string]$d.text
+            $result.Show = [string]$d.text
+        } elseif ($d.thinking) {
+            $result.Show = [string]$d.thinking
+        } elseif ($d.partial_json) {
+            $result.Answer = [string]$d.partial_json
+            $result.Show = [string]$d.partial_json
+        }
         return $result
     }
     $msg = $o.message
     if (-not $msg -and "$($o.type)" -eq 'assistant') { $msg = $o }
     if ($msg -and $msg.content) {
-        $sb = New-Object System.Text.StringBuilder
+        $answerSb = New-Object System.Text.StringBuilder
         foreach ($c in @($msg.content)) {
-            if ($c.text) { [void]$sb.Append([string]$c.text) }
-            elseif ($c.thinking) { [void]$sb.Append([string]$c.thinking) }
+            if ($c.text) { [void]$answerSb.Append([string]$c.text) }
         }
-        $result.Final = $sb.ToString()
+        $result.Final = $answerSb.ToString()
     }
     return $result
 }
@@ -1243,7 +1345,8 @@ function Update-GateModelStream {
         [ref]$Position,
         [ref]$Pending,
         [ref]$FinalText,
-        [ref]$Spoken
+        [ref]$Spoken,
+        [ref]$Answer
     )
     $got = Read-GateStreamAppend -Path $Path -Position ([long]$Position.Value)
     $raw = [string]$got.Text
@@ -1272,6 +1375,9 @@ function Update-GateModelStream {
             # Deltas are Show, not Final. A vote that never gets a final message
             # event still has to count, or the host records a false no-vote BLOCK.
             $Spoken.Value = [string]$Spoken.Value + [string]$piece.Show
+        }
+        if ($piece.Answer -and $null -ne $Answer) {
+            $Answer.Value = [string]$Answer.Value + [string]$piece.Answer
         }
         if ($piece.Final) { $FinalText.Value = [string]$piece.Final }
     }
@@ -1315,6 +1421,29 @@ function ConvertTo-GateJsonString([string]$Value) {
         elseif ($code -lt 32) { [void]$sb.Append(('\u{0:x4}' -f $code)) }
         else { [void]$sb.Append($ch) }
     }
+    [void]$sb.Append([char]34)
+    return $sb.ToString()
+}
+
+function Format-WindowsArg([string]$Arg) {
+    # CommandLineToArgvW. Start-Process drops quotes, which turns a JSON schema into invalid JSON.
+    if ($Arg -notmatch '[\s"]') { return $Arg }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append([char]34)
+    $bs = 0
+    foreach ($ch in $Arg.ToCharArray()) {
+        if ($ch -eq '\') { $bs++; continue }
+        if ($ch -eq [char]34) {
+            for ($i = 0; $i -lt (($bs * 2) + 1); $i++) { [void]$sb.Append('\') }
+            [void]$sb.Append([char]34)
+            $bs = 0
+            continue
+        }
+        for ($i = 0; $i -lt $bs; $i++) { [void]$sb.Append('\') }
+        $bs = 0
+        [void]$sb.Append($ch)
+    }
+    for ($i = 0; $i -lt ($bs * 2); $i++) { [void]$sb.Append('\') }
     [void]$sb.Append([char]34)
     return $sb.ToString()
 }
@@ -1377,14 +1506,33 @@ function Invoke-GrokHeadless {
     [void]$argList.Add($PromptFile)
     [void]$argList.Add('-m')
     [void]$argList.Add($ModelName)
+    # High effort on a read-only reviewer spends the wall inside thinking
+    # and never emits JSON. Reviewers use low. Arbiter and fixer keep $Effort.
+    $seatEffort = $Effort
+    if ($ReadOnlyReview -and -not $AllowWrites -and $Label -like 'reviewer:*') {
+        $seatEffort = 'low'
+    }
     [void]$argList.Add('--reasoning-effort')
-    [void]$argList.Add($Effort)
+    [void]$argList.Add($seatEffort)
     [void]$argList.Add('--max-turns')
     [void]$argList.Add("$MaxTurns")
-    # Token deltas. Plain stdout stays empty until the process exits, so chat never sees the model write.
+    # Reviewers are constrained to the vote schema. An essay cannot be the answer.
+    # The arbiter and the fixer keep the streaming transcript.
+    $schemaMode = $false
+    $outputFormat = 'streaming-messages-json'
+    if ($ReadOnlyReview -and -not $AllowWrites -and $Label -like 'reviewer:*') {
+        $schemaMode = $true
+        $outputFormat = 'json'
+    }
     [void]$argList.Add('--output-format')
-    [void]$argList.Add('streaming-messages-json')
-    [void]$argList.Add('--include-partial-messages')
+    [void]$argList.Add($outputFormat)
+    if ($schemaMode) {
+        $reviewerSchema = '{"type":"object","additionalProperties":true,"required":["reviewer_id","summary","vote","findings"],"properties":{"reviewer_id":{"type":"string"},"summary":{"type":"string"},"vote":{"type":"string","enum":["STRONG_APPROVE","APPROVE","APPROVE_WITH_CHANGES","BLOCK"]},"findings":{"type":"array","items":{"type":"object","additionalProperties":true,"required":["id","severity","file","line","title","detail","fix_hint"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["blocker","next","later"]},"file":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"detail":{"type":"string"},"fix_hint":{"type":"string"}}}}}}'
+        [void]$argList.Add('--json-schema')
+        [void]$argList.Add($reviewerSchema)
+    } else {
+        [void]$argList.Add('--include-partial-messages')
+    }
     [void]$argList.Add('--permission-mode')
     [void]$argList.Add('bypassPermissions')
     # Read-only panel: one shot, no built-in tool schemas. Grok still attaches MCP
@@ -1406,7 +1554,7 @@ function Invoke-GrokHeadless {
     }
 
     $writeFlag = [bool]$AllowWrites
-    Write-Host ("  -> {0} (model={1}, turns<={2}, write={3})" -f $Label, $ModelName, $MaxTurns, $writeFlag) -ForegroundColor DarkGray
+    Write-Host ("  -> {0} (model={1}, turns<={2}, write={3}, effort={4})" -f $Label, $ModelName, $MaxTurns, $writeFlag, $seatEffort) -ForegroundColor DarkGray
     if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
         Write-GateProgress ("start {0} model={1} turns<={2}" -f $Label, $ModelName, $MaxTurns)
     }
@@ -1420,7 +1568,41 @@ function Invoke-GrokHeadless {
             $pushed = $true
         }
         $streamIt = [bool]$OnPulse -or [bool](Get-Command Write-GateProgress -ErrorAction SilentlyContinue)
-        if ($streamIt) {
+        if ($schemaMode) {
+            # Reviewers use JSON schema. Start-Process would strip the quotes.
+            $cmd = (@($argList.ToArray()) | ForEach-Object { Format-WindowsArg ([string]$_) }) -join ' '
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $GrokExe
+            $psi.Arguments = $cmd
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.CreateNoWindow = $true
+            if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {
+                $psi.WorkingDirectory = $WorkingDirectory
+            }
+            $proc = New-Object System.Diagnostics.Process
+            $proc.StartInfo = $psi
+            [void]$proc.Start()
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+            $errTask = $proc.StandardError.ReadToEndAsync()
+            if (-not $proc.WaitForExit(300000)) {
+                try { $proc.Kill() } catch {}
+                try { $proc.WaitForExit(5000) } catch {}
+                $code = -1
+                $output = @('reviewer schema call exceeded 300s')
+            } else {
+                $outTxt = ''
+                $errTxt = ''
+                try { $outTxt = [string]$outTask.Result } catch {}
+                try { $errTxt = [string]$errTask.Result } catch {}
+                $code = [int]$proc.ExitCode
+                $schemaErr = ($errTxt -replace '[\r\n]', ' ').Trim()
+                if ($schemaErr.Length -gt 240) { $schemaErr = $schemaErr.Substring(0, 240) }
+                $output = @($outTxt.Trim())
+                if (-not $output[0] -and $schemaErr) { $output = @($schemaErr) }
+            }
+        } elseif ($streamIt) {
             $ownTemps = -not $OutLog
             $stdOut = if ($OutLog) { $OutLog } else { Join-Path $env:TEMP ('vibe-grok-' + [guid]::NewGuid().ToString('n') + '.log') }
             $stdErr = $stdOut + '.err'
@@ -1447,6 +1629,7 @@ function Invoke-GrokHeadless {
                 $streamPending = ''
                 $streamFinal = ''
                 $spoken = ''
+                $answer = ''
                 $nextPulse = [datetime]::UtcNow
                 $lastSize = [long]0
                 $lastGrowth = [datetime]::UtcNow
@@ -1456,24 +1639,17 @@ function Invoke-GrokHeadless {
                 $stoppedIdle = $false
                 while (-not $p.HasExited) {
                     Start-Sleep -Seconds 1
-                    Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal) -Spoken ([ref]$spoken)
-                    # A "vote": substring is not a finished vote. Arm only after a parsed vote that is not a diff echo.
+                    Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal) -Spoken ([ref]$spoken) -Answer ([ref]$answer)
+                    # Thinking quotes are not a vote. Stop when the answer text, not
+                    # the thinking channel, holds this seat's own JSON object.
                     if (-not $voteReady) {
-                        $fromFinal = $null
-                        if ($streamFinal) { $fromFinal = ConvertFrom-JsonLoose ([string]$streamFinal) $EchoDiff }
-                        if (Test-SeatAccepts $fromFinal $Label) {
-                            $voteReady = $true
-                        } elseif ($spoken) {
-                            $fromSpoken = ConvertFrom-JsonLoose ([string]$spoken) $EchoDiff
-                            $fromSpokenHit = $null
-                            if (-not (Test-SeatAccepts $fromSpoken $Label)) {
-                                $fromSpokenHit = Get-LastGateVote ([string]$spoken) -VerdictOnly:($Label -eq 'arbiter')
-                                if ($fromSpokenHit) { $fromSpoken = $fromSpokenHit.Obj }
-                            }
-                            if (Test-SeatAccepts $fromSpoken $Label) {
+                        $scan = [string]$answer
+                        if ($streamFinal) { $scan = $scan + "`n" + [string]$streamFinal }
+                        if ($scan) {
+                            $resolvedFinal = Resolve-SeatVote $scan $Label $EchoDiff
+                            if ($resolvedFinal) {
+                                if ($resolvedFinal.Text) { $streamFinal = [string]$resolvedFinal.Text }
                                 $voteReady = $true
-                                if ($fromSpokenHit -and $fromSpokenHit.Text) { $streamFinal = [string]$fromSpokenHit.Text }
-                                else { $streamFinal = [string]$spoken }
                             }
                         }
                     }
@@ -1527,11 +1703,28 @@ function Invoke-GrokHeadless {
                         $stoppedIdle = $true
                         break
                     }
-                    # Hard stop. A model that keeps writing never looks idle, and
-                    # that is how a gate sat for half an hour after the vote.
-                    # Read-only seats get 8 minutes. A real vote usually lands sooner
-                    # and the process is killed then. The fixer may still be editing.
-                    $wallSec = if ($AllowWrites) { 1200 } else { 480 }
+                    # An essay with no vote is not a review. Stop once the answer
+                    # is long and the first brace is already a finished object.
+                    # An inner object must not look finished while the outer vote
+                    # is still open.
+                    if (-not $AllowWrites -and -not $voteReady -and $answer.Length -gt 4000) {
+                        $firstBrace = $answer.IndexOf('{')
+                        $outerOpen = $false
+                        if ($firstBrace -ge 0 -and -not (Get-BalancedJsonAt $answer $firstBrace)) { $outerOpen = $true }
+                        if (-not $outerOpen) {
+                            $stopFault = 'reviewer answer passed 4000 characters with no vote'
+                            $stoppedIdle = $true
+                            break
+                        }
+                    }
+                    # Hard stop. Read-only seats get 3 minutes. A vote that has
+                    # already opened gets one extra minute so the wall does not
+                    # cut the JSON in half. The fixer may still be editing.
+                    $wallSec = if ($AllowWrites) { 1200 } else { 180 }
+                    if (-not $AllowWrites -and -not $voteReady -and $answer) {
+                        $firstBrace = $answer.IndexOf('{')
+                        if ($firstBrace -ge 0 -and -not (Get-BalancedJsonAt $answer $firstBrace)) { $wallSec = 240 }
+                    }
                     if ($sw.Elapsed.TotalSeconds -ge $wallSec) {
                         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
                             Write-GateProgress ("reviewer wall {0}s vote={1}; stopping the process" -f $wallSec, $voteReady)
@@ -1540,9 +1733,10 @@ function Invoke-GrokHeadless {
                         $stoppedIdle = $true
                         break
                     }
-                    # Silence is a hang. Streaming tokens reset this. 45s with no
-                    # new stdout on a read-only seat is long enough to prove it died.
-                    $idleLimit = if ($AllowWrites) { 600 } else { 45 }
+                    # Silence is a hang. Streaming tokens reset this. 180s ends a
+                    # seat that never speaks. The read-only wall is the same 180s,
+                    # so a quiet seat cannot outlive the wall.
+                    $idleLimit = if ($AllowWrites) { 600 } else { 180 }
                     if ($idle -ge $idleLimit) {
                         if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
                             Write-GateProgress ("reviewer idle {0:n0}s after vote={1}; stopping the process" -f $idle, $voteReady)
@@ -1577,7 +1771,7 @@ function Invoke-GrokHeadless {
                     $code = -1
                     $output = @($(if ($stopFault) { $stopFault } else { 'reviewer stopped with no parsed vote' }))
                 } else {
-                Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal) -Spoken ([ref]$spoken)
+                Update-GateModelStream -Path $stdOut -Label $Label -Position ([ref]$streamPos) -Pending ([ref]$streamPending) -FinalText ([ref]$streamFinal) -Spoken ([ref]$spoken) -Answer ([ref]$answer)
                 if ($streamPending) {
                     $piece = Get-GrokNdjsonPiece $streamPending
                     if ($piece.Show) {
@@ -1636,30 +1830,26 @@ function Invoke-GrokHeadless {
         $script:GateRun.tokenEstimate = [int][math]::Round(($script:GateRun.promptChars + $script:GateRun.outputChars) / 4.0)
     } catch {}
     if ($ReadOnlyReview -and -not $AllowWrites) {
-        $seatObj = ConvertFrom-JsonLoose $text $EchoDiff
-        if (-not (Test-SeatAccepts $seatObj $Label) -and $spoken) {
-            $fromSpoken = ConvertFrom-JsonLoose ([string]$spoken) $EchoDiff
-            if (-not (Test-SeatAccepts $fromSpoken $Label)) {
-                $fromSpokenHit = Get-LastGateVote ([string]$spoken) -VerdictOnly:($Label -eq 'arbiter')
-                if ($fromSpokenHit) { $fromSpoken = $fromSpokenHit.Obj; $text = [string]$fromSpokenHit.Text }
-            } else {
-                $text = [string]$spoken
-            }
-            if (Test-SeatAccepts $fromSpoken $Label) {
-                $seatObj = $fromSpoken
-                $code = 0
-            }
+        # Schema mode: the process prints one JSON wrapper. The vote is
+        # structuredOutput. Thinking stays in thought and is not scanned.
+        $resolvedSeat = $null
+        if ($schemaMode) { $resolvedSeat = Resolve-SchemaSeat $text $Label $EchoDiff }
+        if (-not $resolvedSeat) {
+            # Answer text and the final message only. $spoken is the thinking
+            # channel. A draft there must not become the recorded vote.
+            $combined = [string]$answer
+            if ($streamFinal) { $combined = $combined + "`n" + [string]$streamFinal }
+            $resolvedSeat = Resolve-SeatVote $combined $Label $EchoDiff
         }
-        if (-not (Test-SeatAccepts $seatObj $Label)) {
-            $late = Get-LastGateVote ($text + "`n" + [string]$spoken + "`n" + [string]$streamFinal) -VerdictOnly:($Label -eq 'arbiter')
-            if ($late) {
-                $text = [string]$late.Text
-                $seatObj = $late.Obj
-                $code = 0
-            }
+        $seatObj = $null
+        if ($resolvedSeat) {
+            $text = [string]$resolvedSeat.Text
+            $seatObj = $resolvedSeat.Obj
+            $code = 0
         }
         if (-not (Test-SeatAccepts $seatObj $Label)) {
             $why = 'process ended with no parseable vote'
+            if ($schemaErr) { $why = $schemaErr }
             $text = New-HostSeatJson -Label $Label -Why $why
             $code = 0
             if ($OutLog) { Save-Text $OutLog $text }
@@ -1762,6 +1952,7 @@ function New-ReviewerPrompt {
     }
 
     $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('OUTPUT CONTRACT: your entire reply is one JSON object. The first character is {. No essay, no markdown, no status line. A reply with no JSON object is a failed review.')
     [void]$sb.AppendLine("You are one member of a 3-reviewer quality panel for a git gate (round $Round).")
     [void]$sb.AppendLine($focus)
     [void]$sb.AppendLine('')
@@ -1780,6 +1971,7 @@ function New-ReviewerPrompt {
     [void]$sb.AppendLine('- Do NOT edit files. Tools that write or run shell are disabled.')
     [void]$sb.AppendLine('- Do NOT spend turns chunking, grepping, or re-reading the diff. The brief below is complete.')
     [void]$sb.AppendLine('- Emit the JSON object as your FIRST substantive response (ideally only response).')
+    [void]$sb.AppendLine('- A sample JSON object in your reasoning is not your vote. Only the final object counts, and its reviewer_id must be this seat.')
     [void]$sb.AppendLine('- After that JSON object, stop. Do not role-play the gate watcher, do not repeat status lines, and do not start a monitor.
 - Write-Step, Write-Ok, Write-Warn2, Write-Fail, and Write-Info are defined at the top of Install-GrokVibeStack.ps1. A call to Write-Warn2 is not a missing command.')
     [void]$sb.AppendLine('- Independent judgment - do not soften blockers to be nice.')
@@ -2113,10 +2305,11 @@ function Publish-ReviewerVoteNow {
     $reason = 'no parseable vote'
     $fc = 0
     if ($Result -and $Result.Ok) {
-        $obj = ConvertFrom-JsonLoose $Result.Text $DiffText
-        if ($obj) {
-            if (-not $obj.reviewer_id) { $obj | Add-Member -NotePropertyName reviewer_id -NotePropertyValue $Role -Force }
-            $obj = Normalize-ReviewerVote $obj
+        $resolved = Resolve-SchemaSeat $Result.Text "reviewer:$Role" $DiffText
+        if (-not $resolved) { $resolved = Resolve-SeatVote $Result.Text "reviewer:$Role" $DiffText }
+        $obj = $null
+        if ($resolved -and (Test-SeatAccepts $resolved.Obj "reviewer:$Role")) {
+            $obj = Normalize-ReviewerVote $resolved.Obj
         }
         if ($obj) {
             $voteStr = "$($obj.vote)"
@@ -2173,6 +2366,9 @@ function Invoke-ReviewerPanel {
                 Write-GateProgress ("start sequential reviewer:{0} ({1}/{2})" -f $role, $seqI, $roles.Count) `
                     -Now $now -Phase 'reviewers'
             }
+            if (Get-Command Set-GateWaitNow -ErrorAction SilentlyContinue) {
+                Set-GateWaitNow ("vibe-$role")
+            }
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers -RaiseSecurityNext:([bool]$script:RaiseSecurityNext))
@@ -2180,99 +2376,12 @@ function Invoke-ReviewerPanel {
             Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn (($left | ForEach-Object { "vibe-$_" }) -join ', ') -DiffText $DiffText
         }
     } else {
-        $jobs = @()
         foreach ($role in $roles) {
             $pf = Join-Path $RoundDir "reviewer-$role.prompt.txt"
             $lf = Join-Path $RoundDir "reviewer-$role.log.txt"
             Save-Text $pf (New-ReviewerPrompt -Role $role -DiffText $DiffText -Round $Round -PriorBlockers $PriorBlockers -RaiseSecurityNext:([bool]$script:RaiseSecurityNext))
-            $jobs += Start-Job -Name "vibe-$role" -ScriptBlock {
-                param($Exe, $Model, $PromptFile, $LogFile, $Effort, $MaxTurns, $Role, $ProxyPort)
-                $env:VIBE_GATE_CHILD = '1'
-                function Invoke-One([string]$UseModel) {
-                    $argList = @(
-                        '--prompt-file', $PromptFile,
-                        '-m', $UseModel,
-                        '--reasoning-effort', $Effort,
-                        '--max-turns', "$MaxTurns",
-                        '--permission-mode', 'bypassPermissions',
-                        '--disable-web-search',
-                        '--tools=',
-                        '--disallowed-tools', 'Agent,read_file,grep,list_dir,search_replace,write,Write,run_terminal_command,run_terminal_cmd,Bash,bash,web_search,web_fetch,ask_user_question',
-                        '--deny', 'MCPTool'
-                    )
-                    $output = & $Exe @argList 2>&1
-                    $code = $LASTEXITCODE
-                    $text = if ($output) { ($output | ForEach-Object { "$_" }) -join "`n" } else { '' }
-                    return @{ Text = $text; ExitCode = $code }
-                }
-                $sw = [System.Diagnostics.Stopwatch]::StartNew()
-                try {
-                    $r = Invoke-One $Model
-                    $needsProxy = Test-VibeNeedsHeadroomProxy $Model
-                    $ok = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
-                    $proxyStreamFail = ($r.Text -match ('127\.0\.0\.1:{0}' -f $ProxyPort) -and $r.Text -match '(?i)error sending request|connection refused|actively refused|reqwest error')
-                    if ((-not $ok -or $proxyStreamFail) -and $needsProxy) {
-                        $r = Invoke-One $Model
-                    }
-                } catch {
-                    $sw.Stop()
-                    return @{ Role = $Role; Ok = $false; Text = "$_"; ExitCode = -1; Seconds = $sw.Elapsed.TotalSeconds }
-                }
-                $sw.Stop()
-                [System.IO.File]::WriteAllText($LogFile, $r.Text)
-                @{
-                    Role     = $Role
-                    Ok       = (($r.ExitCode -eq 0 -or $null -eq $r.ExitCode) -and $r.Text.Trim().Length -gt 0)
-                    Text     = $r.Text
-                    ExitCode = $r.ExitCode
-                    Seconds  = [math]::Round($sw.Elapsed.TotalSeconds, 1)
-                }
-            } -ArgumentList $GrokExe, $ModelName, $pf, $lf, $Effort, $MaxTurns, $role, $ProxyPort
-        }
-        Write-Host "  ... waiting for $($jobs.Count) reviewer jobs (votes publish as each finishes)" -ForegroundColor DarkGray
-        $script:VoteNowPublished = @{}
-        $pending = New-Object System.Collections.Generic.List[object]
-        foreach ($j in $jobs) { [void]$pending.Add($j) }
-        $swWait = [System.Diagnostics.Stopwatch]::StartNew()
-        while ($pending.Count -gt 0) {
-            $still = New-Object System.Collections.Generic.List[object]
-            $justDone = New-Object System.Collections.Generic.List[object]
-            foreach ($j in $pending) {
-                if ($j.State -eq 'Running') { [void]$still.Add($j) } else { [void]$justDone.Add($j) }
-            }
-            foreach ($j in $justDone) {
-                $r = Receive-Job $j -ErrorAction SilentlyContinue
-                Remove-Job $j -Force -ErrorAction SilentlyContinue
-                $roleName = $null
-                if ($r -and $r.Role) {
-                    $roleName = [string]$r.Role
-                    $results[$roleName] = @{ Ok = $r.Ok; Text = $r.Text; ExitCode = $r.ExitCode; Seconds = $r.Seconds }
-                } else {
-                    $roleName = ([string]$j.Name) -replace '^vibe-', ''
-                    $results[$roleName] = @{ Ok = $false; Text = ''; ExitCode = -1; Seconds = 0 }
-                }
-                $waitNames = (@($still | ForEach-Object { $_.Name })) -join ', '
-                Publish-ReviewerVoteNow -Role $roleName -Result $results[$roleName] -WaitingOn $waitNames -DiffText $DiffText
-            }
-            $pending = $still
-            if ($pending.Count -eq 0) { break }
-            if ($swWait.Elapsed.TotalSeconds -ge 1200) {
-                Write-GateProgress ('job timeout after {0:n0}s - stopping leftover jobs' -f $swWait.Elapsed.TotalSeconds)
-                foreach ($j in $pending) { try { Stop-Job $j -ErrorAction SilentlyContinue } catch {} }
-                break
-            }
-            $waitNames = (@($pending | ForEach-Object { $_.Name })) -join ', '
-            if (Get-Command Set-GateWaitNow -ErrorAction SilentlyContinue) {
-                Set-GateWaitNow $waitNames
-            } elseif (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-                Write-GateProgress ("waiting {0}" -f $waitNames) -Now ("Waiting on $waitNames")
-            }
-            $null = Wait-Job -Job @($pending.ToArray()) -Timeout 15
-        }
-        foreach ($role in $roles) {
-            if (-not $results.ContainsKey($role)) {
-                $results[$role] = @{ Ok = $false; Text = ''; ExitCode = -1; Seconds = 0 }
-            }
+            $results[$role] = Invoke-GrokHeadless -GrokExe $GrokExe -ModelName $ModelName -PromptFile $pf -Label "reviewer:$role" -Effort $Effort -MaxTurns $MaxTurns -ReadOnlyReview -OutLog $lf -EchoDiff $DiffText
+            Publish-ReviewerVoteNow -Role $role -Result $results[$role] -WaitingOn '' -DiffText $DiffText
         }
     }
 
@@ -2282,18 +2391,29 @@ function Invoke-ReviewerPanel {
     foreach ($role in $roles) {
         $r = $results[$role]
         Write-Host ("  reviewer:{0} ok={1} {2}s exit={3}" -f $role, $r.Ok, $r.Seconds, $r.ExitCode) -ForegroundColor DarkCyan
-        if (-not $r.Ok) { $fail += $role; continue }
-        $obj = ConvertFrom-JsonLoose $r.Text $DiffText
+        $obj = $null
+        if ($r.Ok) {
+            $resolved = Resolve-SchemaSeat $r.Text "reviewer:$role" $DiffText
+            if (-not $resolved) { $resolved = Resolve-SeatVote $r.Text "reviewer:$role" $DiffText }
+            if ($resolved -and (Test-SeatAccepts $resolved.Obj "reviewer:$role")) {
+                $obj = Normalize-ReviewerVote $resolved.Obj
+            }
+        }
+        if (-not $obj) {
+            # A seat always leaves a vote. Host BLOCK still vetoes. The arbiter still runs
+            # only when every seat produced its own JSON.
+            $hostText = New-HostSeatJson -Label "reviewer:$role" -Why 'process ended with no parseable vote'
+            $obj = ConvertFrom-JsonLoose $hostText ''
+            if ($obj) { $obj = Normalize-ReviewerVote $obj }
+            $r = @{ Ok = $true; Text = $hostText; ExitCode = 0; Seconds = $r.Seconds }
+            $results[$role] = $r
+            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
+                Write-GateProgress ("reviewer:{0} host vote recorded (model emitted none)" -f $role)
+            }
+        }
         if (-not $obj) {
             # Fail-closed: no vote-only / empty-findings APPROVE path (false confidence)
             Write-Host ("    unparseable JSON from {0} (fail-closed)" -f $role) -ForegroundColor Yellow
-            $fail += $role
-            continue
-        }
-        if (-not $obj.reviewer_id) { $obj | Add-Member -NotePropertyName reviewer_id -NotePropertyValue $role -Force }
-        $obj = Normalize-ReviewerVote $obj
-        if (-not $obj) {
-            Write-Host ("    inconsistent vote/findings from {0} (fail-closed)" -f $role) -ForegroundColor Yellow
             $fail += $role
             continue
         }
@@ -2982,6 +3102,22 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
     $roundRec.advisories = @($roundRec.next)
     if ($arb.Result -and $arb.Result.disputes_resolved) { $roundRec.disputes = @($arb.Result.disputes_resolved) }
 
+    $hostMissing = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @($panel.Panel)) {
+        if (-not (Test-IsHostNoVote $p)) { continue }
+        $who = ''
+        try { $who = [string]$p.reviewer_id } catch { $who = '' }
+        if (-not $who) { $who = 'reviewer' }
+        [void]$hostMissing.Add($who)
+    }
+    if ($hostMissing.Count -gt 0) {
+        $script:GateRun.rounds = @($script:GateRun.rounds) + @($roundRec)
+        $script:GateRun.verdict = 'BLOCK'
+        $whoList = ($hostMissing -join ', ')
+        Write-GateFail "A reviewer emitted no parseable vote ($whoList). The host recorded BLOCK and that seat still vetoes."
+        Exit-Gate -Code 1 -Reason 'reviewer emitted no vote'
+    }
+
     $passVotes = @('STRONG_APPROVE', 'APPROVE', 'APPROVE_WITH_CHANGES')
     if ($passVotes -contains $arb.Verdict) {
         $script:GateRun.rounds = @($script:GateRun.rounds) + @($roundRec)
@@ -3048,45 +3184,11 @@ for ($round = 1; $round -le $MaxRounds; $round++) {
 
     $priorBlockersText = ($blockers | ConvertTo-Json -Depth 8)
 
-    $realReview = $false
-    foreach ($p in @($panel.Panel)) {
-        $psum = ''
-        try { $psum = [string]$p.summary } catch { $psum = '' }
-        $pvote = ''
-        try { $pvote = [string]$p.vote } catch { $pvote = '' }
-        if ($psum -notmatch 'Host recorded this because' -and $pvote -match 'APPROVE') { $realReview = $true }
-    }
-    if ($realReview) {
-        $kept = @($blockers | Where-Object {
-            $bid = ''
-            try { $bid = [string]$_.id } catch { $bid = '' }
-            $bid -notmatch 'no-vote'
-        })
-        if ($kept.Count -lt @($blockers).Count) {
-            if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-                Write-GateProgress 'host no-vote seats dropped; a real review is on the panel'
-            }
-            $blockers = $kept
-        }
-    }
     $hostOnly = $true
     foreach ($b in $blockers) {
         $bid = ''
         try { $bid = [string]$b.id } catch { $bid = '' }
-        if ($bid -notmatch 'no-vote') { $hostOnly = $false; break }
-    }
-    if ($realReview -and @($blockers).Count -eq 0) {
-        $script:GateRun.rounds = @($script:GateRun.rounds) + @($roundRec)
-        $passVerdict = 'APPROVE'
-        if (@($arb.Next).Count -gt 0) { $passVerdict = 'APPROVE_WITH_CHANGES' }
-        $script:GateRun.verdict = $passVerdict
-        if (Get-Command Write-GateProgress -ErrorAction SilentlyContinue) {
-            Write-GateProgress ("host no-vote seats dropped; verdict {0}" -f $passVerdict)
-        }
-        if (Get-Command Write-GateDone -ErrorAction SilentlyContinue) {
-            Write-GateDone -Passed -Summary ("{0}; host no-vote seats dropped because a real review is on the panel" -f $passVerdict)
-        }
-        Exit-Gate -Code 0
+        if ($bid -notmatch '^[A-Za-z0-9_-]+-no-vote$') { $hostOnly = $false; break }
     }
     if ($hostOnly) {
         $script:GateRun.rounds = @($script:GateRun.rounds) + @($roundRec)
