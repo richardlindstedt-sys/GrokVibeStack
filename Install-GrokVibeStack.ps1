@@ -964,10 +964,10 @@ function Install-GithubReleaseBinary {
         # Offline cannot download a replacement. A missing file is a failed step.
         if (Test-Path -LiteralPath $dest) {
             if ($reinstall) {
-                Write-Warn2 "offline: keep $DestName despite dest hash mismatch (no GitHub download)"
-            } else {
-                Write-Ok "offline: keep $DestName (no GitHub download)"
+                Write-Fail "offline: $DestName dest hash mismatch (kept on disk, not a successful install)"
+                return $false
             }
+            Write-Ok "offline: keep $DestName (no GitHub download)"
             return $true
         }
         Write-Fail "offline: $DestName missing (not downloaded)"
