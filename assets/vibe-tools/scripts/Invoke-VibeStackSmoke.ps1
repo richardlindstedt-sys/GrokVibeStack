@@ -1262,6 +1262,11 @@ if ($instSrc -notmatch 'maxSavingsProfile') {
 } else {
     Bad 'installer still has unused maxSavingsProfile'
 }
+if ($instSrc -match 'offline: \$DestName missing \(not downloaded\)' -and $instSrc -notmatch 'offline: \$DestName not downloaded') {
+    Ok 'installer: offline missing pinned binary fails closed'
+} else {
+    Bad 'installer offline missing pinned binary still returns success'
+}
 if ($instSrc -match '\[switch\]\$Offline' -and $instSrc -match 'MODE: OFFLINE' -and $instSrc -match 'offline: keep existing venv' -and $instSrc -match 'offline: skip deptry pip' -and $instSrc -match 'offline: skip headroom tools install' -and $instSrc -match 'offline: skip proxy start' -and $instSrc -match 'offline: skip Install-Module' -and $instSrc -match 'offline: rtk missing') {
     Ok 'installer: -Offline skips winget/npm/pip/GitHub/uv and keeps a seeded venv'
 } else {
